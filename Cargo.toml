@@ -1,0 +1,76 @@
+[package]
+name = "eunha"
+version = "0.1.0"
+edition = "2021"
+default-run = "eunha"
+
+[[bin]]
+name = "eunha"
+path = "src/main.rs"
+
+[[bin]]
+name = "eunha-migrate-mastodon"
+path = "src/bin/migrate_mastodon.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["multipart", "macros", "ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Auth / Crypto
+argon2 = "0.5"
+bcrypt = "0.15"
+rand = "0.9"
+base64 = "0.22"
+hex = "0.4"
+sha2 = "0.10"
+hmac = "0.12"
+rsa = { version = "0.9", features = ["sha2", "pem"] }
+pkcs8 = { version = "0.10", features = ["pem"] }
+
+# HTTP client (federation)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Config / environment
+config = "0.15"
+dotenvy = "0.15"
+
+# Utilities
+url = { version = "2", features = ["serde"] }
+mime = "0.3"
+mime_guess = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+bytes = "1"
+futures = "0.3"
+itertools = "0.14"
+regex = "1"
+once_cell = "1"
+ammonia = "4"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+axum-test = "17"

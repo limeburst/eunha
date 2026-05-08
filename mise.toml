@@ -1,0 +1,17 @@
+[tools]
+node = "lts"
+
+[tasks.dev]
+description = "Run the Rust server with hot-reload"
+run = "cargo watch -x run -w src -w migrations"
+
+[tasks.elk]
+description = "Build Elk static output (adds submodule if needed, patches plugin, generates)"
+run = """
+if [ ! -f elk/package.json ]; then
+  git submodule add https://github.com/elk-zone/elk elk
+fi
+mkdir -p elk/plugins
+cp elk-patches/plugins/eunha.client.ts elk/plugins/eunha.client.ts
+cd elk && pnpm install && pnpm generate
+"""

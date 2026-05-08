@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM instances WHERE domain = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "short_description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "contact_email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "registrations_open",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "approval_required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "private_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "public_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "887c4ac4f1013c33efec7439530de04a9db261b58ba5cff6126a8f7d5639c44d"
+}

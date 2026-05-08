@@ -1,0 +1,2 @@
+ALTER TABLE status_edits
+    ADD COLUMN IF NOT EXISTS account_id UUID REFERENCES accounts(id) ON DELETE SET NULL;

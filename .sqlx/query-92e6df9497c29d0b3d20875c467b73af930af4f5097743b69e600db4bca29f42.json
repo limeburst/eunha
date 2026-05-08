@@ -1,0 +1,98 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_attachments (account_id, media_type, file_key, file_url, description)\n           VALUES ($1,$2,$3,$4,$5)\n           RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "status_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "media_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "file_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "file_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "preview_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "preview_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "remote_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "blurhash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "meta",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "92e6df9497c29d0b3d20875c467b73af930af4f5097743b69e600db4bca29f42"
+}

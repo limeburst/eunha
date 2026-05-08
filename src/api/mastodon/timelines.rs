@@ -1,0 +1,120 @@
+use axum::{
+    extract::{Extension, Query, State},
+    Json,
+};
+use serde::Deserialize;
+
+use crate::{
+    db::models::{Account, Status as DbStatus},
+    error::AppResult,
+    middleware::{AuthenticatedUser, ResolvedInstance},
+    state::AppState,
+};
+use super::{
+    accounts::fetch_status_media,
+    convert::{account_from_db, status_from_db},
+    types::{PaginationParams, Status},
+};
+
+#[derive(Debug, Deserialize)]
+pub struct PublicTimelineQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    pub local: Option<bool>,
+    pub remote: Option<bool>,
+    pub only_media: Option<bool>,
+}
+
+// ── GET /api/v1/timelines/public ──────────────────────────────────────────
+
+pub async fn public_timeline(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Query(q): Query<PublicTimelineQuery>,
+) -> AppResult<Json<Vec<Status>>> {
+    let limit = q.pagination.limit_clamped(20, 40);
+    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let local_only = q.local.unwrap_or(false);
+
+    let statuses = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.*
+           FROM statuses s
+           WHERE s.visibility = 'public'
+             AND s.deleted_at IS NULL
+             AND s.reblog_of_id IS NULL
+             AND ($1::bool IS FALSE OR s.instance_id = $2)
+             AND ($3::bigint IS NULL OR s.id < $3)
+             AND ($4::bigint IS NULL OR s.id > $4)
+           ORDER BY s.id DESC
+           LIMIT $5"#,
+        local_only,
+        instance.id,
+        max_id,
+        since_id,
+        limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    build_status_list(&state, statuses, None).await
+}
+
+// ── GET /api/v1/timelines/home ────────────────────────────────────────────
+
+pub async fn home_timeline(
+    State(state): State<AppState>,
+    Query(q): Query<PaginationParams>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<Status>>> {
+    let limit = q.limit_clamped(20, 40);
+    let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
+    let statuses = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.*
+           FROM statuses s
+           WHERE s.account_id IN (
+               SELECT target_account_id FROM follows
+               WHERE account_id = $1 AND state = 'accepted'
+               UNION ALL SELECT $1
+           )
+           AND s.deleted_at IS NULL
+           AND ($2::bigint IS NULL OR s.id < $2)
+           AND ($3::bigint IS NULL OR s.id > $3)
+           ORDER BY s.id DESC
+           LIMIT $4"#,
+        auth.account_id,
+        max_id,
+        since_id,
+        limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    build_status_list(&state, statuses, Some(auth.account_id)).await
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+async fn build_status_list(
+    state: &AppState,
+    statuses: Vec<DbStatus>,
+    viewer_id: Option<uuid::Uuid>,
+) -> AppResult<Json<Vec<Status>>> {
+    let mut result = Vec::with_capacity(statuses.len());
+    for s in &statuses {
+        let account = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE id = $1",
+            s.account_id
+        )
+        .fetch_one(&state.db)
+        .await?;
+        let media = fetch_status_media(state, s.id).await?;
+        result.push(status_from_db(s, &account, media, None, None));
+    }
+    Ok(Json(result))
+}
