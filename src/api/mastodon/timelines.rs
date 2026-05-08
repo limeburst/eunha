@@ -1,5 +1,7 @@
 use axum::{
     extract::{Extension, Query, State},
+    http::{header, HeaderMap, Uri},
+    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
@@ -12,7 +14,7 @@ use crate::{
 };
 use super::{
     accounts::fetch_status_media,
-    convert::{account_from_db, status_from_db},
+    convert::status_from_db,
     types::{PaginationParams, Status},
 };
 
@@ -30,8 +32,10 @@ pub struct PublicTimelineQuery {
 pub async fn public_timeline(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<PublicTimelineQuery>,
-) -> AppResult<Json<Vec<Status>>> {
+) -> AppResult<impl IntoResponse> {
     let limit = q.pagination.limit_clamped(20, 40);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -58,16 +62,20 @@ pub async fn public_timeline(
     .fetch_all(&state.db)
     .await?;
 
-    build_status_list(&state, statuses, None).await
+    let result = build_status_list(&state, statuses, None).await?;
+    let resp = with_pagination_link(&req_headers, &uri, result);
+    Ok(resp)
 }
 
 // ── GET /api/v1/timelines/home ────────────────────────────────────────────
 
 pub async fn home_timeline(
     State(state): State<AppState>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
     Extension(auth): Extension<AuthenticatedUser>,
-) -> AppResult<Json<Vec<Status>>> {
+) -> AppResult<impl IntoResponse> {
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -94,7 +102,9 @@ pub async fn home_timeline(
     .fetch_all(&state.db)
     .await?;
 
-    build_status_list(&state, statuses, Some(auth.account_id)).await
+    let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
+    let resp = with_pagination_link(&req_headers, &uri, result);
+    Ok(resp)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -103,7 +113,7 @@ async fn build_status_list(
     state: &AppState,
     statuses: Vec<DbStatus>,
     viewer_id: Option<uuid::Uuid>,
-) -> AppResult<Json<Vec<Status>>> {
+) -> AppResult<Vec<Status>> {
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
         let account = sqlx::query_as!(
@@ -116,5 +126,23 @@ async fn build_status_list(
         let media = fetch_status_media(state, s.id).await?;
         result.push(status_from_db(s, &account, media, None, None));
     }
-    Ok(Json(result))
+    Ok(result)
+}
+
+fn with_pagination_link(
+    req_headers: &HeaderMap,
+    uri: &Uri,
+    statuses: Vec<Status>,
+) -> impl IntoResponse {
+    let link = statuses.first().zip(statuses.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            headers.insert(header::LINK, val);
+        }
+    }
+    (headers, Json(statuses))
 }

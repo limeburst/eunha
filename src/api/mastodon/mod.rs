@@ -14,11 +14,55 @@ pub mod timelines;
 pub mod types;
 
 use axum::{
+    http::{header, HeaderMap},
     middleware,
     routing::{delete, get, patch, post},
     Router,
 };
 use crate::{middleware as mw, state::AppState};
+
+/// Build a `Link: <...>; rel="next", <...>; rel="prev"` header value for
+/// paginated list endpoints. Returns `None` when `ids` is empty.
+///
+/// `ids` must be ordered from newest (largest) to oldest (smallest), matching
+/// the `ORDER BY id DESC` convention used on every list endpoint.
+pub(crate) fn link_header(
+    req_headers: &HeaderMap,
+    path: &str,
+    extra_query: &str, // non-pagination params already joined with '&', no trailing '&'
+    newest_id: &str,
+    oldest_id: &str,
+) -> String {
+    let host = req_headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let proto = req_headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("https");
+    let base = format!("{proto}://{host}");
+    let sep = if extra_query.is_empty() { "" } else { "&" };
+    let next = format!("{base}{path}?{extra_query}{sep}max_id={oldest_id}");
+    let prev = format!("{base}{path}?{extra_query}{sep}min_id={newest_id}");
+    format!(r#"<{next}>; rel="next", <{prev}>; rel="prev""#)
+}
+
+/// Strip pagination-specific keys from a query string and return the rest.
+pub(crate) fn non_pagination_query(raw_query: Option<&str>) -> String {
+    raw_query
+        .unwrap_or("")
+        .split('&')
+        .filter(|kv| {
+            !kv.is_empty()
+                && !kv.starts_with("max_id=")
+                && !kv.starts_with("min_id=")
+                && !kv.starts_with("since_id=")
+                && !kv.starts_with("limit=")
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_required = Router::new()

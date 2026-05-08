@@ -1,5 +1,7 @@
 use axum::{
     extract::{Extension, Multipart, Path, Query, State},
+    http::{header, HeaderMap, Uri},
+    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
@@ -116,9 +118,11 @@ pub struct StatusesQuery {
 pub async fn get_account_statuses(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<StatusesQuery>,
     auth: Option<Extension<AuthenticatedUser>>,
-) -> AppResult<Json<Vec<Status>>> {
+) -> AppResult<impl IntoResponse> {
     let account = fetch_account(&state, id).await?;
     let limit = q.pagination.limit_clamped(20, 40);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -175,7 +179,18 @@ pub async fn get_account_statuses(
         let media = fetch_status_media(&state, s.id).await?;
         result.push(status_from_db(s, &account, media, None, None));
     }
-    Ok(Json(result))
+
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── GET /api/v1/accounts/relationships ────────────────────────────────────
