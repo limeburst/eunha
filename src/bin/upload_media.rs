@@ -9,13 +9,16 @@
 ///     --endpoint https://5d508a37b0c6ea183620094959bbc8d1.r2.cloudflarestorage.com \
 ///     --access-key-id d2f345c5441ed9c58fcef0173833afad \
 ///     --secret-access-key 02cbaabf4a806a6d43eafdc0c16192bf5ee29860f48ef4ca1683c91a9bbaa89f \
-///     --base-url https://r2.eunha.social
+///     --base-url https://r2.eunha.social \
+///     --prefix seoul-earth.eunha.social
 use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use clap::Parser;
+use futures::StreamExt;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -28,6 +31,11 @@ struct Args {
     #[arg(long)] access_key_id: String,
     #[arg(long)] secret_access_key: String,
     #[arg(long)] base_url: String,
+    /// Instance domain prefix for all object keys (e.g. seoul-earth.eunha.social).
+    /// Objects are uploaded under <prefix>/media_attachments/... and DB URLs updated accordingly.
+    #[arg(long)] prefix: String,
+    /// Number of concurrent S3 uploads (default: 32).
+    #[arg(long, default_value_t = 32)] concurrency: usize,
 }
 
 #[tokio::main]
@@ -49,18 +57,15 @@ async fn main() -> Result<()> {
         .build();
     let client = aws_sdk_s3::Client::from_conf(s3_conf);
     let media_dir = PathBuf::from(&args.media_dir);
+    let prefix = args.prefix.trim_matches('/').to_string();
 
     // ── 1. Account mapping: mastodon i64 id → eunha UUID ─────────────────────
     tracing::info!("building account map...");
     let masto_accounts = sqlx::query("SELECT id, username, domain FROM accounts")
-        .fetch_all(&src)
-        .await?;
-
+        .fetch_all(&src).await?;
     let eunha_accounts = sqlx::query("SELECT id, username, domain FROM accounts")
-        .fetch_all(&dst)
-        .await?;
+        .fetch_all(&dst).await?;
 
-    // (username, domain) → eunha UUID
     let eunha_account_lookup: HashMap<(String, Option<String>), Uuid> = eunha_accounts
         .iter()
         .map(|r| {
@@ -71,7 +76,6 @@ async fn main() -> Result<()> {
         })
         .collect();
 
-    // mastodon account id → eunha UUID
     let account_map: HashMap<i64, Uuid> = masto_accounts
         .iter()
         .filter_map(|r| {
@@ -86,12 +90,9 @@ async fn main() -> Result<()> {
     // ── 2. Status mapping: mastodon i64 id → eunha i64 id ────────────────────
     tracing::info!("building status map...");
     let masto_statuses = sqlx::query("SELECT id, uri FROM statuses WHERE uri IS NOT NULL")
-        .fetch_all(&src)
-        .await?;
-
+        .fetch_all(&src).await?;
     let eunha_statuses = sqlx::query("SELECT id, uri FROM statuses WHERE uri IS NOT NULL")
-        .fetch_all(&dst)
-        .await?;
+        .fetch_all(&dst).await?;
 
     let eunha_status_lookup: HashMap<String, i64> = eunha_statuses
         .iter()
@@ -112,56 +113,95 @@ async fn main() -> Result<()> {
         .collect();
     tracing::info!("mapped {} statuses", status_map.len());
 
-    // ── 3. Upload all files ───────────────────────────────────────────────────
-    tracing::info!("uploading files from {}...", media_dir.display());
-    let mut uploaded = 0usize;
-    upload_dir(&client, &args.bucket, &media_dir, &media_dir, &mut uploaded).await?;
+    // ── 3. Upload all files under <prefix>/ ───────────────────────────────────
+    tracing::info!("uploading files from {} under prefix '{}' (concurrency={})...", media_dir.display(), prefix, args.concurrency);
+    let files = collect_files(&media_dir)?;
+    let total = files.len();
+    tracing::info!("{} files to upload", total);
+    let client = Arc::new(client);
+    let bucket = Arc::new(args.bucket.clone());
+    let prefix_arc = Arc::new(prefix.clone());
+    let media_dir_arc = Arc::new(media_dir.clone());
+    let uploaded = upload_parallel(client.clone(), bucket.clone(), prefix_arc.clone(), media_dir_arc, files, args.concurrency).await?;
     tracing::info!("uploaded {} files total", uploaded);
 
     // ── 4. Patch media_attachments URLs ──────────────────────────────────────
     tracing::info!("patching media_attachment URLs...");
-    patch_media_attachments(&src, &dst, &account_map, &status_map, &args.base_url).await?;
+    patch_media_attachments(&src, &dst, &account_map, &status_map, &args.base_url, &prefix_arc).await?;
 
     // ── 5. Patch account avatar/header URLs ──────────────────────────────────
     tracing::info!("patching account avatar/header URLs...");
-    patch_account_media(&src, &dst, &account_map, &args.base_url).await?;
+    patch_account_media(&src, &dst, &account_map, &args.base_url, &prefix_arc).await?;
 
     tracing::info!("done");
     Ok(())
 }
 
-async fn upload_dir(
-    client: &aws_sdk_s3::Client,
-    bucket: &str,
-    root: &Path,
-    dir: &Path,
-    count: &mut usize,
-) -> Result<()> {
-    let mut entries = tokio::fs::read_dir(dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
+fn collect_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_files_inner(dir, &mut files)?;
+    Ok(files)
+}
+
+fn collect_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
         if path.is_dir() {
-            Box::pin(upload_dir(client, bucket, root, &path, count)).await?;
+            collect_files_inner(&path, out)?;
         } else {
-            let rel = path.strip_prefix(root).unwrap();
-            let key = rel.to_string_lossy().replace('\\', "/");
-            let data = tokio::fs::read(&path).await?;
-            let ct = mime_guess::from_path(&path).first_or_octet_stream().to_string();
-            client.put_object()
-                .bucket(bucket)
-                .key(&key)
-                .body(ByteStream::from(data))
-                .content_type(ct)
-                .send()
-                .await
-                .with_context(|| format!("uploading {key}"))?;
-            *count += 1;
-            if *count % 100 == 0 {
-                tracing::info!("  {} files uploaded...", count);
-            }
+            out.push(path);
         }
     }
     Ok(())
+}
+
+async fn upload_parallel(
+    client: Arc<aws_sdk_s3::Client>,
+    bucket: Arc<String>,
+    prefix: Arc<String>,
+    root: Arc<PathBuf>,
+    files: Vec<PathBuf>,
+    concurrency: usize,
+) -> Result<usize> {
+    let total = files.len();
+    let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    futures::stream::iter(files)
+        .map(|path| {
+            let client = client.clone();
+            let bucket = bucket.clone();
+            let prefix = prefix.clone();
+            let root = root.clone();
+            let counter = counter.clone();
+            async move {
+                let rel = path.strip_prefix(root.as_ref()).unwrap();
+                let rel_key = rel.to_string_lossy().replace('\\', "/");
+                let key = format!("{}/{}", prefix, rel_key);
+                let data = tokio::fs::read(&path).await
+                    .with_context(|| format!("reading {}", path.display()))?;
+                let ct = mime_guess::from_path(&path).first_or_octet_stream().to_string();
+                client.put_object()
+                    .bucket(bucket.as_ref())
+                    .key(&key)
+                    .body(ByteStream::from(data))
+                    .content_type(ct)
+                    .send()
+                    .await
+                    .with_context(|| format!("uploading {key}"))?;
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n % 100 == 0 {
+                    tracing::info!("  {}/{} files uploaded...", n, total);
+                }
+                Ok::<(), anyhow::Error>(())
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<()>>()?;
+
+    Ok(total)
 }
 
 async fn patch_media_attachments(
@@ -170,6 +210,7 @@ async fn patch_media_attachments(
     account_map: &HashMap<i64, Uuid>,
     status_map: &HashMap<i64, i64>,
     base_url: &str,
+    prefix: &str,
 ) -> Result<()> {
     let masto_rows = sqlx::query(
         r#"SELECT id, account_id, status_id, file_file_name
@@ -177,10 +218,8 @@ async fn patch_media_attachments(
            WHERE file_file_name IS NOT NULL AND file_file_name != ''
            ORDER BY COALESCE(status_id, 0), id"#,
     )
-    .fetch_all(src)
-    .await?;
+    .fetch_all(src).await?;
 
-    // Group by (eunha_account_id, eunha_status_id) → Vec<(masto_id, filename)>
     let mut masto_groups: HashMap<(Uuid, Option<i64>), Vec<(i64, String)>> = HashMap::new();
     for row in &masto_rows {
         let masto_account: i64 = row.get("account_id");
@@ -196,10 +235,9 @@ async fn patch_media_attachments(
     }
 
     let eunha_rows = sqlx::query(
-        "SELECT id, account_id, status_id FROM media_attachments WHERE file_url IS NULL ORDER BY id",
+        "SELECT id, account_id, status_id FROM media_attachments ORDER BY id",
     )
-    .fetch_all(dst)
-    .await?;
+    .fetch_all(dst).await?;
 
     let mut eunha_groups: HashMap<(Uuid, Option<i64>), Vec<i64>> = HashMap::new();
     for row in &eunha_rows {
@@ -215,18 +253,15 @@ async fn patch_media_attachments(
         for (i, (masto_id, filename)) in masto_attachments.iter().enumerate() {
             let Some(&eunha_id) = eunha_ids.get(i) else { break };
             let id_path = split_id(*masto_id);
-            let file_url = format!("{}/media_attachments/files/{}/original/{}", base_url, id_path, filename);
-            let preview_url = format!("{}/media_attachments/files/{}/small/{}", base_url, id_path, filename);
-            let key = format!("media_attachments/files/{}/original/{}", id_path, filename);
+            let key = format!("{}/media_attachments/files/{}/original/{}", prefix, id_path, filename);
+            let file_url = format!("{}/{}", base_url.trim_end_matches('/'), key);
+            let preview_key = format!("{}/media_attachments/files/{}/small/{}", prefix, id_path, filename);
+            let preview_url = format!("{}/{}", base_url.trim_end_matches('/'), preview_key);
             sqlx::query(
                 "UPDATE media_attachments SET file_url = $1, file_key = $2, preview_url = $3 WHERE id = $4",
             )
-            .bind(&file_url)
-            .bind(&key)
-            .bind(&preview_url)
-            .bind(eunha_id)
-            .execute(dst)
-            .await?;
+            .bind(&file_url).bind(&key).bind(&preview_url).bind(eunha_id)
+            .execute(dst).await?;
             updated += 1;
         }
     }
@@ -239,12 +274,12 @@ async fn patch_account_media(
     dst: &PgPool,
     account_map: &HashMap<i64, Uuid>,
     base_url: &str,
+    prefix: &str,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT id, avatar_file_name, header_file_name FROM accounts WHERE avatar_file_name IS NOT NULL OR header_file_name IS NOT NULL",
     )
-    .fetch_all(src)
-    .await?;
+    .fetch_all(src).await?;
 
     let mut updated = 0usize;
     for row in &rows {
@@ -252,11 +287,12 @@ async fn patch_account_media(
         let Some(&eunha_id) = account_map.get(&masto_id) else { continue };
         let id_path = split_id(masto_id);
 
-        let avatar: Option<String> = row.try_get("avatar_file_name").ok().flatten();
-        if let Some(ref fname) = avatar {
+        if let Some(fname) = row.try_get::<Option<String>, _>("avatar_file_name").ok().flatten() {
             if !fname.is_empty() {
-                let url = format!("{}/accounts/avatars/{}/original/{}", base_url, id_path, fname);
-                let static_url = format!("{}/accounts/avatars/{}/static/{}", base_url, id_path, fname);
+                let key = format!("{}/accounts/avatars/{}/original/{}", prefix, id_path, fname);
+                let url = format!("{}/{}", base_url.trim_end_matches('/'), key);
+                let static_key = format!("{}/accounts/avatars/{}/static/{}", prefix, id_path, fname);
+                let static_url = format!("{}/{}", base_url.trim_end_matches('/'), static_key);
                 sqlx::query("UPDATE accounts SET avatar = $1, avatar_static = $2 WHERE id = $3")
                     .bind(&url).bind(&static_url).bind(eunha_id)
                     .execute(dst).await?;
@@ -264,11 +300,12 @@ async fn patch_account_media(
             }
         }
 
-        let header: Option<String> = row.try_get("header_file_name").ok().flatten();
-        if let Some(ref fname) = header {
+        if let Some(fname) = row.try_get::<Option<String>, _>("header_file_name").ok().flatten() {
             if !fname.is_empty() {
-                let url = format!("{}/accounts/headers/{}/original/{}", base_url, id_path, fname);
-                let static_url = format!("{}/accounts/headers/{}/static/{}", base_url, id_path, fname);
+                let key = format!("{}/accounts/headers/{}/original/{}", prefix, id_path, fname);
+                let url = format!("{}/{}", base_url.trim_end_matches('/'), key);
+                let static_key = format!("{}/accounts/headers/{}/static/{}", prefix, id_path, fname);
+                let static_url = format!("{}/{}", base_url.trim_end_matches('/'), static_key);
                 sqlx::query("UPDATE accounts SET header = $1, header_static = $2 WHERE id = $3")
                     .bind(&url).bind(&static_url).bind(eunha_id)
                     .execute(dst).await?;

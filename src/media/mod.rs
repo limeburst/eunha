@@ -44,13 +44,14 @@ impl Storage {
         }
     }
 
-    pub async fn store(&self, data: &[u8], _original_name: &str, content_type: &str) -> AppResult<String> {
+    pub async fn store(&self, data: &[u8], _original_name: &str, content_type: &str, instance_domain: &str) -> AppResult<String> {
         let ext = mime_guess::get_mime_extensions_str(content_type)
             .and_then(|e| e.first().copied())
             .unwrap_or("bin");
 
         let key = format!(
-            "media/{}/{}.{}",
+            "{}/media/{}/{}.{}",
+            instance_domain.trim_matches('/'),
             chrono::Utc::now().format("%Y/%m/%d"),
             Uuid::new_v4(),
             ext

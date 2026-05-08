@@ -5,7 +5,7 @@ use axum::{
 
 use crate::{
     error::{AppError, AppResult},
-    middleware::AuthenticatedUser,
+    middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
 use super::{convert::media_from_db, types::MediaAttachment};
@@ -14,6 +14,7 @@ use super::{convert::media_from_db, types::MediaAttachment};
 
 pub async fn upload_media(
     State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     mut multipart: Multipart,
 ) -> AppResult<Json<MediaAttachment>> {
@@ -39,7 +40,7 @@ pub async fn upload_media(
 
     let (filename, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
     let media_type = classify_media_type(&content_type);
-    let key = state.storage.store(&data, &filename, &content_type).await?;
+    let key = state.storage.store(&data, &filename, &content_type, &instance.domain).await?;
     let url = state.storage.public_url(&key);
 
     let attachment = sqlx::query_as!(
