@@ -4,7 +4,7 @@ RUN corepack enable pnpm
 WORKDIR /elk
 COPY elk/ .
 COPY elk-patches/plugins/eunha.client.ts app/plugins/eunha.client.ts
-RUN sed -i 's/params\.server as string || useRuntimeConfig()\.public\.defaultServer/(params.server as string) || (typeof window !== "undefined" \&\& (window as any).__eunha_instance) || useRuntimeConfig().public.defaultServer/' app/plugins/0.setup-users.ts
+COPY elk-patches/middleware/auth.ts app/middleware/auth.ts
 RUN pnpm install --frozen-lockfile && pnpm generate
 
 # ── Stage 2: Build console ──────────────────────────────────────────────────
