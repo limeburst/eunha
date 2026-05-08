@@ -14,7 +14,7 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-full">
       <aside className="w-44 flex-shrink-0 border-r border-border flex flex-col px-0 py-0 sticky top-0 h-screen">
         <div className="border-b border-border px-4 py-4">
-          <NavLink to="/dashboard" className="text-text text-xs tracking-widest uppercase">eunha</NavLink>
+          <NavLink to="/dashboard" className="text-text text-xs tracking-widest uppercase">eunha.social</NavLink>
         </div>
 
         <nav className="flex flex-col flex-1 py-2">
