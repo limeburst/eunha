@@ -124,6 +124,9 @@ pub async fn get_account_statuses(
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+    let is_self = viewer_id == Some(account.id);
+
     let statuses = sqlx::query_as!(
         crate::db::models::Status,
         r#"SELECT * FROM statuses
@@ -133,13 +136,18 @@ pub async fn get_account_statuses(
              AND ($3::bigint IS NULL OR id > $3)
              AND ($4::boolean IS NOT TRUE OR reblog_of_id IS NULL)
              AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL)
+             AND (
+               visibility IN ('public', 'unlisted')
+               OR ($6::boolean = true)
+             )
            ORDER BY id DESC
-           LIMIT $6"#,
+           LIMIT $7"#,
         account.id,
         max_id,
         since_id,
         q.exclude_reblogs.unwrap_or(false),
         q.exclude_replies.unwrap_or(false),
+        is_self,
         limit,
     )
     .fetch_all(&state.db)
