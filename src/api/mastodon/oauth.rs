@@ -1,11 +1,13 @@
 use axum::{
-    extract::{Extension, Form, State},
+    extract::{Extension, Form, Query, State},
+    http::StatusCode,
+    response::{Html, IntoResponse, Redirect, Response},
     Json,
 };
 use serde::Deserialize;
 
 use crate::{
-    db::models::{OauthApplication, OauthAccessToken},
+    db::models::OauthApplication,
     error::{AppError, AppResult},
     middleware::ResolvedInstance,
     state::AppState,
@@ -210,3 +212,205 @@ fn generate_token(len: usize) -> String {
         .map(|_| format!("{:02x}", rng.next_u32() as u8))
         .collect()
 }
+
+// ── POST /api/:server/login  (Elk single-instance sign-in hook) ────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ElkLoginBody {
+    pub force_login: Option<bool>,
+    pub origin: String,
+    pub lang: Option<String>,
+}
+
+pub async fn elk_login(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Json(body): Json<ElkLoginBody>,
+) -> AppResult<Json<String>> {
+    let redirect_uri = format!("{}/signin/callback", body.origin.trim_end_matches('/'));
+    let scopes = "read write follow push";
+
+    // Find or create a stable "Elk" OAuth app for this instance.
+    let app = sqlx::query_as!(
+        OauthApplication,
+        "SELECT * FROM oauth_applications WHERE instance_id = $1 AND name = 'Elk' LIMIT 1",
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let app = match app {
+        Some(a) => a,
+        None => {
+            let client_id = generate_token(32);
+            let client_secret = generate_token(64);
+            sqlx::query_as!(
+                OauthApplication,
+                r#"INSERT INTO oauth_applications
+                     (instance_id, name, client_id, client_secret, redirect_uris, scopes)
+                   VALUES ($1, 'Elk', $2, $3, $4, $5)
+                   RETURNING *"#,
+                instance.id,
+                client_id,
+                client_secret,
+                redirect_uri,
+                scopes,
+            )
+            .fetch_one(&state.db)
+            .await?
+        }
+    };
+
+    let force = body.force_login.unwrap_or(false);
+    let lang = body.lang.unwrap_or_default();
+    let encoded_redirect = urlencoding::encode(&redirect_uri);
+    let encoded_scope = urlencoding::encode(scopes);
+
+    let mut url = format!(
+        "https://{}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}",
+        instance.domain, app.client_id, encoded_redirect, encoded_scope,
+    );
+    if force {
+        url.push_str("&force_login=true");
+    }
+    if !lang.is_empty() {
+        url.push_str(&format!("&lang={}", urlencoding::encode(&lang)));
+    }
+
+    Ok(Json(url))
+}
+
+// ── GET /oauth/authorize ───────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorizeParams {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub response_type: Option<String>,
+    pub scope: Option<String>,
+    pub force_login: Option<String>,
+    pub lang: Option<String>,
+}
+
+pub async fn authorize_form(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Query(params): Query<AuthorizeParams>,
+) -> Response {
+    let app = match sqlx::query_as!(
+        OauthApplication,
+        "SELECT * FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        params.client_id,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(a)) => a,
+        _ => return (StatusCode::BAD_REQUEST, "Unknown client_id").into_response(),
+    };
+
+    let scope = params.scope.as_deref().unwrap_or("read");
+    let html = crate::templates::render("authorize.html", minijinja::context! {
+        domain => instance.domain,
+        app_name => app.name,
+        client_id => params.client_id,
+        redirect_uri => params.redirect_uri,
+        scope => scope,
+        error => "",
+    });
+    Html(html).into_response()
+}
+
+
+// ── POST /oauth/authorize ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorizeForm {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub scope: Option<String>,
+    pub email: String,
+    pub password: String,
+}
+
+pub async fn authorize_submit(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Form(form): Form<AuthorizeForm>,
+) -> Response {
+    let result = do_authorize(&state, &instance, &form).await;
+    match result {
+        Ok(redirect_url) => Redirect::to(&redirect_url).into_response(),
+        Err(e) => {
+            let scope = form.scope.as_deref().unwrap_or("read");
+            let html = crate::templates::render("authorize.html", minijinja::context! {
+                domain => instance.domain,
+                app_name => "Elk",
+                client_id => form.client_id,
+                redirect_uri => form.redirect_uri,
+                scope => scope,
+                error => e,
+            });
+            Html(html).into_response()
+        }
+    }
+}
+
+async fn do_authorize(
+    state: &AppState,
+    instance: &crate::db::models::Instance,
+    form: &AuthorizeForm,
+) -> Result<String, String> {
+    let app = sqlx::query_as!(
+        OauthApplication,
+        "SELECT * FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        form.client_id,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| "Database error".to_string())?
+    .ok_or_else(|| "Unknown application".to_string())?;
+
+    let user = sqlx::query!(
+        r#"SELECT u.id, u.password_hash, u.account_id
+           FROM users u
+           JOIN accounts a ON a.id = u.account_id
+           WHERE u.email_normalized = lower($1)
+             AND u.instance_id = $2
+             AND u.confirmed_at IS NOT NULL"#,
+        form.email,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| "Database error".to_string())?
+    .ok_or_else(|| "Invalid email or password".to_string())?;
+
+    verify_password(&form.password, &user.password_hash)
+        .map_err(|_| "Invalid email or password".to_string())?;
+
+    let scopes = form.scope.clone().unwrap_or_else(|| app.scopes.clone());
+    let code = generate_token(32);
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
+
+    sqlx::query!(
+        r#"INSERT INTO oauth_authorization_codes
+             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+        app.id,
+        user.account_id,
+        code,
+        form.redirect_uri,
+        scopes,
+        expires_at,
+    )
+    .execute(&state.db)
+    .await
+    .map_err(|_| "Database error".to_string())?;
+
+    let sep = if form.redirect_uri.contains('?') { '&' } else { '?' };
+    Ok(format!("{}{}code={}", form.redirect_uri, sep, code))
+}
+

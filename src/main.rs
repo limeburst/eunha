@@ -8,6 +8,7 @@ mod media;
 mod middleware;
 mod state;
 mod streaming;
+mod templates;
 mod well_known;
 
 use axum::{extract::Request, middleware as axum_middleware, Router};

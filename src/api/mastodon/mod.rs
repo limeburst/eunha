@@ -57,6 +57,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/streaming", get(streaming::handler))
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
+        .route("/api/{server}/login", post(oauth::elk_login))
+        .route("/oauth/authorize", get(oauth::authorize_form).post(oauth::authorize_submit))
         .route("/oauth/token", post(oauth::issue_token))
         .route("/oauth/revoke", post(oauth::revoke_token));
 

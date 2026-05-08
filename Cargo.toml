@@ -60,6 +60,8 @@ dotenvy = "0.15"
 
 # Utilities
 url = { version = "2", features = ["serde"] }
+urlencoding = "2"
+minijinja = "2"
 mime = "0.3"
 mime_guess = "2"
 tracing = "0.1"
