@@ -59,10 +59,12 @@ fn patch_index(html: &str, domain: &str) -> String {
     let content_end = content_start + rel_end;
 
     let old_content = &html[content_start..content_end];
-    let new_content = old_content.replace(
-        &format!(r#"defaultServer:"{}""#, DEFAULT_SERVER),
-        &format!(r#"defaultServer:"{}""#, domain),
-    );
+    let new_content = old_content
+        .replace(
+            &format!(r#"defaultServer:"{}""#, DEFAULT_SERVER),
+            &format!(r#"defaultServer:"{}""#, domain),
+        )
+        .replace("singleInstance:false", "singleInstance:true");
 
     if old_content == new_content {
         return html.to_string();
