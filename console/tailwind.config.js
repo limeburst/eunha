@@ -14,10 +14,6 @@ export default {
         danger:   'var(--color-danger)',
         success:  'var(--color-success)',
       },
-      fontFamily: {
-        brand: ['Lora', 'Georgia', 'serif'],
-        sans:  ['DM Sans', 'sans-serif'],
-      },
     },
   },
   plugins: [],

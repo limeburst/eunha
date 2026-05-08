@@ -1,5 +1,4 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Plus, LogOut } from 'lucide-react'
 import { useAuthStore } from '../store/auth'
 
 export function ConsoleLayout({ children }: { children: React.ReactNode }) {
@@ -13,45 +12,30 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
-      <aside className="w-52 flex-shrink-0 border-r border-border flex flex-col px-4 py-5 sticky top-0 h-screen">
-        <NavLink to="/dashboard" className="font-brand text-xl text-accent mb-8 block">
-          eunha
-        </NavLink>
+      <aside className="w-44 flex-shrink-0 border-r border-border flex flex-col px-0 py-0 sticky top-0 h-screen">
+        <div className="border-b border-border px-4 py-4">
+          <NavLink to="/dashboard" className="text-text text-xs tracking-widest uppercase">eunha</NavLink>
+        </div>
 
-        <nav className="flex flex-col gap-1 flex-1">
-          <NavLink
-            to="/dashboard"
-            end
-            className={({ isActive }) => navCls(isActive)}
-          >
-            <LayoutDashboard size={16} />
+        <nav className="flex flex-col flex-1 py-2">
+          <NavLink to="/dashboard" end className={({ isActive }) => navCls(isActive)}>
             Instances
           </NavLink>
-          <NavLink
-            to="/instances/new"
-            className={({ isActive }) => navCls(isActive)}
-          >
-            <Plus size={16} />
+          <NavLink to="/instances/new" className={({ isActive }) => navCls(isActive)}>
             New instance
           </NavLink>
         </nav>
 
         {user && (
-          <div className="mt-auto pt-4 border-t border-border">
-            <p className="text-xs text-muted truncate mb-3">{user.email}</p>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-xs text-muted hover:text-danger transition-colors"
-            >
-              <LogOut size={13} />
+          <div className="border-t border-border px-4 py-3">
+            <p className="text-xs text-muted truncate mb-2">{user.email}</p>
+            <button onClick={handleLogout} className="text-xs text-muted hover:text-danger transition-colors">
               Sign out
             </button>
           </div>
         )}
       </aside>
 
-      {/* Main */}
       <main className="flex-1 min-w-0 overflow-auto">
         {children}
       </main>
@@ -60,5 +44,4 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
 }
 
 const navCls = (isActive: boolean) =>
-  `flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors
-  ${isActive ? 'bg-accent-soft text-accent' : 'text-muted hover:text-text hover:bg-elevated'}`
+  `block px-4 py-2 text-xs transition-colors ${isActive ? 'text-text bg-elevated' : 'text-muted hover:text-text hover:bg-surface'}`

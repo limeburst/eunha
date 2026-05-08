@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ExternalLink } from 'lucide-react'
 import { getInstance, updateInstance, deleteInstance } from '../api/endpoints'
 import type { Instance } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
@@ -22,10 +21,7 @@ export function InstanceDetail() {
   useEffect(() => {
     if (!domain) return
     getInstance(domain)
-      .then((inst) => {
-        setInstance(inst)
-        setTitle(inst.title)
-      })
+      .then((inst) => { setInstance(inst); setTitle(inst.title) })
       .catch(() => setError('Instance not found.'))
       .finally(() => setLoading(false))
   }, [domain])
@@ -57,81 +53,50 @@ export function InstanceDetail() {
     }
   }
 
-  if (loading) return <div className="px-6 py-8 text-muted text-sm">Loading…</div>
-  if (error || !instance) return <div className="px-6 py-8 text-danger text-sm">{error ?? 'Not found.'}</div>
+  if (loading) return <div className="px-6 py-6 text-muted text-xs">Loading…</div>
+  if (error || !instance) return <div className="px-6 py-6 text-danger text-xs">{error ?? 'Not found.'}</div>
 
   return (
-    <div className="max-w-xl mx-auto px-6 py-8 space-y-8">
-      {/* Header */}
+    <div className="max-w-sm px-6 py-6 space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-brand text-2xl text-text mb-1">{instance.title}</h1>
+          <h1 className="text-sm text-text mb-1">{instance.title}</h1>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-muted">{instance.domain}</span>
+            <span className="text-xs text-muted">{instance.domain}</span>
             <StatusBadge status={instance.status} />
           </div>
         </div>
-        <a
-          href={`https://${instance.domain}`}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 text-xs text-muted hover:text-accent transition-colors mt-1"
-        >
-          Open <ExternalLink size={12} />
-        </a>
+        <a href={`https://${instance.domain}`} target="_blank" rel="noreferrer"
+          className="text-xs text-muted hover:text-text transition-colors mt-0.5">↗</a>
       </div>
 
-      {/* Settings */}
-      <section className="bg-surface border border-border rounded-lg p-5">
-        <h2 className="text-xs font-medium text-muted uppercase tracking-wider mb-4">Settings</h2>
-        <form onSubmit={handleSave} className="space-y-4">
+      <section className="space-y-4">
+        <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">Settings</p>
+        <form onSubmit={handleSave} className="space-y-3">
           <div>
-            <label className="block text-xs text-muted mb-1.5">Display name</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              className={inputCls}
-            />
+            <label className="block text-xs text-muted mb-1">Display name</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} required className={inputCls} />
           </div>
           <div className="flex items-center gap-3">
-            <button
-              type="submit"
-              disabled={saving || title === instance.title}
-              className="px-4 py-2 rounded-md text-sm font-medium bg-accent text-bg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            <button type="submit" disabled={saving || title === instance.title} className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
               {saving ? 'Saving…' : 'Save'}
             </button>
-            {saveMsg && (
-              <span className={`text-xs ${saveMsg === 'Saved.' ? 'text-success' : 'text-danger'}`}>
-                {saveMsg}
-              </span>
-            )}
+            {saveMsg && <span className={`text-xs ${saveMsg === 'Saved.' ? 'text-success' : 'text-danger'}`}>{saveMsg}</span>}
           </div>
         </form>
       </section>
 
-      {/* Danger zone */}
-      <section className="border border-danger/30 rounded-lg p-5">
-        <h2 className="text-xs font-medium text-danger uppercase tracking-wider mb-3">Danger zone</h2>
-        <p className="text-sm text-muted mb-4">
-          Permanently delete this instance and all its data. This cannot be undone.
-        </p>
+      <section className="space-y-3">
+        <p className="text-xs text-danger uppercase tracking-widest border-b border-danger/30 pb-2">Danger zone</p>
+        <p className="text-xs text-muted">Permanently delete this instance and all its data.</p>
         <div className="space-y-2">
           <label className="block text-xs text-muted">
             Type <span className="text-text font-mono">{instance.domain}</span> to confirm
           </label>
-          <input
-            value={deleteConfirm}
-            onChange={(e) => setDeleteConfirm(e.target.value)}
-            placeholder={instance.domain}
-            className={inputCls}
-          />
-          <button
-            onClick={handleDelete}
-            disabled={deleteConfirm !== instance.domain || deleting}
-            className="px-4 py-2 rounded-md text-sm font-medium border border-danger text-danger hover:bg-danger/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
+          <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)}
+            placeholder={instance.domain} className={inputCls} />
+          <button onClick={handleDelete} disabled={deleteConfirm !== instance.domain || deleting}
+            className="px-3 py-1.5 text-xs border border-danger text-danger hover:bg-danger/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             {deleting ? 'Deleting…' : 'Delete instance'}
           </button>
         </div>
@@ -140,5 +105,4 @@ export function InstanceDetail() {
   )
 }
 
-const inputCls = `w-full bg-elevated border border-border rounded-md px-3 py-2 text-sm text-text
-  placeholder:text-muted outline-none focus:border-accent transition-colors`
+const inputCls = 'w-full bg-surface border border-border px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors'

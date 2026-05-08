@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, ExternalLink } from 'lucide-react'
 import { listInstances } from '../api/endpoints'
 import type { Instance } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
@@ -18,60 +17,39 @@ export function Dashboard() {
   }, [])
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="font-brand text-2xl text-text">Instances</h1>
-        <Link
-          to="/instances/new"
-          className="flex items-center gap-2 px-4 py-2 rounded-md bg-accent text-bg text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          <Plus size={15} />
-          New instance
+    <div className="max-w-2xl px-6 py-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xs uppercase tracking-widest text-muted">Instances</h1>
+        <Link to="/instances/new" className="text-xs border border-border px-3 py-1.5 text-muted hover:text-text hover:border-text transition-colors">
+          + New
         </Link>
       </div>
 
-      {loading && (
-        <div className="text-muted text-sm py-12 text-center">Loading…</div>
-      )}
-      {error && (
-        <div className="text-danger text-sm py-12 text-center">{error}</div>
-      )}
+      {loading && <p className="text-muted text-xs">Loading…</p>}
+      {error && <p className="text-danger text-xs">{error}</p>}
+
       {!loading && !error && instances.length === 0 && (
-        <div className="border border-border rounded-lg px-6 py-16 text-center">
-          <p className="text-muted text-sm mb-4">You don't have any instances yet.</p>
-          <Link
-            to="/instances/new"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-accent text-bg text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            <Plus size={15} />
-            Create your first instance
+        <div className="border border-border px-5 py-10 text-center">
+          <p className="text-muted text-xs mb-4">No instances.</p>
+          <Link to="/instances/new" className="text-xs border border-border px-3 py-1.5 text-muted hover:text-text hover:border-text transition-colors">
+            Create instance
           </Link>
         </div>
       )}
+
       {!loading && instances.length > 0 && (
-        <div className="flex flex-col divide-y divide-border border border-border rounded-lg overflow-hidden">
+        <div className="border border-border divide-y divide-border">
           {instances.map((inst) => (
             <Link
               key={inst.id}
               to={`/instances/${inst.domain}`}
-              className="flex items-center justify-between px-5 py-4 bg-surface hover:bg-elevated transition-colors"
+              className="flex items-center justify-between px-4 py-3 hover:bg-surface transition-colors"
             >
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="text-sm font-medium text-text truncate">{inst.title}</span>
-                <span className="text-xs text-muted">{inst.domain}</span>
+              <div className="min-w-0">
+                <p className="text-xs text-text truncate">{inst.title}</p>
+                <p className="text-xs text-muted mt-0.5">{inst.domain}</p>
               </div>
-              <div className="flex items-center gap-4 flex-shrink-0 ml-4">
-                <StatusBadge status={inst.status} />
-                <a
-                  href={`https://${inst.domain}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-muted hover:text-accent transition-colors"
-                >
-                  <ExternalLink size={14} />
-                </a>
-              </div>
+              <StatusBadge status={inst.status} />
             </Link>
           ))}
         </div>

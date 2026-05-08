@@ -36,143 +36,88 @@ export function NewInstance() {
     } catch (err) {
       setError(err instanceof Error && err.message.includes('409')
         ? 'That domain is already taken.'
-        : 'Failed to create instance. Please try again.')
+        : 'Failed to create instance.')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="max-w-xl mx-auto px-6 py-8">
-      <h1 className="font-brand text-2xl text-text mb-1">New instance</h1>
-      <p className="text-muted text-sm mb-8">Your instance will be ready in a few moments.</p>
+    <div className="max-w-sm px-6 py-6">
+      <h1 className="text-xs uppercase tracking-widest text-muted mb-6">New instance</h1>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Domain */}
-        <section className="bg-surface border border-border rounded-lg p-5 space-y-4">
-          <h2 className="text-xs font-medium text-muted uppercase tracking-wider">Domain</h2>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setUseCustom(false)}
-              className={tabCls(!useCustom)}
-            >
+        <section className="space-y-3">
+          <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">Domain</p>
+          <div className="flex gap-0 border border-border">
+            <button type="button" onClick={() => setUseCustom(false)}
+              className={`px-3 py-1.5 text-xs transition-colors ${!useCustom ? 'bg-text text-bg' : 'text-muted hover:text-text'}`}>
               eunha subdomain
             </button>
-            <button
-              type="button"
-              onClick={() => setUseCustom(true)}
-              className={tabCls(useCustom)}
-            >
+            <button type="button" onClick={() => setUseCustom(true)}
+              className={`px-3 py-1.5 text-xs transition-colors border-l border-border ${useCustom ? 'bg-text text-bg' : 'text-muted hover:text-text'}`}>
               Custom domain
             </button>
           </div>
-
           {!useCustom ? (
-            <div className="flex items-center gap-0">
-              <input
-                value={subdomain}
+            <div className="flex">
+              <input value={subdomain}
                 onChange={(e) => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
                 placeholder="myinstance"
-                className={`flex-1 rounded-l-md rounded-r-none border-r-0 ${inputCls}`}
-                required={!useCustom}
-              />
-              <span className="px-3 py-2 bg-elevated border border-border rounded-r-md text-sm text-muted select-none">
+                className="flex-1 bg-surface border border-border border-r-0 px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors"
+                required={!useCustom} />
+              <span className="px-3 py-2 border border-border bg-elevated text-xs text-muted select-none whitespace-nowrap">
                 .{EUNHA_DOMAIN}
               </span>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              <input
-                value={customDomain}
+            <div>
+              <input value={customDomain}
                 onChange={(e) => setCustomDomain(e.target.value.toLowerCase())}
                 placeholder="community.example.com"
-                className={inputCls}
-                required={useCustom}
-              />
-              <p className="text-xs text-muted">
-                Point an A/CNAME record to eunha before submitting.
-              </p>
+                className={inputCls} required={useCustom} />
+              <p className="text-xs text-muted mt-1">Point an A/CNAME record to eunha first.</p>
             </div>
           )}
         </section>
 
-        {/* Instance details */}
-        <section className="bg-surface border border-border rounded-lg p-5 space-y-4">
-          <h2 className="text-xs font-medium text-muted uppercase tracking-wider">Instance</h2>
-          <Field label="Display name">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="My Community"
-              required
-              className={inputCls}
-            />
-          </Field>
+        <section className="space-y-3">
+          <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">Instance</p>
+          <div>
+            <label className="block text-xs text-muted mb-1">Display name</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder="My Community" required className={inputCls} />
+          </div>
         </section>
 
-        {/* Admin account */}
-        <section className="bg-surface border border-border rounded-lg p-5 space-y-4">
-          <h2 className="text-xs font-medium text-muted uppercase tracking-wider">Admin account</h2>
-          <Field label="Username">
-            <input
-              value={adminUsername}
+        <section className="space-y-3">
+          <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">Admin account</p>
+          <div>
+            <label className="block text-xs text-muted mb-1">Username</label>
+            <input value={adminUsername}
               onChange={(e) => setAdminUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-              placeholder="admin"
-              required
-              className={inputCls}
-            />
-          </Field>
-          <Field label="Email">
-            <input
-              type="email"
-              value={adminEmail}
-              onChange={(e) => setAdminEmail(e.target.value)}
-              placeholder="admin@example.com"
-              required
-              className={inputCls}
-            />
-          </Field>
-          <Field label="Password">
-            <input
-              type="password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              autoComplete="new-password"
-              required
-              minLength={8}
-              className={inputCls}
-            />
-          </Field>
+              placeholder="admin" required className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-1">Email</label>
+            <input type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)}
+              placeholder="admin@example.com" required className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-1">Password</label>
+            <input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)}
+              autoComplete="new-password" required minLength={8} className={inputCls} />
+          </div>
         </section>
 
-        {error && <p className="text-danger text-sm">{error}</p>}
+        {error && <p className="text-danger text-xs">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={!valid || loading}
-          className="w-full py-2.5 rounded-md text-sm font-medium bg-accent text-bg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Creating instance…' : 'Create instance'}
+        <button type="submit" disabled={!valid || loading} className="w-full py-2 text-xs bg-text text-bg hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          {loading ? 'Creating…' : 'Create instance'}
         </button>
       </form>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs text-muted mb-1.5">{label}</label>
-      {children}
-    </div>
-  )
-}
-
-const inputCls = `w-full bg-elevated border border-border rounded-md px-3 py-2 text-sm text-text
-  placeholder:text-muted outline-none focus:border-accent transition-colors`
-
-const tabCls = (active: boolean) =>
-  `px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-  ${active ? 'bg-accent-soft text-accent' : 'text-muted hover:text-text hover:bg-elevated'}`
+const inputCls = 'w-full bg-surface border border-border px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors'

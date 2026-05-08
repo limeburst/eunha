@@ -30,57 +30,39 @@ export function Signup() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-sm">
-        <Link to="/" className="block font-brand text-3xl text-accent text-center mb-2">eunha</Link>
-        <p className="text-center text-muted text-sm mb-8">Create your hosting account</p>
-
-        <form onSubmit={handleSubmit} className="bg-surface border border-border rounded-lg p-6 space-y-4">
-          <div>
-            <label className="block text-xs text-muted mb-1.5">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              autoComplete="email"
-              required
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-muted mb-1.5">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-              required
-              minLength={8}
-              className={inputCls}
-            />
-            <p className="text-xs text-muted mt-1.5">At least 8 characters</p>
-          </div>
-
-          {error && <p className="text-danger text-sm">{error}</p>}
-
-          <button type="submit" disabled={loading} className={btnCls}>
-            {loading ? 'Creating account…' : 'Create account'}
-          </button>
-        </form>
-
-        <p className="text-center text-xs text-muted mt-6">
-          Already have an account?{' '}
-          <Link to="/login" className="text-accent hover:underline">Sign in</Link>
-        </p>
+    <div className="min-h-screen flex flex-col bg-bg text-text">
+      <header className="border-b border-border px-6 py-4">
+        <Link to="/" className="text-text text-sm tracking-widest uppercase">eunha</Link>
+      </header>
+      <div className="flex-1 flex items-center justify-center px-4">
+        <div className="w-full max-w-xs">
+          <h1 className="text-xs uppercase tracking-widest text-muted mb-6">Create account</h1>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs text-muted mb-1">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com" autoComplete="email" required className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-muted mb-1">Password</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password" required minLength={8} className={inputCls} />
+              <p className="text-xs text-muted mt-1">At least 8 characters</p>
+            </div>
+            {error && <p className="text-danger text-xs">{error}</p>}
+            <button type="submit" disabled={loading} className={btnPrimary}>
+              {loading ? 'Creating account…' : 'Create account'}
+            </button>
+          </form>
+          <p className="text-xs text-muted mt-6">
+            Already have an account?{' '}
+            <Link to="/login" className="text-text hover:underline">Sign in</Link>
+          </p>
+        </div>
       </div>
     </div>
   )
 }
 
-const inputCls = `w-full bg-elevated border border-border rounded-md px-3 py-2 text-sm text-text
-  placeholder:text-muted outline-none focus:border-accent transition-colors`
-
-const btnCls = `w-full py-2.5 rounded-md text-sm font-medium
-  bg-accent text-bg hover:opacity-90 transition-opacity
-  disabled:opacity-50 disabled:cursor-not-allowed`
+const inputCls = 'w-full bg-surface border border-border px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors'
+const btnPrimary = 'w-full py-2 text-xs bg-text text-bg hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
