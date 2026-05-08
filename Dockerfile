@@ -3,8 +3,6 @@ FROM node:24-alpine AS elk-builder
 RUN corepack enable pnpm
 WORKDIR /elk
 COPY elk/ .
-COPY elk-patches/plugins/eunha.client.ts app/plugins/eunha.client.ts
-COPY elk-patches/middleware/auth.ts app/middleware/auth.ts
 RUN pnpm install --frozen-lockfile && pnpm generate
 
 # ── Stage 2: Build console ──────────────────────────────────────────────────
