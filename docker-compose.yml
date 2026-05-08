@@ -28,7 +28,7 @@ services:
       MEDIA_STORAGE__BASE_PATH: /data/media
       MEDIA_STORAGE__BASE_URL: ${MEDIA_STORAGE__BASE_URL}
     ports:
-      - "3000:3000"
+      - "50000:50000"
     volumes:
       - media:/data/media
 
