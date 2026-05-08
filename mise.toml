@@ -13,6 +13,6 @@ if [ ! -f elk/package.json ]; then
 fi
 mkdir -p elk/plugins
 cp elk-patches/plugins/eunha.client.ts elk/plugins/eunha.client.ts
-sed -i.bak 's/params\.server as string || useRuntimeConfig()\.public\.defaultServer/(params.server as string) || (window as any).__eunha_instance || useRuntimeConfig().public.defaultServer/' elk/app/plugins/0.setup-users.ts
+sed -i.bak 's/params\.server as string || useRuntimeConfig()\.public\.defaultServer/(params.server as string) || (typeof window !== "undefined" \&\& (window as any).__eunha_instance) || useRuntimeConfig().public.defaultServer/' elk/app/plugins/0.setup-users.ts
 cd elk && pnpm install && pnpm generate
 """
