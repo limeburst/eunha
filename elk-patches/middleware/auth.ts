@@ -14,9 +14,9 @@ export default defineNuxtRouteMiddleware((to) => {
 })
 
 function handleAuth(to: RouteLocationNormalized) {
-  // Use the injected instance domain (set by axum from Host header) when available,
-  // so unauthenticated visitors land on the correct instance's local timeline.
-  const server = (typeof window !== 'undefined' && (window as any).__eunha_instance) || currentServer.value
+  // Read <meta name="eunha-instance"> injected by axum (CSP-safe; inline scripts are blocked).
+  const instance = document.querySelector('meta[name="eunha-instance"]')?.getAttribute('content')
+  const server = instance || currentServer.value
 
   if (to.path === '/') {
     // Installed PWA shortcut to notifications

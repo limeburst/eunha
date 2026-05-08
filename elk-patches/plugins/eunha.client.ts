@@ -1,7 +1,7 @@
-// Reads window.__eunha_instance (injected by the axum server from the Host header)
-// and pre-configures Elk's routing to use this instance as the public server.
+// Reads the <meta name="eunha-instance"> tag injected by axum from the Host header
+// and configures Elk's routing to use this instance as the public server.
 export default defineNuxtPlugin({ enforce: 'post', setup() {
-  const instance = (window as any).__eunha_instance as string | undefined
+  const instance = document.querySelector('meta[name="eunha-instance"]')?.getAttribute('content')
   if (!instance) return
 
   // Override publicServer so auth middleware redirects to our instance, not defaultServer.

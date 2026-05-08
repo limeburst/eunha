@@ -2,9 +2,9 @@
 ///
 /// - Static assets (JS, CSS, images) are served directly from `elk/.output/public/`.
 /// - All other paths fall back to `index.html` (SPA client-side routing).
-/// - `index.html` has `window.__eunha_instance = "<domain>"` injected before `</head>`
-///   so the `eunha.client.ts` Elk plugin can auto-configure the instance without
-///   showing the server selector.
+/// - `index.html` has `<meta name="eunha-instance" content="<domain>">` injected before
+///   `</head>` so plugins can read the instance domain. A `<script>` tag can't be used
+///   because Elk's pre-rendered CSP includes SHA hashes and blocks unrecognised inlines.
 use axum::{
     http::{header, HeaderMap, StatusCode, Uri},
     response::{Html, IntoResponse, Response},
@@ -41,8 +41,10 @@ async fn serve_index(headers: &HeaderMap) -> Response {
             .into_response();
     };
 
-    let script = format!(r#"<script>window.__eunha_instance="{domain}"</script>"#);
-    Html(html.replacen("</head>", &format!("{script}</head>"), 1)).into_response()
+    // Use a <meta> tag instead of <script> — the pre-rendered HTML has a CSP with
+    // SHA hashes that blocks any inline script we inject at serve time.
+    let meta = format!(r#"<meta name="eunha-instance" content="{domain}">"#);
+    Html(html.replacen("</head>", &format!("{meta}</head>"), 1)).into_response()
 }
 
 fn domain_from_headers(headers: &HeaderMap) -> String {
