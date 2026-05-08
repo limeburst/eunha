@@ -1,27 +1,9 @@
 services:
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: eunha
-      POSTGRES_USER: eunha
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eunha"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   app:
     build: .
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgres://eunha:${POSTGRES_PASSWORD}@db/eunha
+      DATABASE_URL: ${DATABASE_URL}
       BIND_ADDRESS: 0.0.0.0:3000
       CONSOLE_DOMAIN: ${CONSOLE_DOMAIN}
       MEDIA_STORAGE__TYPE: ${MEDIA_STORAGE__TYPE:-local}
@@ -31,7 +13,8 @@ services:
       - "50000:3000"
     volumes:
       - media:/data/media
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
-  pgdata:
   media:
