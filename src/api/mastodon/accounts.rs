@@ -124,6 +124,13 @@ pub async fn get_account_statuses(
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<impl IntoResponse> {
     let account = fetch_account(&state, id).await?;
+
+    // We don't implement pinned statuses; return empty list rather than
+    // serving regular statuses which Elk would render as pinned.
+    if q.pinned == Some(true) {
+        return Ok((HeaderMap::new(), Json(vec![])));
+    }
+
     let limit = q.pagination.limit_clamped(20, 40);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -159,6 +166,10 @@ pub async fn get_account_statuses(
                visibility IN ('public', 'unlisted')
                OR ($6::boolean = true)
                OR ($7::boolean = true AND visibility = 'private')
+             )
+             AND (
+               text != '' OR content != ''
+               OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
              )
            ORDER BY id DESC
            LIMIT $8"#,

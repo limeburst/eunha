@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.*\n           FROM statuses s\n           WHERE s.account_id IN (\n               SELECT target_account_id FROM follows\n               WHERE account_id = $1 AND state = 'accepted'\n               UNION ALL SELECT $1\n           )\n           AND s.deleted_at IS NULL\n           AND ($2::bigint IS NULL OR s.id < $2)\n           AND ($3::bigint IS NULL OR s.id > $3)\n           ORDER BY s.id DESC\n           LIMIT $4",
+  "query": "SELECT s.*\n           FROM statuses s\n           WHERE s.visibility = 'public'\n             AND s.deleted_at IS NULL\n             AND s.reblog_of_id IS NULL\n             AND ($1::bool IS FALSE OR s.instance_id = $2)\n             AND ($3::bigint IS NULL OR s.id < $3)\n             AND ($4::bigint IS NULL OR s.id > $4)\n             AND (s.text != '' OR s.content != ''\n                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -106,6 +106,7 @@
     ],
     "parameters": {
       "Left": [
+        "Bool",
         "Uuid",
         "Int8",
         "Int8",
@@ -135,5 +136,5 @@
       false
     ]
   },
-  "hash": "b11a9e7ad7af11f4cb4432493b0f5133625c4bf940c2acaf66bc2d10220eeb25"
+  "hash": "2763c32afecd4098cfce6c9244cd0f545034d4df585313fa76db6948cd5a2f73"
 }
