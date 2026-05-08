@@ -60,8 +60,8 @@ fn patch_index(html: &str, domain: &str) -> String {
 
     let old_content = &html[content_start..content_end];
     let new_content = old_content.replace(
-        &format!(r#""defaultServer":"{}""#, DEFAULT_SERVER),
-        &format!(r#""defaultServer":"{}""#, domain),
+        &format!(r#"defaultServer:"{}""#, DEFAULT_SERVER),
+        &format!(r#"defaultServer:"{}""#, domain),
     );
 
     if old_content == new_content {
