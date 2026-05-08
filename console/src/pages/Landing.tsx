@@ -9,7 +9,7 @@ export function Landing() {
       </header>
 
       <main className="flex-1 flex flex-col justify-center px-6 py-16 max-w-sm">
-        <p className="text-xs text-muted uppercase tracking-widest mb-4">Console</p>
+        <p className="text-xs text-muted uppercase tracking-widest mb-4">eunha.social</p>
         <h1 className="text-2xl text-text mb-8 leading-snug">
           fediverse instance hosting
         </h1>
