@@ -126,6 +126,21 @@ pub async fn get_account_statuses(
 
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     let is_self = viewer_id == Some(account.id);
+    let is_follower = if !is_self {
+        if let Some(vid) = viewer_id {
+            sqlx::query_scalar!(
+                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted')",
+                vid, account.id,
+            )
+            .fetch_one(&state.db)
+            .await?
+            .unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
 
     let statuses = sqlx::query_as!(
         crate::db::models::Status,
@@ -139,15 +154,17 @@ pub async fn get_account_statuses(
              AND (
                visibility IN ('public', 'unlisted')
                OR ($6::boolean = true)
+               OR ($7::boolean = true AND visibility = 'private')
              )
            ORDER BY id DESC
-           LIMIT $7"#,
+           LIMIT $8"#,
         account.id,
         max_id,
         since_id,
         q.exclude_reblogs.unwrap_or(false),
         q.exclude_replies.unwrap_or(false),
         is_self,
+        is_follower,
         limit,
     )
     .fetch_all(&state.db)
