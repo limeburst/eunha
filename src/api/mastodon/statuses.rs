@@ -14,8 +14,8 @@ use crate::{
 };
 use super::{
     accounts::fetch_status_media,
-    convert::{account_from_db, status_from_db},
-    types::Status,
+    convert::status_from_db,
+    types::{Status, StatusContext, StatusSource},
 };
 
 #[derive(Debug, Deserialize)]
@@ -269,6 +269,177 @@ pub async fn reblog_status(
 
     let media = fetch_status_media(&state, boost.id).await?;
     Ok(Json(status_from_db(&boost, &boost_account, media, None, None)))
+}
+
+// ── GET /api/v1/statuses/:id/context ──────────────────────────────────────
+
+pub async fn get_status_context(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
+) -> AppResult<Json<StatusContext>> {
+    sqlx::query!("SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL", id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let viewer_id = auth.map(|Extension(a)| a.account_id);
+
+    let ancestor_rows = sqlx::query_as::<_, DbStatus>(
+        r#"WITH RECURSIVE ancestor_chain AS (
+             SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL
+             UNION ALL
+             SELECT s.* FROM statuses s
+               JOIN ancestor_chain a ON s.id = a.in_reply_to_id
+             WHERE s.deleted_at IS NULL
+           )
+           SELECT * FROM ancestor_chain WHERE id != $1 ORDER BY id ASC"#
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let descendant_rows = sqlx::query_as::<_, DbStatus>(
+        r#"WITH RECURSIVE reply_tree AS (
+             SELECT * FROM statuses WHERE in_reply_to_id = $1 AND deleted_at IS NULL
+             UNION ALL
+             SELECT s.* FROM statuses s
+               JOIN reply_tree r ON s.in_reply_to_id = r.id
+             WHERE s.deleted_at IS NULL
+           )
+           SELECT * FROM reply_tree ORDER BY id ASC LIMIT 100"#
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut ancestors = Vec::with_capacity(ancestor_rows.len());
+    for s in &ancestor_rows {
+        let acct = fetch_account(&state, s.account_id).await?;
+        let media = fetch_status_media(&state, s.id).await?;
+        let ctx = if let Some(vid) = viewer_id {
+            Some(build_viewer_context(&state, vid, s.id).await?)
+        } else {
+            None
+        };
+        ancestors.push(status_from_db(s, &acct, media, None, ctx));
+    }
+
+    let mut descendants = Vec::with_capacity(descendant_rows.len());
+    for s in &descendant_rows {
+        let acct = fetch_account(&state, s.account_id).await?;
+        let media = fetch_status_media(&state, s.id).await?;
+        let ctx = if let Some(vid) = viewer_id {
+            Some(build_viewer_context(&state, vid, s.id).await?)
+        } else {
+            None
+        };
+        descendants.push(status_from_db(s, &acct, media, None, ctx));
+    }
+
+    Ok(Json(StatusContext { ancestors, descendants }))
+}
+
+// ── POST /api/v1/statuses/:id/unreblog ────────────────────────────────────
+
+pub async fn unreblog_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (original, account) = fetch_status_with_account(&state, id).await?;
+
+    let deleted = sqlx::query!(
+        "DELETE FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL RETURNING id",
+        auth.account_id, id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_some() {
+        sqlx::query!(
+            "UPDATE statuses SET reblogs_count = GREATEST(reblogs_count - 1, 0) WHERE id = $1",
+            id
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── POST /api/v1/statuses/:id/bookmark ────────────────────────────────────
+
+pub async fn bookmark_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (_, account) = fetch_status_with_account(&state, id).await?;
+
+    sqlx::query!(
+        "INSERT INTO bookmarks (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auth.account_id, id
+    )
+    .execute(&state.db)
+    .await?;
+
+    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── POST /api/v1/statuses/:id/unbookmark ──────────────────────────────────
+
+pub async fn unbookmark_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (_, account) = fetch_status_with_account(&state, id).await?;
+
+    sqlx::query!(
+        "DELETE FROM bookmarks WHERE account_id = $1 AND status_id = $2",
+        auth.account_id, id
+    )
+    .execute(&state.db)
+    .await?;
+
+    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── GET /api/v1/statuses/:id/source ───────────────────────────────────────
+
+pub async fn get_status_source(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<StatusSource>> {
+    let status = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if status.account_id != auth.account_id {
+        return Err(AppError::Forbidden);
+    }
+
+    Ok(Json(StatusSource {
+        id: status.id.to_string(),
+        text: status.text,
+        spoiler_text: status.spoiler_text,
+    }))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

@@ -1,9 +1,13 @@
 pub mod accounts;
+pub mod bookmarks;
 pub mod convert;
+pub mod favourites;
 pub mod instance;
+pub mod markers;
 pub mod media;
 pub mod notifications;
 pub mod oauth;
+pub mod search;
 pub mod statuses;
 pub mod streaming;
 pub mod timelines;
@@ -11,24 +15,45 @@ pub mod types;
 
 use axum::{
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use crate::{middleware as mw, state::AppState};
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_required = Router::new()
-        // Accounts
+        // Accounts — authenticated
         .route("/api/v1/accounts/verify_credentials", get(accounts::verify_credentials))
+        .route("/api/v1/accounts/update_credentials", patch(accounts::update_credentials))
+        .route("/api/v1/accounts/search", get(accounts::search_accounts))
+        .route("/api/v1/accounts/relationships", get(accounts::get_relationships))
         .route("/api/v1/accounts/{id}/follow", post(accounts::follow_account))
         .route("/api/v1/accounts/{id}/unfollow", post(accounts::unfollow_account))
-        .route("/api/v1/accounts/relationships", get(accounts::get_relationships))
-        // Statuses
+        .route("/api/v1/accounts/{id}/mute", post(accounts::mute_account))
+        .route("/api/v1/accounts/{id}/unmute", post(accounts::unmute_account))
+        .route("/api/v1/accounts/{id}/block", post(accounts::block_account))
+        .route("/api/v1/accounts/{id}/unblock", post(accounts::unblock_account))
+        // Preferences
+        .route("/api/v1/preferences", get(accounts::get_preferences))
+        // Follow requests
+        .route("/api/v1/follow_requests", get(accounts::get_follow_requests))
+        .route("/api/v1/follow_requests/{id}/authorize", post(accounts::authorize_follow_request))
+        .route("/api/v1/follow_requests/{id}/reject", post(accounts::reject_follow_request))
+        // Statuses — authenticated writes
         .route("/api/v1/statuses", post(statuses::post_status))
         .route("/api/v1/statuses/{id}", delete(statuses::delete_status))
         .route("/api/v1/statuses/{id}/favourite", post(statuses::favourite_status))
         .route("/api/v1/statuses/{id}/unfavourite", post(statuses::unfavourite_status))
         .route("/api/v1/statuses/{id}/reblog", post(statuses::reblog_status))
+        .route("/api/v1/statuses/{id}/unreblog", post(statuses::unreblog_status))
+        .route("/api/v1/statuses/{id}/bookmark", post(statuses::bookmark_status))
+        .route("/api/v1/statuses/{id}/unbookmark", post(statuses::unbookmark_status))
+        .route("/api/v1/statuses/{id}/source", get(statuses::get_status_source))
+        // Bookmarks / Favourites
+        .route("/api/v1/bookmarks", get(bookmarks::get_bookmarks))
+        .route("/api/v1/favourites", get(favourites::get_favourites))
+        // Markers
+        .route("/api/v1/markers", get(markers::get_markers).post(markers::set_markers))
         // Timelines
         .route("/api/v1/timelines/home", get(timelines::home_timeline))
         // Notifications
@@ -49,8 +74,13 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/accounts/lookup", get(accounts::lookup_account))
         .route("/api/v1/accounts/{id}", get(accounts::get_account))
         .route("/api/v1/accounts/{id}/statuses", get(accounts::get_account_statuses))
+        .route("/api/v1/accounts/{id}/followers", get(accounts::get_account_followers))
+        .route("/api/v1/accounts/{id}/following", get(accounts::get_account_following))
         // Statuses (public read)
         .route("/api/v1/statuses/{id}", get(statuses::get_status))
+        .route("/api/v1/statuses/{id}/context", get(statuses::get_status_context))
+        // Search
+        .route("/api/v2/search", get(search::search))
         // Timelines
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
         // Streaming

@@ -377,6 +377,46 @@ pub struct TagHistory {
     pub uses: String,
 }
 
+// ── Status Context / Source ───────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct StatusContext {
+    pub ancestors: Vec<Status>,
+    pub descendants: Vec<Status>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusSource {
+    pub id: String,
+    pub text: String,
+    pub spoiler_text: String,
+}
+
+// ── Markers ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct MarkerInfo {
+    pub last_read_id: String,
+    pub version: i32,
+    pub updated_at: String,
+}
+
+// ── Preferences ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct Preferences {
+    #[serde(rename = "posting:default:visibility")]
+    pub posting_default_visibility: String,
+    #[serde(rename = "posting:default:sensitive")]
+    pub posting_default_sensitive: bool,
+    #[serde(rename = "posting:default:language")]
+    pub posting_default_language: Option<String>,
+    #[serde(rename = "reading:expand:media")]
+    pub reading_expand_media: String,
+    #[serde(rename = "reading:expand:spoilers")]
+    pub reading_expand_spoilers: bool,
+}
+
 // ── Pagination ─────────────────────────────────────────────────────────────
 
 /// Query parameters used by timeline/list endpoints.
