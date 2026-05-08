@@ -5,7 +5,6 @@ use axum::{
 
 use crate::{
     error::{AppError, AppResult},
-    media::Storage,
     middleware::AuthenticatedUser,
     state::AppState,
 };
@@ -40,9 +39,8 @@ pub async fn upload_media(
 
     let (filename, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
     let media_type = classify_media_type(&content_type);
-    let storage = Storage::from_config(&state.config.media_storage);
-    let key = storage.store(&data, &filename, &content_type).await?;
-    let url = storage.public_url(&key);
+    let key = state.storage.store(&data, &filename, &content_type).await?;
+    let url = state.storage.public_url(&key);
 
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,

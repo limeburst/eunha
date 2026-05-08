@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "eunha-migrate-mastodon"
 path = "src/bin/migrate_mastodon.rs"
 
+[[bin]]
+name = "eunha-upload-media"
+path = "src/bin/upload_media.rs"
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["multipart", "macros", "ws"] }
@@ -62,6 +66,8 @@ dotenvy = "0.15"
 url = { version = "2", features = ["serde"] }
 urlencoding = "2"
 minijinja = "2"
+aws-sdk-s3 = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
 mime = "0.3"
 mime_guess = "2"
 tracing = "0.1"

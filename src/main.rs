@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!("./migrations").run(&db).await?;
 
-    let state = state::AppState::new(db, config.clone());
+    let state = state::AppState::new(db, config.clone()).await;
 
     let app = Router::new()
         .merge(well_known::router())
