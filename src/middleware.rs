@@ -28,6 +28,10 @@ pub async fn resolve_instance(
         .unwrap_or("")
         .to_lowercase();
 
+    if host == state.config.console_domain {
+        return Ok(next.run(req).await);
+    }
+
     let instance = db::get_instance_by_domain(&state.db, &host).await?;
     req.extensions_mut().insert(ResolvedInstance(instance));
     Ok(next.run(req).await)
