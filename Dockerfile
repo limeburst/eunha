@@ -17,6 +17,7 @@ RUN pnpm build
 
 # ── Stage 3: Build Rust binary ──────────────────────────────────────────────
 FROM rust:1-slim-bookworm AS rust-builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 ENV SQLX_OFFLINE=true
