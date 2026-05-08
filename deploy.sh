@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
+HOST=100.113.148.66
+REMOTE_DIR=~/Git/eunha
 
-git pull
-sudo docker compose build
-sudo docker compose up -d
-sudo docker compose ps
+ssh -t "$HOST" "
+  set -euo pipefail
+  cd $REMOTE_DIR
+  git pull
+  docker compose build
+  docker compose up -d
+  docker compose ps
+"
