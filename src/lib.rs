@@ -11,7 +11,7 @@ pub mod streaming;
 pub mod templates;
 pub mod well_known;
 
-use axum::{extract::Request, middleware as axum_middleware, Router};
+use axum::{extract::Request, middleware as axum_middleware, response::IntoResponse, Router};
 use std::sync::Arc;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
@@ -36,6 +36,12 @@ pub fn build_app(state: state::AppState) -> Router {
                     let headers = req.headers().clone();
                     if host == console_domain.as_str() {
                         console_frontend::serve(uri).await
+                    } else if uri.path().starts_with("/api/") {
+                        (
+                            axum::http::StatusCode::NOT_FOUND,
+                            axum::Json(serde_json::json!({"error": "not found"})),
+                        )
+                            .into_response()
                     } else {
                         elk::serve(uri, headers).await
                     }

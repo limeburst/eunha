@@ -17,7 +17,7 @@ use axum::{
     http::HeaderMap,
     middleware,
     routing::{delete, get, patch, post},
-    Router,
+    Json, Router,
 };
 use crate::{middleware as mw, state::AppState};
 
@@ -129,6 +129,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
         // Streaming
         .route("/api/v1/streaming", get(streaming::handler))
+        // Trends / suggestions / announcements / emojis — not yet implemented; return empty lists
+        .route("/api/v1/trends/statuses", get(empty_array))
+        .route("/api/v1/trends/tags", get(empty_array))
+        .route("/api/v1/trends/links", get(empty_array))
+        .route("/api/v1/custom_emojis", get(empty_array))
+        .route("/api/v1/announcements", get(empty_array))
+        .route("/api/v1/suggestions", get(empty_array))
+        .route("/api/v1/conversations", get(empty_array))
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
         .route("/api/{server}/login", post(oauth::elk_login))
@@ -137,6 +145,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/oauth/revoke", post(oauth::revoke_token));
 
     Router::new().merge(auth_required).merge(public)
+}
+
+async fn empty_array() -> Json<[(); 0]> {
+    Json([])
 }
 
 async fn require_auth(
