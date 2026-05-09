@@ -35,12 +35,31 @@ pub async fn resolve_instance(
 
     match db::get_instance_by_domain(&state.db, &host).await {
         Ok(instance) => {
+            // If the request arrived on the eunha.social subdomain but the
+            // instance has a canonical custom domain, redirect there permanently.
+            if host == instance.domain {
+                if let Some(ref custom) = instance.custom_domain {
+                    let location = rebuild_url(&req, custom);
+                    return Ok((
+                        StatusCode::MOVED_PERMANENTLY,
+                        [(axum::http::header::LOCATION, location)],
+                    )
+                        .into_response());
+                }
+            }
             req.extensions_mut().insert(ResolvedInstance(instance));
             Ok(next.run(req).await)
         }
         Err(AppError::NotFound) => Ok(unknown_host_page(&host).into_response()),
         Err(e) => Err(e),
     }
+}
+
+/// Reconstruct the request URL swapping in a different host.
+fn rebuild_url(req: &Request, new_host: &str) -> String {
+    let uri = req.uri();
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    format!("https://{new_host}{path_and_query}")
 }
 
 /// Resolved OAuth token + account, injected by [`authenticate`].
