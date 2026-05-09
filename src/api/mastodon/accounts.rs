@@ -439,6 +439,7 @@ pub async fn search_accounts(
 pub async fn update_credentials(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
+    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiAccount>> {
     let mut display_name: Option<String> = None;
@@ -446,6 +447,8 @@ pub async fn update_credentials(
     let mut locked: Option<bool> = None;
     let mut bot: Option<bool> = None;
     let mut discoverable: Option<bool> = None;
+    let mut avatar_url: Option<String> = None;
+    let mut header_url: Option<String> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| AppError::Unprocessable(e.to_string()))? {
         let name = field.name().unwrap_or("").to_string();
@@ -467,6 +470,24 @@ pub async fn update_credentials(
             "discoverable" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 discoverable = Some(v == "true" || v == "1");
+            }
+            "avatar" => {
+                let filename = field.file_name().unwrap_or("avatar").to_string();
+                let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+                let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                if !data.is_empty() {
+                    let key = state.storage.store(&data, &filename, &content_type, &instance.domain).await?;
+                    avatar_url = Some(state.storage.public_url(&key));
+                }
+            }
+            "header" => {
+                let filename = field.file_name().unwrap_or("header").to_string();
+                let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+                let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                if !data.is_empty() {
+                    let key = state.storage.store(&data, &filename, &content_type, &instance.domain).await?;
+                    header_url = Some(state.storage.public_url(&key));
+                }
             }
             _ => {}
         }
@@ -492,6 +513,20 @@ pub async fn update_credentials(
     if let Some(d) = discoverable {
         sqlx::query!("UPDATE accounts SET discoverable = $1 WHERE id = $2", d, auth.account_id)
             .execute(&state.db).await?;
+    }
+    if let Some(ref url) = avatar_url {
+        sqlx::query!(
+            "UPDATE accounts SET avatar = $1, avatar_static = $1 WHERE id = $2",
+            url, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
+    if let Some(ref url) = header_url {
+        sqlx::query!(
+            "UPDATE accounts SET header = $1, header_static = $1 WHERE id = $2",
+            url, auth.account_id
+        )
+        .execute(&state.db).await?;
     }
 
     let account = fetch_account(&state, auth.account_id).await?;
