@@ -6,10 +6,16 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Plural-Forms: \n"
 
 #: src/pages/Account.tsx:49
 #: src/pages/InstanceDetail.tsx:162
-#: src/pages/NewInstance.tsx:56
+#: src/pages/NewInstance.tsx:63
 msgid "← instances"
 msgstr "← 인스턴스"
 
@@ -21,21 +27,21 @@ msgstr "+ 새로 만들기"
 msgid "Account"
 msgstr "계정"
 
-#: src/pages/NewInstance.tsx:100
+#: src/pages/NewInstance.tsx:127
 msgid "Admin account"
 msgstr "관리자 계정"
 
-#: src/pages/Signup.tsx:73
+#: src/pages/Signup.tsx:76
 msgid "Already have an account?"
 msgstr "이미 계정이 있으신가요?"
 
-#: src/pages/Signup.tsx:29
+#: src/pages/Signup.tsx:32
 msgid "An account with that email already exists."
 msgstr "이미 등록된 이메일입니다."
 
 #: src/pages/Account.tsx:104
-#: src/pages/NewInstance.tsx:136
-#: src/pages/Signup.tsx:65
+#: src/pages/NewInstance.tsx:163
+#: src/pages/Signup.tsx:68
 msgid "At least 8 characters"
 msgstr "8자 이상"
 
@@ -48,38 +54,29 @@ msgstr "비밀번호 변경"
 msgid "Confirm new password"
 msgstr "새 비밀번호 확인"
 
-#: src/pages/Landing.tsx:13
-#: src/pages/Signup.tsx:40
-#: src/pages/Signup.tsx:69
+#: src/pages/Landing.tsx:20
+#: src/pages/Signup.tsx:43
+#: src/pages/Signup.tsx:72
 msgid "Create account"
 msgstr "계정 만들기"
 
-#: src/pages/NewInstance.tsx:147
+#: src/pages/NewInstance.tsx:174
 msgid "Create instance"
 msgstr "인스턴스 만들기"
 
-#: src/pages/Login.tsx:68
+#: src/pages/Login.tsx:72
 msgid "Create one"
 msgstr "만들기"
-
-msgid "Go to console"
-msgstr "콘솔로 이동"
-
-msgid "Subdomain"
-msgstr "서브도메인"
-
-msgid "Custom domain"
-msgstr "커스텀 도메인"
 
 #: src/pages/Dashboard.tsx:42
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
 
-#: src/pages/Signup.tsx:69
+#: src/pages/Signup.tsx:72
 msgid "Creating account…"
 msgstr "계정 생성 중…"
 
-#: src/pages/NewInstance.tsx:147
+#: src/pages/NewInstance.tsx:174
 msgid "Creating…"
 msgstr "생성 중…"
 
@@ -90,6 +87,10 @@ msgstr "현재 비밀번호"
 #: src/pages/Account.tsx:39
 msgid "Current password is incorrect."
 msgstr "현재 비밀번호가 올바르지 않습니다."
+
+#: src/pages/NewInstance.tsx:96
+msgid "Custom domain"
+msgstr "커스텀 도메인"
 
 #: src/pages/InstanceDetail.tsx:131
 msgid "Danger zone"
@@ -104,17 +105,17 @@ msgid "Deleting…"
 msgstr "삭제 중…"
 
 #: src/pages/InstanceDetail.tsx:104
-#: src/pages/NewInstance.tsx:87
+#: src/pages/NewInstance.tsx:114
 msgid "Display name"
 msgstr "표시 이름"
 
-#: src/pages/NewInstance.tsx:64
+#: src/pages/NewInstance.tsx:71
 msgid "Domain"
 msgstr "도메인"
 
-#: src/pages/Login.tsx:39
-#: src/pages/NewInstance.tsx:115
-#: src/pages/Signup.tsx:43
+#: src/pages/Login.tsx:43
+#: src/pages/NewInstance.tsx:142
+#: src/pages/Signup.tsx:46
 msgid "Email"
 msgstr "이메일"
 
@@ -126,7 +127,7 @@ msgstr "오류"
 msgid "Failed to change password."
 msgstr "비밀번호 변경에 실패했습니다."
 
-#: src/pages/NewInstance.tsx:46
+#: src/pages/NewInstance.tsx:53
 msgid "Failed to create instance."
 msgstr "인스턴스 생성에 실패했습니다."
 
@@ -139,11 +140,15 @@ msgstr "인스턴스를 불러오지 못했습니다."
 msgid "Failed to save."
 msgstr "저장에 실패했습니다."
 
-#: src/pages/Landing.tsx:10
+#: src/pages/Landing.tsx:13
 msgid "fediverse instance hosting"
 msgstr "페디버스 인스턴스 호스팅"
 
-#: src/pages/NewInstance.tsx:84
+#: src/pages/Landing.tsx:17
+msgid "Go to console"
+msgstr "콘솔로 이동"
+
+#: src/pages/NewInstance.tsx:111
 msgid "Instance"
 msgstr "인스턴스"
 
@@ -151,7 +156,7 @@ msgstr "인스턴스"
 msgid "Instances"
 msgstr "인스턴스"
 
-#: src/pages/Login.tsx:27
+#: src/pages/Login.tsx:31
 msgid "Invalid email or password."
 msgstr "이메일 또는 비밀번호가 올바르지 않습니다."
 
@@ -164,15 +169,19 @@ msgstr "언어"
 msgid "Loading…"
 msgstr "불러오는 중…"
 
-#: src/pages/NewInstance.tsx:91
+#: src/pages/NewInstance.tsx:118
 msgid "My Community"
 msgstr "내 커뮤니티"
 
-#: src/pages/NewInstance.tsx:72
-msgid "myinstance"
+#: src/pages/NewInstance.tsx:80
+msgid "my-instance"
 msgstr "my-instance"
 
-#: src/pages/NewInstance.tsx:59
+#: src/pages/NewInstance.tsx:72
+#~ msgid "myinstance"
+#~ msgstr "my-instance"
+
+#: src/pages/NewInstance.tsx:66
 msgid "New instance"
 msgstr "새 인스턴스"
 
@@ -180,7 +189,7 @@ msgstr "새 인스턴스"
 msgid "New password"
 msgstr "새 비밀번호"
 
-#: src/pages/Login.tsx:67
+#: src/pages/Login.tsx:71
 msgid "No account?"
 msgstr "계정이 없으신가요?"
 
@@ -192,9 +201,9 @@ msgstr "인스턴스가 없습니다."
 msgid "Not found."
 msgstr "찾을 수 없습니다."
 
-#: src/pages/Login.tsx:51
-#: src/pages/NewInstance.tsx:126
-#: src/pages/Signup.tsx:55
+#: src/pages/Login.tsx:55
+#: src/pages/NewInstance.tsx:153
+#: src/pages/Signup.tsx:58
 msgid "Password"
 msgstr "비밀번호"
 
@@ -235,10 +244,10 @@ msgstr "저장 중…"
 msgid "Settings"
 msgstr "설정"
 
-#: src/pages/Landing.tsx:14
-#: src/pages/Login.tsx:36
-#: src/pages/Login.tsx:63
-#: src/pages/Signup.tsx:74
+#: src/pages/Landing.tsx:21
+#: src/pages/Login.tsx:40
+#: src/pages/Login.tsx:67
+#: src/pages/Signup.tsx:77
 msgid "Sign in"
 msgstr "로그인"
 
@@ -246,11 +255,11 @@ msgstr "로그인"
 msgid "Sign out"
 msgstr "로그아웃"
 
-#: src/pages/Signup.tsx:30
+#: src/pages/Signup.tsx:33
 msgid "Sign up failed. Please try again."
 msgstr "가입에 실패했습니다. 다시 시도해 주세요."
 
-#: src/pages/Login.tsx:63
+#: src/pages/Login.tsx:67
 msgid "Signing in…"
 msgstr "로그인 중…"
 
@@ -258,7 +267,10 @@ msgstr "로그인 중…"
 msgid "stopped"
 msgstr "중지됨"
 
-#: src/pages/NewInstance.tsx:45
+#~ msgid "Subdomain"
+#~ msgstr "서브도메인"
+
+#: src/pages/NewInstance.tsx:52
 msgid "That domain is already taken."
 msgstr "이미 사용 중인 도메인입니다."
 
@@ -266,11 +278,11 @@ msgstr "이미 사용 중인 도메인입니다."
 msgid "Type <0>{0}</0> to confirm"
 msgstr "<0>{0}</0>을(를) 입력하여 확인"
 
-#: src/pages/NewInstance.tsx:103
+#: src/pages/NewInstance.tsx:130
 msgid "Username"
 msgstr "사용자 이름"
 
-#: src/pages/Login.tsx:44
-#: src/pages/Signup.tsx:48
+#: src/pages/Login.tsx:48
+#: src/pages/Signup.tsx:51
 msgid "you@example.com"
 msgstr "이메일@예시.com"
