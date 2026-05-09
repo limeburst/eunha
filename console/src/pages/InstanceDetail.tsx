@@ -223,7 +223,7 @@ export function InstanceDetail() {
 function Back() {
   return (
     <Link to="/dashboard" className="text-xs text-muted hover:text-text transition-colors">
-      <Trans>← instances</Trans>
+      <Trans>← dashboard</Trans>
     </Link>
   )
 }

@@ -14,6 +14,9 @@ msgstr ""
 "Plural-Forms: \n"
 
 #: src/pages/InstanceDetail.tsx:226
+msgid "← dashboard"
+msgstr "← 대시보드"
+
 #: src/pages/NewInstance.tsx:63
 msgid "← instances"
 msgstr "← 인스턴스"
