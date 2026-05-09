@@ -106,12 +106,12 @@ pub async fn post_status(
     let media = fetch_status_media(&state, status.id).await?;
     let api_status = status_from_db(&status, &account, media, None, None);
 
-    if matches!(visibility, "public" | "unlisted") {
+    if matches!(visibility, "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {
             state.streaming.publish(Event::NewStatus {
                 instance_id: instance.id,
                 author_id: account.id,
-                is_public: true,
+                is_public: visibility == "public",
                 payload: std::sync::Arc::new(payload),
             });
         }
