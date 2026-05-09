@@ -22,6 +22,7 @@ pub fn build_app(state: state::AppState) -> Router {
         .merge(well_known::router())
         .merge(api::mastodon::router(state.clone()))
         .merge(api::console::router(state.clone()))
+        .merge(api::account::router(state.clone()))
         .merge(api::ap::router())
         .fallback({
             let console_domain = Arc::new(state.config.console_domain.clone());
@@ -35,7 +36,6 @@ pub fn build_app(state: state::AppState) -> Router {
                         .and_then(|h| h.split(':').next())
                         .unwrap_or("");
                     let uri = req.uri().clone();
-                    let headers = req.headers().clone();
                     if host == console_domain.as_str() {
                         console_frontend::serve(uri).await
                     } else if uri.path().starts_with("/api/") {
@@ -45,7 +45,7 @@ pub fn build_app(state: state::AppState) -> Router {
                         )
                             .into_response()
                     } else {
-                        elk::serve(uri, headers).await
+                        elk::serve(uri).await
                     }
                 }
             })

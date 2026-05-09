@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ t_invite_tree }} · {{ domain }}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.5rem;border-bottom:1px solid #1e1e1e;font-size:.8rem;color:#666}
+.topbar-domain{font-weight:500;color:#aaa}
+.topbar-right{display:flex;align-items:center;gap:1rem}
+.back-link{color:#888;text-decoration:none;font-size:.8rem}
+.back-link:hover{color:#ccc}
+.signout-btn{background:none;border:1px solid #333;color:#888;padding:.3rem .7rem;border-radius:4px;cursor:pointer;font-size:.75rem}
+.signout-btn:hover{border-color:#555;color:#ccc}
+.content{max-width:640px;margin:0 auto;padding:2.5rem 1.5rem}
+h1{font-size:1.1rem;font-weight:600;margin-bottom:1.5rem}
+h2{font-size:.9rem;font-weight:600;color:#aaa;margin:2rem 0 .75rem;text-transform:uppercase;letter-spacing:.04em}
+.invite-card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:1rem 1.25rem;margin-bottom:.75rem}
+.invite-url{font-size:.75rem;color:#888;word-break:break-all;margin-bottom:.5rem;font-family:monospace}
+.invite-meta{font-size:.75rem;color:#666;display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:.5rem}
+.invite-meta span{white-space:nowrap}
+.expired-badge{color:#f88;font-size:.7rem;border:1px solid #6a2a2a;border-radius:3px;padding:.1rem .35rem}
+.redeemers{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.5rem}
+.badge{background:#222;border:1px solid #333;border-radius:4px;padding:.15rem .45rem;font-size:.75rem;color:#ccc}
+.empty{color:#666;font-size:.85rem;padding:.5rem 0}
+.uninvited-section{margin-top:2rem}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-domain">{{ domain }}</span>
+  <div class="topbar-right">
+    <a class="back-link" href="/account">{{ t_back_to_account }}</a>
+    <form method="POST" action="/account/logout">
+      <button class="signout-btn" type="submit">{{ t_sign_out }}</button>
+    </form>
+  </div>
+</div>
+<div class="content">
+  <h1>{{ t_invite_tree }}</h1>
+  {% if invites | length == 0 %}
+    <p class="empty">{{ t_no_members }}</p>
+  {% else %}
+    {% for invite in invites %}
+    <div class="invite-card">
+      <div class="invite-url">{{ invite.url }}</div>
+      <div class="invite-meta">
+        {% if invite.created_by_username %}<span>by @{{ invite.created_by_username }}</span>{% endif %}
+        <span>{{ invite.uses }}{% if invite.max_uses %}/{{ invite.max_uses }}{% endif %} uses</span>
+        {% if invite.is_expired %}<span class="expired-badge">{{ t_expired }}</span>{% endif %}
+      </div>
+      {% if invite.redeemers | length > 0 %}
+      <div class="redeemers">
+        {% for username in invite.redeemers %}
+        <span class="badge">@{{ username }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if uninvited | length > 0 %}
+  <div class="uninvited-section">
+    <h2>{{ t_uninvited_members }}</h2>
+    <div class="redeemers">
+      {% for username in uninvited %}
+      <span class="badge">@{{ username }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>

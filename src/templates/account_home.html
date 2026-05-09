@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ t_account }} · {{ domain }}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.5rem;border-bottom:1px solid #1e1e1e;font-size:.8rem;color:#666}
+.topbar-domain{font-weight:500;color:#aaa}
+.signout-btn{background:none;border:1px solid #333;color:#888;padding:.3rem .7rem;border-radius:4px;cursor:pointer;font-size:.75rem}
+.signout-btn:hover{border-color:#555;color:#ccc}
+.content{max-width:480px;margin:0 auto;padding:2.5rem 1.5rem}
+h1{font-size:1.4rem;font-weight:600;margin-bottom:2rem;color:#e8e8e8}
+.nav{display:flex;flex-direction:column;gap:.75rem}
+.nav-link{display:block;padding:1rem 1.25rem;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#e8e8e8;text-decoration:none;font-size:.95rem;font-weight:500;transition:border-color .15s,background .15s}
+.nav-link:hover{background:#222;border-color:#444}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="topbar-domain">{{ domain }}</span>
+  <form method="POST" action="/account/logout">
+    <button class="signout-btn" type="submit">{{ t_sign_out }}</button>
+  </form>
+</div>
+<div class="content">
+  <h1>@{{ username }}</h1>
+  <nav class="nav">
+    <a class="nav-link" href="/account/invites">{{ t_invite_tree }}</a>
+    <a class="nav-link" href="/account/password">{{ t_change_password }}</a>
+  </nav>
+</div>
+</body>
+</html>

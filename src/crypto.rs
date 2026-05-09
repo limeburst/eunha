@@ -1,5 +1,22 @@
 use crate::error::{AppError, AppResult};
 
+pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
+    use argon2::PasswordVerifier;
+    let parsed = argon2::PasswordHash::new(hash)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid password hash")))?;
+    argon2::Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .map_err(|_| AppError::Unauthorized)
+}
+
+pub fn generate_token(len: usize) -> String {
+    use rand::RngCore;
+    let mut rng = rand::rng();
+    (0..len)
+        .map(|_| format!("{:02x}", rng.next_u32() as u8))
+        .collect()
+}
+
 pub fn generate_rsa_keypair() -> AppResult<(String, String)> {
     use rsa::RsaPrivateKey;
     use rsa::pkcs8::EncodePrivateKey;

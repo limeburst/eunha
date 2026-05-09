@@ -25,4 +25,3 @@ function createApi(getToken: () => string | null) {
 }
 
 export const api = createApi(() => localStorage.getItem('console_token'))
-export const instanceApi = createApi(() => localStorage.getItem('instance_user_token'))
