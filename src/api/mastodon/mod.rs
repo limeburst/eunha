@@ -16,6 +16,7 @@ pub mod timelines;
 pub mod types;
 
 use axum::{
+    extract::DefaultBodyLimit,
     http::HeaderMap,
     middleware,
     routing::{delete, get, patch, post},
@@ -70,7 +71,6 @@ pub fn router(state: AppState) -> Router<AppState> {
     let auth_required = Router::new()
         // Accounts — authenticated
         .route("/api/v1/accounts/verify_credentials", get(accounts::verify_credentials))
-        .route("/api/v1/accounts/update_credentials", patch(accounts::update_credentials))
         .route("/api/v1/accounts/search", get(accounts::search_accounts))
         .route("/api/v1/accounts/relationships", get(accounts::get_relationships))
         .route("/api/v1/accounts/{id}/follow", post(accounts::follow_account))
@@ -109,9 +109,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Invites
         .route("/api/v1/invites", get(invites::list_invites).post(invites::create_invite))
         .route("/api/v1/invites/{id}", delete(invites::delete_invite))
-        // Media
+        // Media — 25 MB limit matching Mastodon's default
         .route("/api/v1/media", post(media::upload_media))
         .route("/api/v2/media", post(media::upload_media))
+        .route("/api/v1/accounts/update_credentials", patch(accounts::update_credentials))
+        .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             require_auth,
