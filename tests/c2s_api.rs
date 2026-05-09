@@ -852,6 +852,46 @@ async fn test_favourite_is_idempotent() {
 
 // ── tests: reblog count ──────────────────────────────────────────────────────
 
+// ── tests: multi-instance isolation ─────────────────────────────────────────
+
+/// The federated public timeline must be scoped to the requesting instance.
+///
+/// Regression test: previously the query omitted the `instance_id` filter when
+/// `?local=false`, causing every instance's statuses to bleed into every other
+/// instance's timeline.
+#[tokio::test]
+async fn test_public_timeline_scoped_to_instance() {
+    let ctx_a = TestContext::new("scope-a").await;
+    let ctx_b = TestContext::new("scope-b").await;
+
+    // Post publicly on instance B.
+    let b_status = ctx_b.api.post_status(&ctx_b.alice_token, "from instance B only", "public").await;
+    let b_id = b_status["id"].as_str().unwrap().to_string();
+
+    // Also post on instance A so the timeline is non-empty.
+    let a_status = ctx_a.api.post_status(&ctx_a.alice_token, "from instance A only", "public").await;
+    let a_id = a_status["id"].as_str().unwrap().to_string();
+
+    // Federated timeline (no ?local) for instance A.
+    let timeline: Vec<Value> = ctx_a.api
+        .get("/api/v1/timelines/public", None)
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+
+    assert!(
+        ids.contains(&a_id.as_str()),
+        "instance A's own status not found in its federated timeline"
+    );
+    assert!(
+        !ids.contains(&b_id.as_str()),
+        "instance B's status leaked into instance A's federated timeline"
+    );
+}
+
 /// Reblogging a public status increments reblogs_count.
 #[tokio::test]
 async fn test_reblog_increments_count() {

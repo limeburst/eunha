@@ -45,10 +45,12 @@ pub async fn public_timeline(
         DbStatus,
         r#"SELECT s.*
            FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
            WHERE s.visibility = 'public'
              AND s.deleted_at IS NULL
              AND s.reblog_of_id IS NULL
-             AND ($1::bool IS FALSE OR s.instance_id = $2)
+             AND s.instance_id = $2
+             AND (NOT $1::bool OR a.domain IS NULL)
              AND ($3::bigint IS NULL OR s.id < $3)
              AND ($4::bigint IS NULL OR s.id > $4)
              AND (s.text != '' OR s.content != ''
