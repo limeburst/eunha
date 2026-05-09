@@ -296,6 +296,7 @@ pub async fn authorize_form(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<AuthorizeParams>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let app = match sqlx::query_as!(
         OauthApplication,
@@ -310,7 +311,12 @@ pub async fn authorize_form(
         _ => return (StatusCode::BAD_REQUEST, "Unknown client_id").into_response(),
     };
 
+    let accept_lang = headers.get("accept-language").and_then(|v| v.to_str().ok());
+    let locale = crate::locale::Locale::detect(params.lang.as_deref(), accept_lang);
     let scope = params.scope.as_deref().unwrap_or("read");
+    let (toggle_en_url, toggle_ko_url) = authorize_toggle_urls(
+        &params.client_id, &params.redirect_uri, scope,
+    );
     let html = crate::templates::render("authorize.html", minijinja::context! {
         domain => instance.domain,
         app_name => app.name,
@@ -318,8 +324,25 @@ pub async fn authorize_form(
         redirect_uri => params.redirect_uri,
         scope => scope,
         error => "",
+        lang => locale.as_str(),
+        toggle_en_url => toggle_en_url,
+        toggle_ko_url => toggle_ko_url,
+        t_sign_in_to => locale.t("sign_in_to"),
+        t_authorize => locale.t("authorize"),
+        t_email => locale.t("email"),
+        t_password => locale.t("password"),
+        t_sign_in => locale.t("sign_in"),
     });
-    Html(html).into_response()
+    Html(html).into_response()}
+
+fn authorize_toggle_urls(client_id: &str, redirect_uri: &str, scope: &str) -> (String, String) {
+    let enc_redirect = urlencoding::encode(redirect_uri);
+    let enc_scope = urlencoding::encode(scope);
+    let base = format!(
+        "/oauth/authorize?client_id={}&redirect_uri={}&scope={}",
+        client_id, enc_redirect, enc_scope,
+    );
+    (format!("{}&lang=en", base), format!("{}&lang=ko", base))
 }
 
 
@@ -332,6 +355,7 @@ pub struct AuthorizeForm {
     pub scope: Option<String>,
     pub email: String,
     pub password: String,
+    pub lang: Option<String>,
 }
 
 pub async fn authorize_submit(
@@ -339,18 +363,30 @@ pub async fn authorize_submit(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Form(form): Form<AuthorizeForm>,
 ) -> Response {
+    let locale = crate::locale::Locale::detect(form.lang.as_deref(), None);
     let result = do_authorize(&state, &instance, &form).await;
     match result {
         Ok(redirect_url) => Redirect::to(&redirect_url).into_response(),
-        Err(e) => {
+        Err(_) => {
             let scope = form.scope.as_deref().unwrap_or("read");
+            let (toggle_en_url, toggle_ko_url) = authorize_toggle_urls(
+                &form.client_id, &form.redirect_uri, scope,
+            );
             let html = crate::templates::render("authorize.html", minijinja::context! {
                 domain => instance.domain,
                 app_name => "Elk",
                 client_id => form.client_id,
                 redirect_uri => form.redirect_uri,
                 scope => scope,
-                error => e,
+                error => locale.t("invalid_credentials"),
+                lang => locale.as_str(),
+                toggle_en_url => toggle_en_url,
+                toggle_ko_url => toggle_ko_url,
+                t_sign_in_to => locale.t("sign_in_to"),
+                t_authorize => locale.t("authorize"),
+                t_email => locale.t("email"),
+                t_password => locale.t("password"),
+                t_sign_in => locale.t("sign_in"),
             });
             Html(html).into_response()
         }

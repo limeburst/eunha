@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod db;
 pub mod elk;
 pub mod error;
+pub mod locale;
 pub mod media;
 pub mod middleware;
 pub mod state;

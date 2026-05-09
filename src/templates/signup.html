@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Create account — {{ instance_domain }}</title>
+<title>{{ t_create_account }} — {{ instance_domain }}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
@@ -19,11 +19,20 @@ button:hover{background:#fff}
 .footer{margin-top:1.25rem;font-size:.8rem;color:#666;text-align:center}
 .footer a{color:#aaa}
 .closed-msg{font-size:.85rem;color:#888;margin-bottom:1.25rem;line-height:1.5}
+.lang{text-align:right;font-size:.75rem;margin-bottom:1rem}
+.lang a{color:#555;text-decoration:none}
+.lang a:hover{color:#aaa}
+.lang-active{color:#aaa!important}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Create account</h1>
+  <div class="lang">
+    {% if lang == "ko" %}<span class="lang-active">EN</span>{% else %}<a href="{{ toggle_en_url }}">EN</a>{% endif %}
+    &nbsp;·&nbsp;
+    {% if lang == "ko" %}<a href="{{ toggle_ko_url }}">KO</a>{% else %}<span class="lang-active">KO</span>{% endif %}
+  </div>
+  <h1>{{ t_create_account }}</h1>
   <p class="sub">{{ instance_domain }}{% if instance_title %} · {{ instance_title }}{% endif %}</p>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
@@ -31,27 +40,29 @@ button:hover{background:#fff}
   {% if show_form %}
   <form method="POST" action="/auth/signup">
     {% if invite %}<input type="hidden" name="invite" value="{{ invite }}">{% endif %}
-    <label for="username">Username</label>
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <label for="username">{{ t_username }}</label>
     <input type="text" id="username" name="username" required autocomplete="username"
            pattern="[a-zA-Z0-9_]+" title="Letters, numbers, and underscores only">
-    <label for="email">Email</label>
+    <label for="email">{{ t_email }}</label>
     <input type="email" id="email" name="email" required autocomplete="email">
-    <label for="password">Password</label>
+    <label for="password">{{ t_password }}</label>
     <input type="password" id="password" name="password" required
            minlength="8" autocomplete="new-password">
-    <label for="password_confirmation">Confirm password</label>
+    <label for="password_confirmation">{{ t_confirm_password }}</label>
     <input type="password" id="password_confirmation" name="password_confirmation"
            required minlength="8" autocomplete="new-password">
-    <button type="submit">Create account</button>
+    <button type="submit">{{ t_create_account }}</button>
   </form>
-  <p class="footer">Already have an account? <a href="/auth/sign_in">Sign in</a></p>
+  <p class="footer">{{ t_already_account }} <a href="/auth/sign_in">{{ t_sign_in }}</a></p>
   {% else %}
-  <p class="closed-msg">Registrations on this instance are by invite only.</p>
+  <p class="closed-msg">{{ t_registrations_closed }}</p>
   <form method="GET" action="/auth/signup">
-    <label for="invite">Invite code</label>
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <label for="invite">{{ t_invite_code }}</label>
     <input type="text" id="invite" name="invite" required autocomplete="off"
-           placeholder="Enter your invite code">
-    <button type="submit">Continue</button>
+           placeholder="">
+    <button type="submit">{{ t_continue_btn }}</button>
   </form>
   {% endif %}
 </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Trans, t } from '@lingui/macro'
 import { useLingui } from '@lingui/react'
@@ -186,7 +186,7 @@ export function InstanceDetail() {
         )}
 
         {inviteTree && (
-          <InviteTreeView members={inviteTree.members} invites={inviteTree.invites} />
+          <InviteListView members={inviteTree.members} invites={inviteTree.invites} />
         )}
       </section>
 
@@ -228,55 +228,73 @@ function Back() {
   )
 }
 
-function InviteTreeView({ members, invites }: { members: InviteTreeMember[]; invites: ConsoleInvite[] }) {
-  if (members.length === 0) return (
-    <p className="text-xs text-muted"><Trans>No members yet.</Trans></p>
-  )
+function InviteListView({ members, invites }: { members: InviteTreeMember[]; invites: ConsoleInvite[] }) {
+  const [copied, setCopied] = React.useState<string | null>(null)
 
-  // Build a map from account_id → children for tree rendering
-  const childrenOf: Record<string, InviteTreeMember[]> = {}
-  const roots: InviteTreeMember[] = []
+  const redeemedBy: Record<string, InviteTreeMember[]> = {}
   for (const m of members) {
-    if (m.invited_by_account_id) {
-      ;(childrenOf[m.invited_by_account_id] ??= []).push(m)
-    } else {
-      roots.push(m)
+    if (m.invite_id) {
+      ;(redeemedBy[m.invite_id] ??= []).push(m)
     }
   }
 
-  // Count pending invites (uses = 0, not expired)
-  const pendingByCreator: Record<string, number> = {}
-  for (const inv of invites) {
-    if (inv.created_by_account_id) {
-      pendingByCreator[inv.created_by_account_id] =
-        (pendingByCreator[inv.created_by_account_id] ?? 0) + 1
-    }
+  const copyUrl = (url: string, id: string) => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(id)
+      setTimeout(() => setCopied(null), 2000)
+    })
   }
 
-  function renderNode(m: InviteTreeMember, depth: number): React.ReactNode {
-    const children = childrenOf[m.account_id] ?? []
-    const pending = pendingByCreator[m.account_id] ?? 0
-    return (
-      <div key={m.account_id} style={{ paddingLeft: depth > 0 ? `${depth * 16}px` : undefined }}>
-        <div className="flex items-center gap-2 py-0.5">
-          {depth > 0 && <span className="text-muted/40 shrink-0">└</span>}
-          <span className="text-xs text-text font-mono">{m.username}</span>
-          {(children.length > 0 || pending > 0) && (
-            <span className="text-xs text-muted/60">
-              {children.length > 0 && `${children.length} invited`}
-              {children.length > 0 && pending > 0 && ', '}
-              {pending > 0 && `${pending} pending`}
-            </span>
-          )}
-        </div>
-        {children.map((c) => renderNode(c, depth + 1))}
-      </div>
-    )
+  if (invites.length === 0 && members.length === 0) {
+    return <p className="text-xs text-muted"><Trans>No members yet.</Trans></p>
   }
 
   return (
-    <div className="space-y-0.5">
-      {roots.map((m) => renderNode(m, 0))}
+    <div className="space-y-3">
+      {invites.map((inv) => {
+        const redeemers = redeemedBy[inv.id] ?? []
+        const isExpired = inv.expires_at ? new Date(inv.expires_at) < new Date() : false
+        const isMaxed = inv.max_uses != null && inv.uses >= inv.max_uses
+        return (
+          <div key={inv.id} className="border border-border p-2 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-muted flex-1 truncate">{inv.url}</span>
+              <button
+                onClick={() => copyUrl(inv.url, inv.id)}
+                className="text-xs text-muted hover:text-text transition-colors shrink-0"
+              >
+                {copied === inv.id ? '✓' : 'copy'}
+              </button>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted/60">
+              {inv.created_by_username && (
+                <span>by <span className="font-mono text-muted">{inv.created_by_username}</span></span>
+              )}
+              <span>
+                {inv.uses}{inv.max_uses != null ? `/${inv.max_uses}` : ''} used
+              </span>
+              {isExpired && <span className="text-danger">expired</span>}
+              {!isExpired && isMaxed && <span className="text-muted">maxed</span>}
+            </div>
+            {redeemers.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {redeemers.map((m) => (
+                  <span key={m.account_id} className="text-xs font-mono text-text bg-elevated px-1.5 py-0.5 border border-border">
+                    {m.username}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {members.some((m) => !m.invite_id) && (
+        <div className="space-y-0.5">
+          {members.filter((m) => !m.invite_id).map((m) => (
+            <div key={m.account_id} className="text-xs font-mono text-muted">{m.username}</div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

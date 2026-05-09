@@ -13,9 +13,12 @@ use crate::{
     templates,
 };
 
+use urlencoding;
+
 #[derive(Debug, Deserialize)]
 pub struct SignUpQuery {
     invite: Option<String>,
+    lang: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,25 +28,29 @@ pub struct SignUpForm {
     password: Option<String>,
     password_confirmation: Option<String>,
     invite: Option<String>,
+    lang: Option<String>,
 }
 
 pub async fn signup_get(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(q): Query<SignUpQuery>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let invite = q.invite.as_deref().unwrap_or("").trim().to_string();
+    let accept_lang = headers.get("accept-language").and_then(|v| v.to_str().ok());
+    let locale = crate::locale::Locale::detect(q.lang.as_deref(), accept_lang);
 
     if !instance.registrations_open {
         if invite.is_empty() {
-            return render(&instance, &invite, false, None);
+            return render(&instance, &invite, false, None, locale);
         }
         if let Err(msg) = validate_invite(&state, &instance, &invite).await {
-            return render(&instance, &invite, false, Some(msg));
+            return render(&instance, &invite, false, Some(locale.t(msg)), locale);
         }
     }
 
-    render(&instance, &invite, true, None)
+    render(&instance, &invite, true, None, locale)
 }
 
 pub async fn signup_post(
@@ -52,19 +59,20 @@ pub async fn signup_post(
     Form(form): Form<SignUpForm>,
 ) -> Response {
     let invite = form.invite.as_deref().unwrap_or("").trim().to_string();
+    let locale = crate::locale::Locale::detect(form.lang.as_deref(), None);
 
     // Check registrations / invite — always validate a provided code; require
     // one when registrations are closed.
     let invite_id: Option<uuid::Uuid> = if !invite.is_empty() {
         match validate_invite(&state, &instance, &invite).await {
             Ok(id) => Some(id),
-            Err(msg) => {
+            Err(key) => {
                 let show_form = instance.registrations_open;
-                return render(&instance, &invite, show_form, Some(msg));
+                return render(&instance, &invite, show_form, Some(locale.t(key)), locale);
             }
         }
     } else if !instance.registrations_open {
-        return render(&instance, &invite, false, Some("An invite code is required."));
+        return render(&instance, &invite, false, Some(locale.t("err_invite_required")), locale);
     } else {
         None
     };
@@ -82,26 +90,16 @@ pub async fn signup_post(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
-        return render(
-            &instance,
-            &invite,
-            true,
-            Some("Username may only contain letters, numbers, and underscores."),
-        );
+        return render(&instance, &invite, true, Some(locale.t("err_username_chars")), locale);
     }
     if email.is_empty() || !email.contains('@') {
-        return render(&instance, &invite, true, Some("Enter a valid email address."));
+        return render(&instance, &invite, true, Some(locale.t("err_invalid_email")), locale);
     }
     if password.len() < 8 {
-        return render(
-            &instance,
-            &invite,
-            true,
-            Some("Password must be at least 8 characters."),
-        );
+        return render(&instance, &invite, true, Some(locale.t("err_password_short")), locale);
     }
     if password != confirm {
-        return render(&instance, &invite, true, Some("Passwords do not match."));
+        return render(&instance, &invite, true, Some(locale.t("err_password_mismatch")), locale);
     }
 
     let email_normalised = email.to_lowercase();
@@ -119,7 +117,7 @@ pub async fn signup_post(
     .is_some();
 
     if username_taken {
-        return render(&instance, &invite, true, Some("That username is already taken."));
+        return render(&instance, &invite, true, Some(locale.t("err_username_taken")), locale);
     }
 
     let email_taken = sqlx::query_scalar!(
@@ -134,18 +132,13 @@ pub async fn signup_post(
     .is_some();
 
     if email_taken {
-        return render(
-            &instance,
-            &invite,
-            true,
-            Some("An account with that email already exists."),
-        );
+        return render(&instance, &invite, true, Some(locale.t("err_email_taken")), locale);
     }
 
     // Create account
     let (private_key, public_key) = match crypto::generate_rsa_keypair() {
         Ok(kp) => kp,
-        Err(_) => return render(&instance, &invite, true, Some("Server error. Please try again.")),
+        Err(_) => return render(&instance, &invite, true, Some(locale.t("err_server")), locale),
     };
 
     let base_url = format!("https://{}", instance.domain);
@@ -176,12 +169,12 @@ pub async fn signup_post(
 
     let account_id = match account_id {
         Ok(id) => id,
-        Err(_) => return render(&instance, &invite, true, Some("Server error. Please try again.")),
+        Err(_) => return render(&instance, &invite, true, Some(locale.t("err_server")), locale),
     };
 
     let password_hash = match crypto::hash_password(password) {
         Ok(h) => h,
-        Err(_) => return render(&instance, &invite, true, Some("Server error. Please try again.")),
+        Err(_) => return render(&instance, &invite, true, Some(locale.t("err_server")), locale),
     };
 
     let user_result = sqlx::query!(
@@ -199,7 +192,7 @@ pub async fn signup_post(
     .await;
 
     if user_result.is_err() {
-        return render(&instance, &invite, true, Some("Server error. Please try again."));
+        return render(&instance, &invite, true, Some(locale.t("err_server")), locale);
     }
 
     // Increment invite uses (always, so the tree is accurate even with open registrations)
@@ -219,6 +212,7 @@ pub async fn signup_post(
 // ── helpers ────────────────────────────────────────────────────────────────
 
 /// Validates an invite code and returns its UUID if valid.
+/// On error, returns a locale key suitable for passing to `locale.t()`.
 async fn validate_invite(
     state: &AppState,
     instance: &Instance,
@@ -235,18 +229,35 @@ async fn validate_invite(
     .flatten();
 
     let Some(inv) = row else {
-        return Err("Invalid invite code.");
+        return Err("err_invalid_invite");
     };
     if inv.max_uses.map_or(false, |m| inv.uses >= m) {
-        return Err("This invite has reached its use limit.");
+        return Err("err_invite_maxed");
     }
     if inv.expires_at.map_or(false, |e| e < chrono::Utc::now()) {
-        return Err("This invite has expired.");
+        return Err("err_invite_expired");
     }
     Ok(inv.id)
 }
 
-fn render(instance: &Instance, invite: &str, show_form: bool, error: Option<&str>) -> Response {
+fn render(
+    instance: &Instance,
+    invite: &str,
+    show_form: bool,
+    error: Option<&'static str>,
+    locale: crate::locale::Locale,
+) -> Response {
+    let enc_invite = urlencoding::encode(invite);
+    let toggle_en_url = if invite.is_empty() {
+        "/auth/signup?lang=en".to_string()
+    } else {
+        format!("/auth/signup?invite={}&lang=en", enc_invite)
+    };
+    let toggle_ko_url = if invite.is_empty() {
+        "/auth/signup?lang=ko".to_string()
+    } else {
+        format!("/auth/signup?invite={}&lang=ko", enc_invite)
+    };
     let html = templates::render(
         "signup.html",
         minijinja::context! {
@@ -255,6 +266,19 @@ fn render(instance: &Instance, invite: &str, show_form: bool, error: Option<&str
             show_form,
             invite,
             error,
+            lang => locale.as_str(),
+            toggle_en_url => toggle_en_url,
+            toggle_ko_url => toggle_ko_url,
+            t_create_account => locale.t("create_account"),
+            t_username => locale.t("username"),
+            t_email => locale.t("email"),
+            t_password => locale.t("password"),
+            t_confirm_password => locale.t("confirm_password"),
+            t_already_account => locale.t("already_account"),
+            t_sign_in => locale.t("sign_in"),
+            t_registrations_closed => locale.t("registrations_closed"),
+            t_invite_code => locale.t("invite_code"),
+            t_continue_btn => locale.t("continue_btn"),
         },
     );
     Html(html).into_response()

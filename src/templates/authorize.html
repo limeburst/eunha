@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in — {{ domain }}</title>
+<title>{{ t_sign_in_to }} {{ domain }}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center}
@@ -16,22 +16,32 @@ input:focus{outline:none;border-color:#555}
 button{margin-top:1.5rem;width:100%;padding:.7rem;background:#e8e8e8;color:#111;border:none;border-radius:4px;font-size:.9rem;font-weight:600;cursor:pointer}
 button:hover{background:#fff}
 .error{background:#3a1a1a;border:1px solid #6a2a2a;color:#f88;padding:.6rem .75rem;border-radius:4px;font-size:.8rem;margin-bottom:1rem}
+.lang{text-align:right;font-size:.75rem;margin-bottom:1rem}
+.lang a{color:#555;text-decoration:none}
+.lang a:hover{color:#aaa}
+.lang-active{color:#aaa!important}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Sign in to {{ domain }}</h1>
-  <p class="sub">Authorize <strong>{{ app_name }}</strong></p>
+  <div class="lang">
+    {% if lang == "ko" %}<span class="lang-active">EN</span>{% else %}<a href="{{ toggle_en_url }}">EN</a>{% endif %}
+    &nbsp;·&nbsp;
+    {% if lang == "ko" %}<a href="{{ toggle_ko_url }}">KO</a>{% else %}<span class="lang-active">KO</span>{% endif %}
+  </div>
+  <h1>{{ t_sign_in_to }} {{ domain }}</h1>
+  <p class="sub">{{ t_authorize }} <strong>{{ app_name }}</strong></p>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   <form method="POST" action="/oauth/authorize">
     <input type="hidden" name="client_id" value="{{ client_id }}">
     <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
     <input type="hidden" name="scope" value="{{ scope }}">
-    <label for="email">Email</label>
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <label for="email">{{ t_email }}</label>
     <input type="email" id="email" name="email" required autocomplete="email">
-    <label for="password">Password</label>
+    <label for="password">{{ t_password }}</label>
     <input type="password" id="password" name="password" required autocomplete="current-password">
-    <button type="submit">Sign in</button>
+    <button type="submit">{{ t_sign_in }}</button>
   </form>
 </div>
 </body>

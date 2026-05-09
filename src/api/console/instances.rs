@@ -313,6 +313,8 @@ pub struct ConsoleInviteResponse {
 pub struct InviteTreeMember {
     pub account_id: String,
     pub username: String,
+    /// Invite ID used at signup; null if no invite was used.
+    pub invite_id: Option<String>,
     /// Account ID of the person whose invite was used; null for root members.
     pub invited_by_account_id: Option<String>,
     pub invited_by_username: Option<String>,
@@ -336,6 +338,7 @@ pub async fn invite_tree(
         r#"SELECT
              a.id        AS account_id,
              a.username,
+             u.invite_id AS "invite_id?: Uuid",
              inv_a.id    AS "invited_by_account_id?: Uuid",
              inv_a.username AS "invited_by_username?: String",
              u.created_at
@@ -353,6 +356,7 @@ pub async fn invite_tree(
     .map(|r| InviteTreeMember {
         account_id: r.account_id.to_string(),
         username: r.username,
+        invite_id: r.invite_id.map(|id| id.to_string()),
         invited_by_account_id: r.invited_by_account_id.map(|id| id.to_string()),
         invited_by_username: r.invited_by_username,
         joined_at: r.created_at,

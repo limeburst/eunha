@@ -34,6 +34,7 @@ export interface ConsoleInvite {
 export interface InviteTreeMember {
   account_id: string
   username: string
+  invite_id: string | null
   invited_by_account_id: string | null
   invited_by_username: string | null
   joined_at: string
