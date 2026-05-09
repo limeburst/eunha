@@ -528,6 +528,16 @@ pub async fn authorize_submit(
     Form(form): Form<AuthorizeForm>,
 ) -> Response {
     let locale = crate::locale::Locale::detect(form.lang.as_deref(), None);
+    let app_name = sqlx::query_scalar!(
+        "SELECT name FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        form.client_id,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| form.client_id.clone());
     let result = do_authorize(&state, &instance, &form).await;
     match result {
         Ok(redirect_url) => Redirect::to(&redirect_url).into_response(),
@@ -538,7 +548,7 @@ pub async fn authorize_submit(
             );
             let html = crate::templates::render("authorize.html", minijinja::context! {
                 domain => instance.domain,
-                app_name => "Elk",
+                app_name => app_name,
                 client_id => form.client_id,
                 redirect_uri => form.redirect_uri,
                 scope => scope,
