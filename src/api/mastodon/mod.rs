@@ -110,6 +110,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/invites", get(invites::list_invites).post(invites::create_invite))
         .route("/api/v1/invites/{id}", delete(invites::delete_invite))
         // Media
+        .route("/api/v1/media", post(media::upload_media))
         .route("/api/v2/media", post(media::upload_media))
         .layer(middleware::from_fn_with_state(
             state.clone(),
