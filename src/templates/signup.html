@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create account — {{ instance_domain }}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;padding:2rem;width:100%;max-width:360px;border-radius:8px}
+h1{font-size:1.1rem;font-weight:600;margin-bottom:.25rem}
+.sub{font-size:.8rem;color:#888;margin-bottom:1.5rem}
+label{display:block;font-size:.8rem;color:#aaa;margin-bottom:.25rem;margin-top:1rem}
+input[type=text],input[type=email],input[type=password]{width:100%;padding:.6rem .75rem;background:#111;border:1px solid #333;border-radius:4px;color:#e8e8e8;font-size:.9rem}
+input:focus{outline:none;border-color:#555}
+button{margin-top:1.5rem;width:100%;padding:.7rem;background:#e8e8e8;color:#111;border:none;border-radius:4px;font-size:.9rem;font-weight:600;cursor:pointer}
+button:hover{background:#fff}
+.error{background:#3a1a1a;border:1px solid #6a2a2a;color:#f88;padding:.6rem .75rem;border-radius:4px;font-size:.8rem;margin-bottom:1rem}
+.footer{margin-top:1.25rem;font-size:.8rem;color:#666;text-align:center}
+.footer a{color:#aaa}
+.closed-msg{font-size:.85rem;color:#888;margin-bottom:1.25rem;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Create account</h1>
+  <p class="sub">{{ instance_domain }}{% if instance_title %} · {{ instance_title }}{% endif %}</p>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if show_form %}
+  <form method="POST" action="/auth/sign_up">
+    {% if invite %}<input type="hidden" name="invite" value="{{ invite }}">{% endif %}
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" required autocomplete="username"
+           pattern="[a-zA-Z0-9_]+" title="Letters, numbers, and underscores only">
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" required autocomplete="email">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required
+           minlength="8" autocomplete="new-password">
+    <label for="password_confirmation">Confirm password</label>
+    <input type="password" id="password_confirmation" name="password_confirmation"
+           required minlength="8" autocomplete="new-password">
+    <button type="submit">Create account</button>
+  </form>
+  <p class="footer">Already have an account? <a href="/auth/sign_in">Sign in</a></p>
+  {% else %}
+  <p class="closed-msg">Registrations on this instance are by invite only.</p>
+  <form method="GET" action="/auth/sign_up">
+    <label for="invite">Invite code</label>
+    <input type="text" id="invite" name="invite" required autocomplete="off"
+           placeholder="Enter your invite code">
+    <button type="submit">Continue</button>
+  </form>
+  {% endif %}
+</div>
+</body>
+</html>

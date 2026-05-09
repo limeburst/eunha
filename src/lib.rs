@@ -1,6 +1,7 @@
 pub mod api;
 pub mod config;
 pub mod console_frontend;
+pub mod crypto;
 pub mod db;
 pub mod elk;
 pub mod error;

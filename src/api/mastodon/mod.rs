@@ -8,6 +8,7 @@ pub mod media;
 pub mod notifications;
 pub mod oauth;
 pub mod search;
+pub mod signup;
 pub mod statuses;
 pub mod streaming;
 pub mod timelines;
@@ -129,6 +130,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
         // Streaming
         .route("/api/v1/streaming", get(streaming::handler))
+        // Sign-up (server-rendered form)
+        .route("/auth/sign_up", get(signup::signup_get).post(signup::signup_post))
         // Trends / suggestions / announcements / emojis — not yet implemented; return empty lists
         .route("/api/v1/trends/statuses", get(empty_array))
         .route("/api/v1/trends/tags", get(empty_array))
