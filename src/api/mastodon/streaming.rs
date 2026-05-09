@@ -127,6 +127,7 @@ async fn run(
                     // connect without a `stream` query param and negotiate
                     // subscriptions over the socket instead.
                     Some(Ok(Message::Text(text))) => {
+                        tracing::info!(stream = %stream, text = %text, "streaming: client message");
                         #[derive(serde::Deserialize)]
                         struct Cmd { #[serde(rename = "type")] _kind: String }
                         // Ignore parse errors; unrecognised commands are no-ops.
@@ -135,7 +136,22 @@ async fn run(
                     Some(Ok(Message::Ping(p))) => {
                         let _ = socket.send(Message::Pong(p)).await;
                     }
-                    _ => break,
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::info!(stream = %stream, ?frame, "streaming: client close frame");
+                        break;
+                    }
+                    Some(Ok(other)) => {
+                        tracing::info!(stream = %stream, ?other, "streaming: unexpected message type");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(stream = %stream, error = %e, "streaming: socket error");
+                        break;
+                    }
+                    None => {
+                        tracing::info!(stream = %stream, "streaming: socket recv returned None");
+                        break;
+                    }
                 }
             }
             _ = heartbeat.tick() => {
