@@ -22,6 +22,12 @@ export function Landing() {
             </>
           )}
         </div>
+        <p className="mt-8 text-xs text-muted">
+          <Trans>Already a member of an instance?</Trans>{' '}
+          <Link to="/my/login" className="hover:text-text transition-colors underline underline-offset-2">
+            <Trans>Sign in here</Trans>
+          </Link>
+        </p>
       </main>
     </div>
   )

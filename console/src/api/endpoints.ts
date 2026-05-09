@@ -1,5 +1,5 @@
-import { api } from './client'
-import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite } from './types'
+import { api, instanceApi } from './client'
+import type { User, InstanceUser, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite } from './types'
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -20,6 +20,23 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 
 export const setLocale = (locale: string) =>
   api.patch<void>('/api/console/auth/locale', { locale })
+
+// ── Instance user auth ─────────────────────────────────────────────────────
+
+export const instanceUserLogin = (domain: string, email: string, password: string) =>
+  api.post<{ token: string; user: InstanceUser }>('/api/console/instance_auth/login', { domain, email, password })
+
+export const instanceUserMe = () =>
+  instanceApi.get<InstanceUser>('/api/console/instance_auth/me')
+
+export const instanceUserChangePassword = (currentPassword: string, newPassword: string) =>
+  instanceApi.patch<void>('/api/console/instance_auth/password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  })
+
+export const instanceUserInviteTree = () =>
+  instanceApi.get<InviteTree>('/api/console/instance_auth/invite_tree')
 
 // ── Instances ──────────────────────────────────────────────────────────────
 

@@ -5,6 +5,11 @@ export interface User {
   created_at: string
 }
 
+export interface InstanceUser {
+  username: string
+  instance_domain: string
+}
+
 export type InstanceStatus = 'provisioning' | 'running' | 'stopped' | 'error'
 
 export interface Instance {
