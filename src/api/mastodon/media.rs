@@ -2,6 +2,7 @@ use axum::{
     extract::{Extension, Multipart, State},
     Json,
 };
+use image::imageops::FilterType;
 
 use crate::{
     error::{AppError, AppResult},
@@ -10,7 +11,10 @@ use crate::{
 };
 use super::{convert::media_from_db, types::MediaAttachment};
 
-// ── POST /api/v2/media ────────────────────────────────────────────────────
+// Mastodon's small thumbnail pixel limit (≈640×360 at 16:9)
+const SMALL_PIXELS: u32 = 230_400;
+
+// ── POST /api/v1/media, POST /api/v2/media ────────────────────────────────
 
 pub async fn upload_media(
     State(state): State<AppState>,
@@ -18,7 +22,7 @@ pub async fn upload_media(
     Extension(auth): Extension<AuthenticatedUser>,
     mut multipart: Multipart,
 ) -> AppResult<Json<MediaAttachment>> {
-    let mut file_field: Option<(String, String, Vec<u8>)> = None; // (filename, content_type, data)
+    let mut file_field: Option<(String, String, Vec<u8>)> = None;
     let mut description: Option<String> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| AppError::Unprocessable(e.to_string()))? {
@@ -40,25 +44,89 @@ pub async fn upload_media(
 
     let (_, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
     let media_type = classify_media_type(&content_type);
-    let key = crate::media::media_attachment_key(instance.id, &content_type);
-    state.storage.store(&data, &key, &content_type).await?;
-    let url = state.storage.public_url(&key);
+    let keys = crate::media::media_attachment_keys(instance.id, &content_type);
+
+    state.storage.store(&data, &keys.original, &content_type).await?;
+    let file_url = state.storage.public_url(&keys.original);
+
+    let (meta, blurhash, preview_url) = if media_type == "image" || media_type == "gifv" {
+        match process_image(&data, &content_type) {
+            Some((orig_dim, small_bytes, small_dim, bh)) => {
+                state.storage.store(&small_bytes, &keys.small, &content_type).await?;
+                let preview_url = state.storage.public_url(&keys.small);
+                let meta = serde_json::json!({
+                    "original": orig_dim,
+                    "small": small_dim,
+                });
+                (Some(meta), Some(bh), Some(preview_url))
+            }
+            None => (None, None, None),
+        }
+    } else {
+        (None, None, None)
+    };
 
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
-        r#"INSERT INTO media_attachments (account_id, media_type, file_key, file_url, description)
-           VALUES ($1,$2,$3,$4,$5)
+        r#"INSERT INTO media_attachments
+             (account_id, media_type, file_key, file_url, preview_key, preview_url, description, meta, blurhash)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            RETURNING *"#,
         auth.account_id,
         media_type,
-        key,
-        url,
+        keys.original,
+        file_url,
+        keys.small,
+        preview_url,
         description,
+        meta,
+        blurhash,
     )
     .fetch_one(&state.db)
     .await?;
 
     Ok(Json(media_from_db(&attachment)))
+}
+
+/// Decode image, compute original + small dimensions and blurhash.
+/// Returns (orig_dim, small_jpeg_bytes, small_dim, blurhash).
+fn process_image(data: &[u8], _content_type: &str) -> Option<(serde_json::Value, Vec<u8>, serde_json::Value, String)> {
+    let img = image::load_from_memory(data).ok()?;
+    let (ow, oh) = (img.width(), img.height());
+    let orig_dim = image_dim_json(ow, oh);
+
+    // Compute blurhash from original (4×4 components, matching Mastodon)
+    let rgba = img.to_rgba8();
+    let bh = blurhash::encode(4, 4, ow, oh, rgba.as_raw()).ok()?;
+
+    // Resize to small: scale down only if total pixels exceed SMALL_PIXELS
+    let small_img = if ow * oh > SMALL_PIXELS {
+        let scale = (SMALL_PIXELS as f64 / (ow * oh) as f64).sqrt();
+        let sw = ((ow as f64 * scale).round() as u32).max(1);
+        let sh = ((oh as f64 * scale).round() as u32).max(1);
+        img.resize(sw, sh, FilterType::Lanczos3)
+    } else {
+        img
+    };
+    let (sw, sh) = (small_img.width(), small_img.height());
+    let small_dim = image_dim_json(sw, sh);
+
+    // Encode small as JPEG
+    let mut small_bytes = Vec::new();
+    small_img
+        .write_to(&mut std::io::Cursor::new(&mut small_bytes), image::ImageFormat::Jpeg)
+        .ok()?;
+
+    Some((orig_dim, small_bytes, small_dim, bh))
+}
+
+fn image_dim_json(w: u32, h: u32) -> serde_json::Value {
+    serde_json::json!({
+        "width": w,
+        "height": h,
+        "size": format!("{}x{}", w, h),
+        "aspect": w as f64 / h as f64,
+    })
 }
 
 fn classify_media_type(content_type: &str) -> &'static str {

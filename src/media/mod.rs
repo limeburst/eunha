@@ -74,15 +74,23 @@ pub fn account_header_key(instance_id: Uuid, account_id: Uuid, content_type: &st
     )
 }
 
-pub fn media_attachment_key(instance_id: Uuid, content_type: &str) -> String {
+pub struct MediaAttachmentKeys {
+    pub original: String,
+    pub small: String,
+}
+
+pub fn media_attachment_keys(instance_id: Uuid, content_type: &str) -> MediaAttachmentKeys {
     let ext = ext_for(content_type);
-    format!(
-        "{}/media_attachments/files/{}/original/{}.{}",
+    let base = format!(
+        "{}/media_attachments/files/{}",
         instance_id,
         uuid_to_path(Uuid::new_v4()),
-        random_hex(),
-        ext,
-    )
+    );
+    let name = random_hex();
+    MediaAttachmentKeys {
+        original: format!("{}/original/{}.{}", base, name, ext),
+        small: format!("{}/small/{}.{}", base, name, ext),
+    }
 }
 
 fn uuid_to_path(id: Uuid) -> String {
