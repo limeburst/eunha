@@ -140,5 +140,5 @@ pub fn generate_code() -> String {
 }
 
 pub fn invite_url(domain: &str, code: &str) -> String {
-    format!("https://{domain}/auth/sign_up?invite={code}")
+    format!("https://{domain}/auth/signup?invite={code}")
 }

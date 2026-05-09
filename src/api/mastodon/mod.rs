@@ -135,7 +135,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Streaming
         .route("/api/v1/streaming", get(streaming::handler))
         // Sign-up (server-rendered form)
-        .route("/auth/sign_up", get(signup::signup_get).post(signup::signup_post))
+        .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
         // Trends / suggestions / announcements / emojis — not yet implemented; return empty lists
         .route("/api/v1/trends/statuses", get(empty_array))
         .route("/api/v1/trends/tags", get(empty_array))

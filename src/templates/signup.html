@@ -29,7 +29,7 @@ button:hover{background:#fff}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   {% if show_form %}
-  <form method="POST" action="/auth/sign_up">
+  <form method="POST" action="/auth/signup">
     {% if invite %}<input type="hidden" name="invite" value="{{ invite }}">{% endif %}
     <label for="username">Username</label>
     <input type="text" id="username" name="username" required autocomplete="username"
@@ -47,7 +47,7 @@ button:hover{background:#fff}
   <p class="footer">Already have an account? <a href="/auth/sign_in">Sign in</a></p>
   {% else %}
   <p class="closed-msg">Registrations on this instance are by invite only.</p>
-  <form method="GET" action="/auth/sign_up">
+  <form method="GET" action="/auth/signup">
     <label for="invite">Invite code</label>
     <input type="text" id="invite" name="invite" required autocomplete="off"
            placeholder="Enter your invite code">
