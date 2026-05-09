@@ -50,8 +50,7 @@ pub fn build_app(state: state::AppState) -> Router {
                 }
             })
         })
-        .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive());
+        .layer(CompressionLayer::new());
 
     Router::new()
         .merge(compressed)
@@ -59,6 +58,7 @@ pub fn build_app(state: state::AppState) -> Router {
         .merge(api::mastodon::streaming_router())
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::authenticate))
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::resolve_instance))
+        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
