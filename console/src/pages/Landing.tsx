@@ -1,21 +1,26 @@
 import { Link } from 'react-router-dom'
+import { Trans } from '@lingui/macro'
+import { useAuthStore } from '../store/auth'
 
 export function Landing() {
-  return (
-    <div className="min-h-screen flex flex-col bg-bg text-text">
-      <header className="border-b border-border px-6 py-4 flex items-center justify-between">
-        <span className="text-text text-sm tracking-widest uppercase">eunha.social</span>
-        <Link to="/login" className="text-muted text-xs hover:text-text transition-colors">Sign in</Link>
-      </header>
+  const { token } = useAuthStore()
 
-      <main className="flex-1 flex flex-col justify-center px-6 py-16 max-w-sm">
-        <p className="text-xs text-muted uppercase tracking-widest mb-4">eunha.social</p>
+  return (
+    <div className="min-h-screen bg-bg text-text">
+      <main className="max-w-md mx-auto px-4 flex flex-col justify-center min-h-screen py-16">
+        <p className="text-xs text-muted uppercase tracking-widest mb-3">eunha.social</p>
         <h1 className="text-2xl text-text mb-8 leading-snug">
-          fediverse instance hosting
+          <Trans>fediverse instance hosting</Trans>
         </h1>
         <div className="flex gap-3">
-          <Link to="/signup" className={btnPrimary}>Create account</Link>
-          <Link to="/login" className={btnSecondary}>Sign in</Link>
+          {token ? (
+            <Link to="/dashboard" className={btnPrimary}><Trans>Go to console</Trans></Link>
+          ) : (
+            <>
+              <Link to="/signup" className={btnPrimary}><Trans>Create account</Trans></Link>
+              <Link to="/login" className={btnSecondary}><Trans>Sign in</Trans></Link>
+            </>
+          )}
         </div>
       </main>
     </div>

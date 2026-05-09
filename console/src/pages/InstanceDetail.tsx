@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { Trans, t } from '@lingui/macro'
+import { useLingui } from '@lingui/react'
 import { getInstance, updateInstance, deleteInstance } from '../api/endpoints'
 import type { Instance } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 
 export function InstanceDetail() {
+  useLingui()
   const { domain } = useParams<{ domain: string }>()
   const navigate = useNavigate()
   const [instance, setInstance] = useState<Instance | null>(null)
@@ -14,6 +17,7 @@ export function InstanceDetail() {
   const [title, setTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [saveMsgOk, setSaveMsgOk] = useState(false)
 
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleting, setDeleting] = useState(false)
@@ -22,7 +26,7 @@ export function InstanceDetail() {
     if (!domain) return
     getInstance(domain)
       .then((inst) => { setInstance(inst); setTitle(inst.title) })
-      .catch(() => setError('Instance not found.'))
+      .catch(() => setError('err'))
       .finally(() => setLoading(false))
   }, [domain])
 
@@ -34,9 +38,11 @@ export function InstanceDetail() {
     try {
       const updated = await updateInstance(domain, { title })
       setInstance(updated)
-      setSaveMsg('Saved.')
+      setSaveMsg(t`Saved.`)
+      setSaveMsgOk(true)
     } catch {
-      setSaveMsg('Failed to save.')
+      setSaveMsg(t`Failed to save.`)
+      setSaveMsgOk(false)
     } finally {
       setSaving(false)
     }
@@ -53,55 +59,108 @@ export function InstanceDetail() {
     }
   }
 
-  if (loading) return <div className="px-6 py-6 text-muted text-xs">Loading…</div>
-  if (error || !instance) return <div className="px-6 py-6 text-danger text-xs">{error ?? 'Not found.'}</div>
+  if (loading) return (
+    <div className="space-y-6">
+      <Back />
+      <p className="text-muted text-xs"><Trans>Loading…</Trans></p>
+    </div>
+  )
+
+  if (error || !instance) return (
+    <div className="space-y-6">
+      <Back />
+      <p className="text-danger text-xs">{error ? <Trans>Failed to load instances.</Trans> : <Trans>Not found.</Trans>}</p>
+    </div>
+  )
 
   return (
-    <div className="max-w-sm px-6 py-6 space-y-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-sm text-text mb-1">{instance.title}</h1>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted">{instance.domain}</span>
-            <StatusBadge status={instance.status} />
-          </div>
+    <div className="space-y-8">
+      <Back />
+
+      <div className="space-y-1">
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-sm text-text">{instance.title}</h1>
+          <a
+            href={`https://${instance.domain}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-muted hover:text-text transition-colors mt-0.5 shrink-0"
+          >
+            ↗
+          </a>
         </div>
-        <a href={`https://${instance.domain}`} target="_blank" rel="noreferrer"
-          className="text-xs text-muted hover:text-text transition-colors mt-0.5">↗</a>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted">{instance.domain}</span>
+          <StatusBadge status={instance.status} />
+        </div>
       </div>
 
       <section className="space-y-4">
-        <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">Settings</p>
+        <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
+          <Trans>Settings</Trans>
+        </p>
         <form onSubmit={handleSave} className="space-y-3">
           <div>
-            <label className="block text-xs text-muted mb-1">Display name</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} required className={inputCls} />
+            <label className="block text-xs text-muted mb-1"><Trans>Display name</Trans></label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              required
+              className={inputCls}
+            />
           </div>
           <div className="flex items-center gap-3">
-            <button type="submit" disabled={saving || title === instance.title} className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-              {saving ? 'Saving…' : 'Save'}
+            <button
+              type="submit"
+              disabled={saving || title === instance.title}
+              className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}
             </button>
-            {saveMsg && <span className={`text-xs ${saveMsg === 'Saved.' ? 'text-success' : 'text-danger'}`}>{saveMsg}</span>}
+            {saveMsg && (
+              <span className={`text-xs ${saveMsgOk ? 'text-success' : 'text-danger'}`}>
+                {saveMsg}
+              </span>
+            )}
           </div>
         </form>
       </section>
 
       <section className="space-y-3">
-        <p className="text-xs text-danger uppercase tracking-widest border-b border-danger/30 pb-2">Danger zone</p>
-        <p className="text-xs text-muted">Permanently delete this instance and all its data.</p>
+        <p className="text-xs text-danger uppercase tracking-widest border-b border-danger/30 pb-2">
+          <Trans>Danger zone</Trans>
+        </p>
+        <p className="text-xs text-muted">
+          <Trans>Permanently delete this instance and all its data.</Trans>
+        </p>
         <div className="space-y-2">
           <label className="block text-xs text-muted">
-            Type <span className="text-text font-mono">{instance.domain}</span> to confirm
+            <Trans>Type <span className="text-text font-mono">{instance.domain}</span> to confirm</Trans>
           </label>
-          <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)}
-            placeholder={instance.domain} className={inputCls} />
-          <button onClick={handleDelete} disabled={deleteConfirm !== instance.domain || deleting}
-            className="px-3 py-1.5 text-xs border border-danger text-danger hover:bg-danger/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            {deleting ? 'Deleting…' : 'Delete instance'}
+          <input
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.target.value)}
+            placeholder={instance.domain}
+            className={inputCls}
+          />
+          <button
+            onClick={handleDelete}
+            disabled={deleteConfirm !== instance.domain || deleting}
+            className="px-3 py-1.5 text-xs border border-danger text-danger hover:bg-danger/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {deleting ? <Trans>Deleting…</Trans> : <Trans>Delete instance</Trans>}
           </button>
         </div>
       </section>
     </div>
+  )
+}
+
+function Back() {
+  return (
+    <Link to="/dashboard" className="text-xs text-muted hover:text-text transition-colors">
+      <Trans>← instances</Trans>
+    </Link>
   )
 }
 

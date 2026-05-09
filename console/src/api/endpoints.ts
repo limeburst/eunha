@@ -12,6 +12,15 @@ export const login = (email: string, password: string) =>
 export const getMe = () =>
   api.get<User>('/api/console/auth/me')
 
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  api.patch<void>('/api/console/auth/password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  })
+
+export const setLocale = (locale: string) =>
+  api.patch<void>('/api/console/auth/locale', { locale })
+
 // ── Instances ──────────────────────────────────────────────────────────────
 
 export const listInstances = () =>

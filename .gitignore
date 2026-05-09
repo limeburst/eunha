@@ -8,3 +8,4 @@ seoulearth_*
 # /.sqlx is intentionally tracked for SQLX_OFFLINE Docker builds
 /console/node_modules
 /console/dist
+/console/src/locales/*/messages.js

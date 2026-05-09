@@ -1,6 +1,7 @@
 export interface User {
   id: string
   email: string
+  locale: string
   created_at: string
 }
 
