@@ -139,7 +139,8 @@ pub async fn get_account_statuses(
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = fetch_status_media(&state, s.id).await?;
-            let mut api_status = status_from_db(s, &account, media, None, None);
+            let reblog = fetch_reblog_data(&state, s).await?;
+            let mut api_status = status_from_db(s, &account, media, reblog, None);
             api_status.pinned = Some(true);
             result.push(api_status);
         }
@@ -204,7 +205,8 @@ pub async fn get_account_statuses(
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
         let media = fetch_status_media(&state, s.id).await?;
-        result.push(status_from_db(s, &account, media, None, None));
+        let reblog = fetch_reblog_data(&state, s).await?;
+        result.push(status_from_db(s, &account, media, reblog, None));
     }
 
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
@@ -815,6 +817,34 @@ pub async fn fetch_status_media(
     )
     .fetch_all(&state.db)
     .await?)
+}
+
+pub async fn fetch_reblog_data(
+    state: &AppState,
+    status: &crate::db::models::Status,
+) -> AppResult<Option<(crate::db::models::Status, Account, Vec<crate::db::models::MediaAttachment>)>> {
+    let Some(reblog_id) = status.reblog_of_id else {
+        return Ok(None);
+    };
+    let reblog = sqlx::query_as!(
+        crate::db::models::Status,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        reblog_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(reblog) = reblog else {
+        return Ok(None);
+    };
+    let reblog_account = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        reblog.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    let reblog_media = fetch_status_media(state, reblog.id).await?;
+    Ok(Some((reblog, reblog_account, reblog_media)))
 }
 
 async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) -> AppResult<Relationship> {

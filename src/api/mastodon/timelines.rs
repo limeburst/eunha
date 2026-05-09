@@ -13,7 +13,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::fetch_status_media,
+    accounts::{fetch_reblog_data, fetch_status_media},
     convert::status_from_db,
     types::{PaginationParams, Status},
 };
@@ -215,7 +215,8 @@ async fn build_status_list(
         .fetch_one(&state.db)
         .await?;
         let media = fetch_status_media(state, s.id).await?;
-        result.push(status_from_db(s, &account, media, None, None));
+        let reblog = fetch_reblog_data(state, s).await?;
+        result.push(status_from_db(s, &account, media, reblog, None));
     }
     Ok(result)
 }

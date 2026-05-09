@@ -9,7 +9,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::fetch_status_media,
+    accounts::{fetch_reblog_data, fetch_status_media},
     convert::status_from_db,
     types::{PaginationParams, Status},
 };
@@ -76,6 +76,7 @@ pub async fn get_bookmarks(
         .await?
         .is_some();
 
+        let reblog = fetch_reblog_data(&state, &s).await?;
         let ctx = super::convert::StatusViewerContext {
             favourited,
             reblogged,
@@ -83,7 +84,7 @@ pub async fn get_bookmarks(
             bookmarked: true,
             pinned: false,
         };
-        result.push(status_from_db(&s, &account, media, None, Some(ctx)));
+        result.push(status_from_db(&s, &account, media, reblog, Some(ctx)));
     }
 
     Ok(Json(result))

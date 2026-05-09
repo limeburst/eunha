@@ -13,7 +13,7 @@ use crate::{
     streaming::Event,
 };
 use super::{
-    accounts::fetch_status_media,
+    accounts::{fetch_reblog_data, fetch_status_media},
     convert::{account_from_db, status_from_db},
     types::{Status, StatusContext, StatusEdit, StatusSource},
 };
@@ -159,13 +159,14 @@ pub async fn get_status(
     }
 
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let viewer_ctx = if let Some(Extension(auth)) = auth {
         Some(build_viewer_context(&state, auth.account_id, id).await?)
     } else {
         None
     };
 
-    Ok(Json(status_from_db(&status, &account, media, None, viewer_ctx)))
+    Ok(Json(status_from_db(&status, &account, media, reblog, viewer_ctx)))
 }
 
 // ── DELETE /api/v1/statuses/:id ────────────────────────────────────────────
@@ -200,7 +201,8 @@ pub async fn delete_status(
     });
 
     let media = fetch_status_media(&state, id).await?;
-    let mut s = status_from_db(&status, &account, media, None, None);
+    let reblog = fetch_reblog_data(&state, &status).await?;
+    let mut s = status_from_db(&status, &account, media, reblog, None);
     s.text = Some(status.text.clone());
     Ok(Json(s))
 }
@@ -230,8 +232,9 @@ pub async fn favourite_status(
 
     let (status, account) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/unfavourite ─────────────────────────────────
@@ -259,8 +262,9 @@ pub async fn unfavourite_status(
 
     let (status, _) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/reblog ──────────────────────────────────────
@@ -298,7 +302,8 @@ pub async fn reblog_status(
     .await?;
 
     let media = fetch_status_media(&state, boost.id).await?;
-    Ok(Json(status_from_db(&boost, &boost_account, media, None, None)))
+    let reblog = fetch_reblog_data(&state, &boost).await?;
+    Ok(Json(status_from_db(&boost, &boost_account, media, reblog, None)))
 }
 
 // ── GET /api/v1/statuses/:id/context ──────────────────────────────────────
@@ -347,24 +352,26 @@ pub async fn get_status_context(
     for s in &ancestor_rows {
         let acct = fetch_account(&state, s.account_id).await?;
         let media = fetch_status_media(&state, s.id).await?;
+        let reblog = fetch_reblog_data(&state, s).await?;
         let ctx = if let Some(vid) = viewer_id {
             Some(build_viewer_context(&state, vid, s.id).await?)
         } else {
             None
         };
-        ancestors.push(status_from_db(s, &acct, media, None, ctx));
+        ancestors.push(status_from_db(s, &acct, media, reblog, ctx));
     }
 
     let mut descendants = Vec::with_capacity(descendant_rows.len());
     for s in &descendant_rows {
         let acct = fetch_account(&state, s.account_id).await?;
         let media = fetch_status_media(&state, s.id).await?;
+        let reblog = fetch_reblog_data(&state, s).await?;
         let ctx = if let Some(vid) = viewer_id {
             Some(build_viewer_context(&state, vid, s.id).await?)
         } else {
             None
         };
-        descendants.push(status_from_db(s, &acct, media, None, ctx));
+        descendants.push(status_from_db(s, &acct, media, reblog, ctx));
     }
 
     Ok(Json(StatusContext { ancestors, descendants }))
@@ -397,8 +404,9 @@ pub async fn unreblog_status(
 
     let (status, account) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/bookmark ────────────────────────────────────
@@ -419,8 +427,9 @@ pub async fn bookmark_status(
 
     let (status, _) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/unbookmark ──────────────────────────────────
@@ -441,8 +450,9 @@ pub async fn unbookmark_status(
 
     let (status, _) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/pin ─────────────────────────────────────────
@@ -463,8 +473,9 @@ pub async fn pin_status(
     .execute(&state.db)
     .await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/unpin ───────────────────────────────────────
@@ -482,8 +493,9 @@ pub async fn unpin_status(
     .execute(&state.db)
     .await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/mute ────────────────────────────────────────
@@ -501,8 +513,9 @@ pub async fn mute_status(
     .execute(&state.db)
     .await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/unmute ──────────────────────────────────────
@@ -520,8 +533,9 @@ pub async fn unmute_status(
     .execute(&state.db)
     .await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
 // ── GET /api/v1/statuses/:id/favourited_by ────────────────────────────────
@@ -619,8 +633,9 @@ pub async fn edit_status(
 
     let (updated_status, _) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &updated_status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&updated_status, &account, media, None, Some(ctx))))
+    Ok(Json(status_from_db(&updated_status, &account, media, reblog, Some(ctx))))
 }
 
 // ── GET /api/v1/statuses/:id/history ──────────────────────────────────────

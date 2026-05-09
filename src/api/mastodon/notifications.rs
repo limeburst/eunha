@@ -11,7 +11,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::fetch_status_media,
+    accounts::{fetch_reblog_data, fetch_status_media},
     convert::{account_from_db, status_from_db},
     types::{Notification, PaginationParams},
 };
@@ -139,7 +139,8 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
             .fetch_one(&state.db)
             .await?;
             let media = fetch_status_media(state, s.id).await?;
-            Some(status_from_db(&s, &account, media, None, None))
+            let reblog = fetch_reblog_data(state, &s).await?;
+            Some(status_from_db(&s, &account, media, reblog, None))
         } else {
             None
         }
