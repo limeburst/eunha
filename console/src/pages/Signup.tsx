@@ -25,7 +25,7 @@ export function Signup() {
       const { token, user } = await signup(email, password)
       setAuth(token, user)
       setLocale(locale)  // persist browser-detected locale to server
-      navigate('/instances/new')
+      navigate('/dashboard')
     } catch (err) {
       setError(
         err instanceof Error && err.message.includes('409')
