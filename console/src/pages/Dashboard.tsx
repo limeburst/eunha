@@ -1,66 +1,194 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Trans } from '@lingui/macro'
-import { listInstances } from '../api/endpoints'
+import { Trans, t } from '@lingui/macro'
+import { useLingui } from '@lingui/react'
+import { useAuthStore } from '../store/auth'
+import { useLocaleStore } from '../store/locale'
+import { locales, type Locale } from '../i18n'
+import { listInstances, changePassword } from '../api/endpoints'
 import type { Instance } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 
 export function Dashboard() {
+  useLingui()
+  const { user } = useAuthStore()
+  const { locale, setLocale } = useLocaleStore()
+
   const [instances, setInstances] = useState<Instance[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [loadingInstances, setLoadingInstances] = useState(true)
+  const [instancesError, setInstancesError] = useState<string | null>(null)
+
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
+  const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const mismatch = next.length > 0 && confirm.length > 0 && next !== confirm
+  const passwordValid = current.length > 0 && next.length >= 8 && next === confirm
 
   useEffect(() => {
     listInstances()
       .then(setInstances)
-      .catch(() => setError('err'))
-      .finally(() => setLoading(false))
+      .catch(() => setInstancesError('err'))
+      .finally(() => setLoadingInstances(false))
   }, [])
 
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!passwordValid || savingPassword) return
+    setSavingPassword(true)
+    setPasswordMsg(null)
+    try {
+      await changePassword(current, next)
+      setPasswordMsg({ ok: true, text: t`Password changed.` })
+      setCurrent('')
+      setNext('')
+      setConfirm('')
+    } catch (err) {
+      const is401 = err instanceof Error && err.message.includes('401')
+      setPasswordMsg({
+        ok: false,
+        text: is401 ? t`Current password is incorrect.` : t`Failed to change password.`,
+      })
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xs uppercase tracking-widest text-muted"><Trans>Instances</Trans></h1>
-        <Link
-          to="/instances/new"
-          className="text-xs border border-border px-3 py-1.5 text-muted hover:text-text hover:border-text transition-colors"
-        >
-          <Trans>+ New</Trans>
-        </Link>
-      </div>
+    <div className="space-y-10">
 
-      {loading && <p className="text-muted text-xs"><Trans>Loading…</Trans></p>}
-      {error && <p className="text-danger text-xs"><Trans>Failed to load instances.</Trans></p>}
-
-      {!loading && !error && instances.length === 0 && (
-        <div className="border border-border px-5 py-12 text-center space-y-4">
-          <p className="text-muted text-xs"><Trans>No instances yet.</Trans></p>
+      {/* ── Instances ── */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xs uppercase tracking-widest text-muted"><Trans>Instances</Trans></h1>
           <Link
             to="/instances/new"
-            className="inline-block text-xs border border-border px-3 py-1.5 text-muted hover:text-text hover:border-text transition-colors"
+            className="text-xs border border-border px-3 py-1.5 text-muted hover:text-text hover:border-text transition-colors"
           >
-            <Trans>Create your first instance</Trans>
+            <Trans>+ New</Trans>
           </Link>
         </div>
-      )}
 
-      {!loading && instances.length > 0 && (
-        <div className="border border-border divide-y divide-border">
-          {instances.map((inst) => (
+        {loadingInstances && <p className="text-muted text-xs"><Trans>Loading…</Trans></p>}
+        {instancesError && <p className="text-danger text-xs"><Trans>Failed to load instances.</Trans></p>}
+
+        {!loadingInstances && !instancesError && instances.length === 0 && (
+          <div className="border border-border px-5 py-12 text-center space-y-4">
+            <p className="text-muted text-xs"><Trans>No instances yet.</Trans></p>
             <Link
-              key={inst.id}
-              to={`/instances/${inst.domain}`}
-              className="flex items-center justify-between px-4 py-3 hover:bg-surface transition-colors"
+              to="/instances/new"
+              className="inline-block text-xs border border-border px-3 py-1.5 text-muted hover:text-text hover:border-text transition-colors"
             >
-              <div className="min-w-0">
-                <p className="text-xs text-text truncate">{inst.title}</p>
-                <p className="text-xs text-muted mt-0.5">{inst.domain}</p>
-              </div>
-              <StatusBadge status={inst.status} />
+              <Trans>Create your first instance</Trans>
             </Link>
-          ))}
+          </div>
+        )}
+
+        {!loadingInstances && instances.length > 0 && (
+          <div className="border border-border divide-y divide-border">
+            {instances.map((inst) => (
+              <Link
+                key={inst.id}
+                to={`/instances/${inst.domain}`}
+                className="flex items-center justify-between px-4 py-3 hover:bg-surface transition-colors"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs text-text truncate">{inst.title}</p>
+                  <p className="text-xs text-muted mt-0.5">{inst.domain}</p>
+                </div>
+                <StatusBadge status={inst.status} />
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Account ── */}
+      <section className="space-y-6">
+        <div className="border-b border-border pb-2">
+          <p className="text-xs text-muted uppercase tracking-widest"><Trans>Account</Trans></p>
+          {user && <p className="text-xs text-muted/60 mt-1">{user.email}</p>}
         </div>
-      )}
+
+        <div className="space-y-3">
+          <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
+            <Trans>Language</Trans>
+          </p>
+          <div className="flex gap-0 border border-border w-fit">
+            {(Object.entries(locales) as [Locale, string][]).map(([code, label], i) => (
+              <button
+                key={code}
+                type="button"
+                onClick={() => setLocale(code)}
+                className={`px-3 py-1.5 text-xs transition-colors ${i > 0 ? 'border-l border-border' : ''} ${
+                  locale === code ? 'bg-text text-bg' : 'text-muted hover:text-text'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
+            <Trans>Change password</Trans>
+          </p>
+          <form onSubmit={handlePasswordSubmit} className="space-y-3">
+            <div>
+              <label className="block text-xs text-muted mb-1"><Trans>Current password</Trans></label>
+              <input
+                type="password"
+                value={current}
+                onChange={(e) => setCurrent(e.target.value)}
+                autoComplete="current-password"
+                required
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted mb-1"><Trans>New password</Trans></label>
+              <input
+                type="password"
+                value={next}
+                onChange={(e) => setNext(e.target.value)}
+                autoComplete="new-password"
+                required
+                minLength={8}
+                className={inputCls}
+              />
+              <p className="text-xs text-muted mt-1"><Trans>At least 8 characters</Trans></p>
+            </div>
+            <div>
+              <label className="block text-xs text-muted mb-1"><Trans>Confirm new password</Trans></label>
+              <input
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                autoComplete="new-password"
+                required
+                className={inputCls}
+              />
+              {mismatch && <p className="text-danger text-xs mt-1"><Trans>Passwords do not match.</Trans></p>}
+            </div>
+            {passwordMsg && (
+              <p className={`text-xs ${passwordMsg.ok ? 'text-success' : 'text-danger'}`}>{passwordMsg.text}</p>
+            )}
+            <button
+              type="submit"
+              disabled={!passwordValid || savingPassword}
+              className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {savingPassword ? <Trans>Saving…</Trans> : <Trans>Change password</Trans>}
+            </button>
+          </form>
+        </div>
+      </section>
+
     </div>
   )
 }
+
+const inputCls = 'w-full bg-surface border border-border px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors'

@@ -10,7 +10,7 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-bg text-text">
       <main className="max-w-md mx-auto px-4 py-8 space-y-8">
         <div className="flex items-center justify-between">
-          <Link to="/account" className="text-xs tracking-widest uppercase text-muted hover:text-text transition-colors">
+          <Link to="/dashboard" className="text-xs tracking-widest uppercase text-muted hover:text-text transition-colors">
             eunha.social
           </Link>
           {user && (

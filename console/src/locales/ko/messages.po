@@ -13,7 +13,6 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/Account.tsx:49
 #: src/pages/InstanceDetail.tsx:226
 #: src/pages/NewInstance.tsx:63
 msgid "← instances"
@@ -23,11 +22,11 @@ msgstr "← 인스턴스"
 msgid "+ Generate link"
 msgstr "+ 링크 생성"
 
-#: src/pages/Dashboard.tsx:28
+#: src/pages/Dashboard.tsx:70
 msgid "+ New"
 msgstr "+ 새로 만들기"
 
-#: src/pages/Account.tsx:53
+#: src/pages/Dashboard.tsx:111
 msgid "Account"
 msgstr "계정"
 
@@ -43,18 +42,18 @@ msgstr "이미 계정이 있으신가요?"
 msgid "An account with that email already exists."
 msgstr "이미 등록된 이메일입니다."
 
-#: src/pages/Account.tsx:104
+#: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
 #: src/pages/Signup.tsx:68
 msgid "At least 8 characters"
 msgstr "8자 이상"
 
-#: src/pages/Account.tsx:79
-#: src/pages/Account.tsx:126
+#: src/pages/Dashboard.tsx:137
+#: src/pages/Dashboard.tsx:184
 msgid "Change password"
 msgstr "비밀번호 변경"
 
-#: src/pages/Account.tsx:107
+#: src/pages/Dashboard.tsx:165
 msgid "Confirm new password"
 msgstr "새 비밀번호 확인"
 
@@ -72,7 +71,7 @@ msgstr "인스턴스 만들기"
 msgid "Create one"
 msgstr "만들기"
 
-#: src/pages/Dashboard.tsx:42
+#: src/pages/Dashboard.tsx:84
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
 
@@ -84,11 +83,11 @@ msgstr "계정 생성 중…"
 msgid "Creating…"
 msgstr "생성 중…"
 
-#: src/pages/Account.tsx:83
+#: src/pages/Dashboard.tsx:141
 msgid "Current password"
 msgstr "현재 비밀번호"
 
-#: src/pages/Account.tsx:39
+#: src/pages/Dashboard.tsx:52
 msgid "Current password is incorrect."
 msgstr "현재 비밀번호가 올바르지 않습니다."
 
@@ -128,7 +127,7 @@ msgstr "이메일"
 msgid "error"
 msgstr "오류"
 
-#: src/pages/Account.tsx:39
+#: src/pages/Dashboard.tsx:52
 msgid "Failed to change password."
 msgstr "비밀번호 변경에 실패했습니다."
 
@@ -136,7 +135,7 @@ msgstr "비밀번호 변경에 실패했습니다."
 msgid "Failed to create instance."
 msgstr "인스턴스 생성에 실패했습니다."
 
-#: src/pages/Dashboard.tsx:33
+#: src/pages/Dashboard.tsx:75
 #: src/pages/InstanceDetail.tsx:97
 msgid "Failed to load instances."
 msgstr "인스턴스를 불러오지 못했습니다."
@@ -161,7 +160,7 @@ msgstr "콘솔로 이동"
 msgid "Instance"
 msgstr "인스턴스"
 
-#: src/pages/Dashboard.tsx:23
+#: src/pages/Dashboard.tsx:65
 msgid "Instances"
 msgstr "인스턴스"
 
@@ -173,11 +172,11 @@ msgstr "이메일 또는 비밀번호가 올바르지 않습니다."
 msgid "Invites"
 msgstr "초대"
 
-#: src/pages/Account.tsx:59
+#: src/pages/Dashboard.tsx:117
 msgid "Language"
 msgstr "언어"
 
-#: src/pages/Dashboard.tsx:32
+#: src/pages/Dashboard.tsx:74
 #: src/pages/InstanceDetail.tsx:90
 msgid "Loading…"
 msgstr "불러오는 중…"
@@ -198,7 +197,7 @@ msgstr "my-instance"
 msgid "New instance"
 msgstr "새 인스턴스"
 
-#: src/pages/Account.tsx:94
+#: src/pages/Dashboard.tsx:152
 msgid "New password"
 msgstr "새 비밀번호"
 
@@ -206,7 +205,7 @@ msgstr "새 비밀번호"
 msgid "No account?"
 msgstr "계정이 없으신가요?"
 
-#: src/pages/Dashboard.tsx:37
+#: src/pages/Dashboard.tsx:79
 msgid "No instances yet."
 msgstr "인스턴스가 없습니다."
 
@@ -224,11 +223,11 @@ msgstr "찾을 수 없습니다."
 msgid "Password"
 msgstr "비밀번호"
 
-#: src/pages/Account.tsx:31
+#: src/pages/Dashboard.tsx:44
 msgid "Password changed."
 msgstr "비밀번호가 변경되었습니다."
 
-#: src/pages/Account.tsx:116
+#: src/pages/Dashboard.tsx:174
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
 
@@ -252,7 +251,7 @@ msgstr "저장"
 msgid "Saved."
 msgstr "저장되었습니다."
 
-#: src/pages/Account.tsx:126
+#: src/pages/Dashboard.tsx:184
 #: src/pages/InstanceDetail.tsx:159
 msgid "Saving…"
 msgstr "저장 중…"

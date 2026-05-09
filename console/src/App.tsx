@@ -6,7 +6,6 @@ import { Signup } from './pages/Signup'
 import { Dashboard } from './pages/Dashboard'
 import { NewInstance } from './pages/NewInstance'
 import { InstanceDetail } from './pages/InstanceDetail'
-import { Account } from './pages/Account'
 import { useAuthStore } from './store/auth'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -30,8 +29,7 @@ export default function App() {
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/instances/new" element={<NewInstance />} />
                 <Route path="/instances/:domain" element={<InstanceDetail />} />
-                <Route path="/account" element={<Account />} />
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+<Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </ConsoleLayout>
           </RequireAuth>
