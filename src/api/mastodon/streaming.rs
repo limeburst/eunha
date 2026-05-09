@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::{
@@ -99,6 +100,8 @@ async fn run(
     };
 
     let mut rx = state.streaming.subscribe();
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    heartbeat.tick().await; // consume the immediate first tick
 
     loop {
         tokio::select! {
@@ -130,6 +133,13 @@ async fn run(
                         let _ = socket.send(Message::Pong(p)).await;
                     }
                     _ => break,
+                }
+            }
+            _ = heartbeat.tick() => {
+                // Mastodon streaming protocol heartbeat: send an empty `:thump\n\n` or a ping frame.
+                // We use a WebSocket ping frame; Cloudflare resets its idle timer on any frame.
+                if socket.send(Message::Ping(bytes::Bytes::new())).await.is_err() {
+                    break;
                 }
             }
         }
