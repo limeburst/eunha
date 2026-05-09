@@ -15,6 +15,7 @@ export function InstanceDetail() {
   const [error, setError] = useState<string | null>(null)
 
   const [title, setTitle] = useState('')
+  const [customDomain, setCustomDomain] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveMsgOk, setSaveMsgOk] = useState(false)
@@ -25,7 +26,7 @@ export function InstanceDetail() {
   useEffect(() => {
     if (!domain) return
     getInstance(domain)
-      .then((inst) => { setInstance(inst); setTitle(inst.title) })
+      .then((inst) => { setInstance(inst); setTitle(inst.title); setCustomDomain(inst.custom_domain ?? '') })
       .catch(() => setError('err'))
       .finally(() => setLoading(false))
   }, [domain])
@@ -36,8 +37,14 @@ export function InstanceDetail() {
     setSaving(true)
     setSaveMsg(null)
     try {
-      const updated = await updateInstance(domain, { title })
+      const patch: Parameters<typeof updateInstance>[1] = { title }
+      const normalised = customDomain.trim().toLowerCase()
+      if (normalised !== (instance?.custom_domain ?? '')) {
+        patch.custom_domain = normalised || null
+      }
+      const updated = await updateInstance(domain, patch)
       setInstance(updated)
+      setCustomDomain(updated.custom_domain ?? '')
       setSaveMsg(t`Saved.`)
       setSaveMsgOk(true)
     } catch {
@@ -81,7 +88,7 @@ export function InstanceDetail() {
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-sm text-text">{instance.title}</h1>
           <a
-            href={`https://${instance.domain}`}
+            href={`https://${instance.custom_domain ?? instance.domain}`}
             target="_blank"
             rel="noreferrer"
             className="text-xs text-muted hover:text-text transition-colors mt-0.5 shrink-0"
@@ -90,7 +97,14 @@ export function InstanceDetail() {
           </a>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-muted">{instance.domain}</span>
+          {instance.custom_domain ? (
+            <>
+              <span className="text-xs text-muted">{instance.custom_domain}</span>
+              <span className="text-xs text-muted/50">{instance.domain}</span>
+            </>
+          ) : (
+            <span className="text-xs text-muted">{instance.domain}</span>
+          )}
           <StatusBadge status={instance.status} />
         </div>
       </div>
@@ -109,10 +123,19 @@ export function InstanceDetail() {
               className={inputCls}
             />
           </div>
+          <div>
+            <label className="block text-xs text-muted mb-1"><Trans>Custom domain</Trans></label>
+            <input
+              value={customDomain}
+              onChange={(e) => setCustomDomain(e.target.value)}
+              placeholder="example.com"
+              className={inputCls}
+            />
+          </div>
           <div className="flex items-center gap-3">
             <button
               type="submit"
-              disabled={saving || title === instance.title}
+              disabled={saving || (title === instance.title && customDomain.trim().toLowerCase() === (instance.custom_domain ?? ''))}
               className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {saving ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}

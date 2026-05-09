@@ -10,7 +10,7 @@ export type InstanceStatus = 'provisioning' | 'running' | 'stopped' | 'error'
 export interface Instance {
   id: string
   domain: string
-  custom_domain?: string
+  custom_domain?: string | null
   title: string
   status: InstanceStatus
   plan: string

@@ -32,7 +32,7 @@ export const getInstance = (domain: string) =>
 export const createInstance = (req: CreateInstanceRequest) =>
   api.post<Instance>('/api/console/instances', req)
 
-export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'title'>>) =>
+export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'title' | 'custom_domain'>>) =>
   api.patch<Instance>(`/api/console/instances/${domain}`, patch)
 
 export const deleteInstance = (domain: string) =>

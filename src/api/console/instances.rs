@@ -203,6 +203,26 @@ pub async fn create(
 #[derive(Debug, Deserialize)]
 pub struct UpdateInstanceRequest {
     pub title: Option<String>,
+    /// `null` clears the custom domain; omitting the field leaves it unchanged.
+    /// We use a double-Option to distinguish "not provided" from "set to null".
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub custom_domain: MaybeAbsent<Option<String>>,
+}
+
+/// Represents a JSON field that may be absent vs explicitly null/present.
+#[derive(Debug, Default)]
+pub enum MaybeAbsent<T> {
+    #[default]
+    Absent,
+    Present(T),
+}
+
+fn deserialize_optional_field<'de, D, T>(d: D) -> Result<MaybeAbsent<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(MaybeAbsent::Present(T::deserialize(d)?))
 }
 
 pub async fn update(
@@ -217,6 +237,35 @@ pub async fn update(
         sqlx::query!(
             "UPDATE instances SET title = $1, updated_at = now() WHERE id = $2",
             title.trim(),
+            instance.id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    if let MaybeAbsent::Present(ref custom_domain) = body.custom_domain {
+        let cd: Option<String> = custom_domain
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase());
+
+        if let Some(ref cd_val) = cd {
+            let taken = sqlx::query_scalar!(
+                "SELECT 1 FROM instances WHERE (domain = $1 OR custom_domain = $1) AND id != $2",
+                cd_val,
+                instance.id,
+            )
+            .fetch_optional(&state.db)
+            .await?;
+            if taken.is_some() {
+                return Err(AppError::Conflict);
+            }
+        }
+
+        sqlx::query!(
+            "UPDATE instances SET custom_domain = $1, updated_at = now() WHERE id = $2",
+            cd,
             instance.id,
         )
         .execute(&state.db)
