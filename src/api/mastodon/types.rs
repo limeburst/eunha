@@ -44,7 +44,7 @@ pub struct AccountSource {
     pub follow_requests_count: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Field {
     pub name: String,
     pub value: String,

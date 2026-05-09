@@ -449,9 +449,28 @@ pub async fn update_credentials(
     let mut discoverable: Option<bool> = None;
     let mut avatar_url: Option<String> = None;
     let mut header_url: Option<String> = None;
+    // fields_attributes[N][name] / fields_attributes[N][value]
+    let mut fields_map: std::collections::BTreeMap<u32, (String, String)> = std::collections::BTreeMap::new();
+    let mut fields_submitted = false;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| AppError::Unprocessable(e.to_string()))? {
         let name = field.name().unwrap_or("").to_string();
+        // Parse fields_attributes[N][name] and fields_attributes[N][value]
+        if let Some(rest) = name.strip_prefix("fields_attributes[") {
+            if let Some((idx_str, key)) = rest.split_once(']') {
+                if let Ok(idx) = idx_str.parse::<u32>() {
+                    let text = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                    fields_submitted = true;
+                    let entry = fields_map.entry(idx).or_default();
+                    match key {
+                        "[name]" => entry.0 = text,
+                        "[value]" => entry.1 = text,
+                        _ => {}
+                    }
+                }
+            }
+            continue;
+        }
         match name.as_str() {
             "display_name" => {
                 display_name = Some(field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?);
@@ -529,14 +548,29 @@ pub async fn update_credentials(
         .execute(&state.db).await?;
     }
 
+    // Collect non-empty fields and save as JSONB
+    if fields_submitted {
+        let fields_json: serde_json::Value = fields_map
+            .into_values()
+            .filter(|(n, _)| !n.is_empty())
+            .map(|(n, v)| serde_json::json!({"name": n, "value": v, "verified_at": null}))
+            .collect();
+        sqlx::query!(
+            "UPDATE accounts SET fields = $1 WHERE id = $2",
+            fields_json, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
+
     let account = fetch_account(&state, auth.account_id).await?;
+    let fields = super::convert::fields_from_db(&account.fields);
     let mut api_account = account_from_db(&account);
     api_account.source = Some(super::types::AccountSource {
         privacy: "public".into(),
         sensitive: false,
         language: None,
         note: account.note_text.clone(),
-        fields: vec![],
+        fields: fields.clone(),
         follow_requests_count: 0,
     });
     Ok(Json(api_account))

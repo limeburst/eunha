@@ -290,6 +290,10 @@ async fn migrate_accounts(
         let avatar = avatar_remote_url.filter(|s| !s.is_empty());
         let header = header_remote_url.filter(|s| !s.is_empty());
 
+        let fields: serde_json::Value = row
+            .try_get::<serde_json::Value, _>("fields")
+            .unwrap_or(serde_json::json!([]));
+
         let new_id: Option<Uuid> = sqlx::query_scalar(
             r#"INSERT INTO accounts
                  (instance_id, username, domain, display_name, note,
@@ -298,9 +302,9 @@ async fn migrate_accounts(
                   followers_count, following_count, statuses_count,
                   inbox_url, outbox_url, shared_inbox_url,
                   suspended_at, silenced_at,
-                  avatar, header,
+                  avatar, header, fields,
                   created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
                ON CONFLICT DO NOTHING
                RETURNING id"#,
         )
@@ -326,6 +330,7 @@ async fn migrate_accounts(
         .bind(silenced_at)
         .bind(&avatar)
         .bind(&header)
+        .bind(&fields)
         .bind(created_at)
         .bind(updated_at)
         .fetch_optional(&mut *dst)

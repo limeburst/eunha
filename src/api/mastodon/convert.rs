@@ -28,10 +28,27 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         statuses_count: a.statuses_count,
         last_status_at: None,
         emojis: vec![],
-        fields: vec![],
+        fields: fields_from_db(&a.fields),
         moved: None,
         source: None,
     }
+}
+
+pub fn fields_from_db(fields: &serde_json::Value) -> Vec<types::Field> {
+    fields
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| {
+                    Some(types::Field {
+                        name: f["name"].as_str()?.to_string(),
+                        value: f["value"].as_str()?.to_string(),
+                        verified_at: f["verified_at"].as_str().map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {

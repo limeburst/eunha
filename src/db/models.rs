@@ -72,6 +72,7 @@ pub struct Account {
     pub silenced_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub fields: serde_json::Value,
 }
 
 impl Account {
