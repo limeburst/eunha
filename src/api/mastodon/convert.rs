@@ -89,6 +89,7 @@ pub fn status_from_db(
         bookmarked: viewer_context.as_ref().map(|c| c.bookmarked),
         pinned: viewer_context.as_ref().map(|_| false),
         filtered: None,
+        text: None,
     }
 }
 

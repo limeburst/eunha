@@ -199,7 +199,9 @@ pub async fn delete_status(
     });
 
     let media = fetch_status_media(&state, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, None, None)))
+    let mut s = status_from_db(&status, &account, media, None, None);
+    s.text = Some(status.text.clone());
+    Ok(Json(s))
 }
 
 // ── POST /api/v1/statuses/:id/favourite ───────────────────────────────────
