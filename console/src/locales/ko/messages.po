@@ -65,6 +65,12 @@ msgstr "만들기"
 msgid "Go to console"
 msgstr "콘솔로 이동"
 
+msgid "Subdomain"
+msgstr "서브도메인"
+
+msgid "Custom domain"
+msgstr "커스텀 도메인"
+
 #: src/pages/Dashboard.tsx:42
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
