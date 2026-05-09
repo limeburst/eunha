@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { User, Instance, CreateInstanceRequest } from './types'
+import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite } from './types'
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -37,3 +37,9 @@ export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'ti
 
 export const deleteInstance = (domain: string) =>
   api.delete<void>(`/api/console/instances/${domain}`)
+
+export const getInviteTree = (domain: string) =>
+  api.get<InviteTree>(`/api/console/instances/${domain}/invites`)
+
+export const createConsoleInvite = (domain: string) =>
+  api.post<ConsoleInvite>(`/api/console/instances/${domain}/invites`, {})

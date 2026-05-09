@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Trans, t } from '@lingui/macro'
 import { useLingui } from '@lingui/react'
-import { getInstance, updateInstance, deleteInstance } from '../api/endpoints'
-import type { Instance } from '../api/types'
+import { getInstance, updateInstance, deleteInstance, getInviteTree, createConsoleInvite } from '../api/endpoints'
+import type { Instance, InviteTree, ConsoleInvite, InviteTreeMember } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 
 export function InstanceDetail() {
@@ -23,12 +23,17 @@ export function InstanceDetail() {
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleting, setDeleting] = useState(false)
 
+  const [inviteTree, setInviteTree] = useState<InviteTree | null>(null)
+  const [creatingInvite, setCreatingInvite] = useState(false)
+  const [newInvite, setNewInvite] = useState<ConsoleInvite | null>(null)
+
   useEffect(() => {
     if (!domain) return
     getInstance(domain)
       .then((inst) => { setInstance(inst); setTitle(inst.title); setCustomDomain(inst.custom_domain ?? '') })
       .catch(() => setError('err'))
       .finally(() => setLoading(false))
+    getInviteTree(domain).then(setInviteTree).catch(() => {})
   }, [domain])
 
   const handleSave = async (e: React.FormEvent) => {
@@ -52,6 +57,19 @@ export function InstanceDetail() {
       setSaveMsgOk(false)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleCreateInvite = async () => {
+    if (!domain || creatingInvite) return
+    setCreatingInvite(true)
+    setNewInvite(null)
+    try {
+      const invite = await createConsoleInvite(domain)
+      setNewInvite(invite)
+      setInviteTree((prev) => prev ? { ...prev, invites: [invite, ...prev.invites] } : prev)
+    } finally {
+      setCreatingInvite(false)
     }
   }
 
@@ -149,6 +167,29 @@ export function InstanceDetail() {
         </form>
       </section>
 
+      <section className="space-y-4">
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <p className="text-xs text-muted uppercase tracking-widest"><Trans>Invites</Trans></p>
+          <button
+            onClick={handleCreateInvite}
+            disabled={creatingInvite}
+            className="text-xs text-muted hover:text-text transition-colors disabled:opacity-40"
+          >
+            {creatingInvite ? <Trans>Generating…</Trans> : <Trans>+ Generate link</Trans>}
+          </button>
+        </div>
+
+        {newInvite && (
+          <div className="text-xs font-mono bg-surface border border-border px-3 py-2 text-text break-all">
+            {newInvite.url}
+          </div>
+        )}
+
+        {inviteTree && (
+          <InviteTreeView members={inviteTree.members} invites={inviteTree.invites} />
+        )}
+      </section>
+
       <section className="space-y-3">
         <p className="text-xs text-danger uppercase tracking-widest border-b border-danger/30 pb-2">
           <Trans>Danger zone</Trans>
@@ -184,6 +225,59 @@ function Back() {
     <Link to="/dashboard" className="text-xs text-muted hover:text-text transition-colors">
       <Trans>← instances</Trans>
     </Link>
+  )
+}
+
+function InviteTreeView({ members, invites }: { members: InviteTreeMember[]; invites: ConsoleInvite[] }) {
+  if (members.length === 0) return (
+    <p className="text-xs text-muted"><Trans>No members yet.</Trans></p>
+  )
+
+  // Build a map from account_id → children for tree rendering
+  const childrenOf: Record<string, InviteTreeMember[]> = {}
+  const roots: InviteTreeMember[] = []
+  for (const m of members) {
+    if (m.invited_by_account_id) {
+      ;(childrenOf[m.invited_by_account_id] ??= []).push(m)
+    } else {
+      roots.push(m)
+    }
+  }
+
+  // Count pending invites (uses = 0, not expired)
+  const pendingByCreator: Record<string, number> = {}
+  for (const inv of invites) {
+    if (inv.created_by_account_id) {
+      pendingByCreator[inv.created_by_account_id] =
+        (pendingByCreator[inv.created_by_account_id] ?? 0) + 1
+    }
+  }
+
+  function renderNode(m: InviteTreeMember, depth: number): React.ReactNode {
+    const children = childrenOf[m.account_id] ?? []
+    const pending = pendingByCreator[m.account_id] ?? 0
+    return (
+      <div key={m.account_id} style={{ paddingLeft: depth > 0 ? `${depth * 16}px` : undefined }}>
+        <div className="flex items-center gap-2 py-0.5">
+          {depth > 0 && <span className="text-muted/40 shrink-0">└</span>}
+          <span className="text-xs text-text font-mono">{m.username}</span>
+          {(children.length > 0 || pending > 0) && (
+            <span className="text-xs text-muted/60">
+              {children.length > 0 && `${children.length} invited`}
+              {children.length > 0 && pending > 0 && ', '}
+              {pending > 0 && `${pending} pending`}
+            </span>
+          )}
+        </div>
+        {children.map((c) => renderNode(c, depth + 1))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {roots.map((m) => renderNode(m, 0))}
+    </div>
   )
 }
 

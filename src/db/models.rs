@@ -96,6 +96,7 @@ pub struct User {
     pub email_normalized: String,
     pub password_hash: String,
     pub confirmed_at: Option<DateTime<Utc>>,
+    pub invite_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -294,6 +294,154 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── Invites ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ConsoleInviteResponse {
+    pub id: String,
+    pub code: String,
+    pub url: String,
+    pub created_by_account_id: Option<String>,
+    pub created_by_username: Option<String>,
+    pub max_uses: Option<i32>,
+    pub uses: i32,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InviteTreeMember {
+    pub account_id: String,
+    pub username: String,
+    /// Account ID of the person whose invite was used; null for root members.
+    pub invited_by_account_id: Option<String>,
+    pub invited_by_username: Option<String>,
+    pub joined_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InviteTreeResponse {
+    pub members: Vec<InviteTreeMember>,
+    pub invites: Vec<ConsoleInviteResponse>,
+}
+
+pub async fn invite_tree(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path(domain): Path<String>,
+) -> AppResult<Json<InviteTreeResponse>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let members = sqlx::query!(
+        r#"SELECT
+             a.id        AS account_id,
+             a.username,
+             inv_a.id    AS "invited_by_account_id?: Uuid",
+             inv_a.username AS "invited_by_username?: String",
+             u.created_at
+           FROM users u
+           JOIN accounts a ON a.id = u.account_id
+           LEFT JOIN invites i ON i.id = u.invite_id
+           LEFT JOIN accounts inv_a ON inv_a.id = i.created_by
+           WHERE u.instance_id = $1 AND a.domain IS NULL
+           ORDER BY u.created_at ASC"#,
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| InviteTreeMember {
+        account_id: r.account_id.to_string(),
+        username: r.username,
+        invited_by_account_id: r.invited_by_account_id.map(|id| id.to_string()),
+        invited_by_username: r.invited_by_username,
+        joined_at: r.created_at,
+    })
+    .collect();
+
+    let invites = sqlx::query!(
+        r#"SELECT
+             i.id, i.code, i.max_uses, i.uses, i.expires_at, i.created_at,
+             a.id       AS "created_by_account_id?: Uuid",
+             a.username AS "created_by_username?: String"
+           FROM invites i
+           LEFT JOIN accounts a ON a.id = i.created_by
+           WHERE i.instance_id = $1
+           ORDER BY i.created_at DESC"#,
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| ConsoleInviteResponse {
+        url: crate::api::mastodon::invites::invite_url(&instance.domain, &r.code),
+        id: r.id.to_string(),
+        code: r.code,
+        created_by_account_id: r.created_by_account_id.map(|id| id.to_string()),
+        created_by_username: r.created_by_username,
+        max_uses: r.max_uses,
+        uses: r.uses,
+        expires_at: r.expires_at,
+        created_at: r.created_at,
+    })
+    .collect();
+
+    Ok(Json(InviteTreeResponse { members, invites }))
+}
+
+pub async fn create_console_invite(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path(domain): Path<String>,
+) -> AppResult<Json<ConsoleInviteResponse>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    // Create the invite on behalf of the first admin account (if one exists),
+    // so it appears in the tree rooted at the admin.
+    let admin_id = sqlx::query_scalar!(
+        r#"SELECT a.id FROM accounts a
+           JOIN users u ON u.account_id = a.id
+           WHERE a.instance_id = $1 AND a.domain IS NULL
+           ORDER BY u.created_at ASC LIMIT 1"#,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let code = crate::api::mastodon::invites::generate_code();
+
+    let row = sqlx::query!(
+        r#"INSERT INTO invites (instance_id, code, created_by)
+           VALUES ($1, $2, $3)
+           RETURNING id, code, max_uses, uses, expires_at, created_at"#,
+        instance.id,
+        code,
+        admin_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let creator_username = if let Some(aid) = admin_id {
+        sqlx::query_scalar!("SELECT username FROM accounts WHERE id = $1", aid)
+            .fetch_optional(&state.db)
+            .await?
+    } else {
+        None
+    };
+
+    Ok(Json(ConsoleInviteResponse {
+        url: crate::api::mastodon::invites::invite_url(&instance.domain, &row.code),
+        id: row.id.to_string(),
+        code: row.code,
+        created_by_account_id: admin_id.map(|id| id.to_string()),
+        created_by_username: creator_username,
+        max_uses: row.max_uses,
+        uses: row.uses,
+        expires_at: row.expires_at,
+        created_at: row.created_at,
+    }))
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 async fn instance_for_user(state: &AppState, domain: &str, user_id: Uuid) -> AppResult<Instance> {

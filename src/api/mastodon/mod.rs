@@ -3,6 +3,7 @@ pub mod bookmarks;
 pub mod convert;
 pub mod favourites;
 pub mod instance;
+pub mod invites;
 pub mod markers;
 pub mod media;
 pub mod notifications;
@@ -105,6 +106,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/notifications", get(notifications::get_notifications))
         .route("/api/v1/notifications/{id}", get(notifications::get_notification))
         .route("/api/v1/notifications/clear", post(notifications::clear_notifications))
+        // Invites
+        .route("/api/v1/invites", get(invites::list_invites).post(invites::create_invite))
+        .route("/api/v1/invites/{id}", delete(invites::delete_invite))
         // Media
         .route("/api/v2/media", post(media::upload_media))
         .layer(middleware::from_fn_with_state(

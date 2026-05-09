@@ -38,10 +38,8 @@ pub async fn signup_get(
         if invite.is_empty() {
             return render(&instance, &invite, false, None);
         }
-        // Validate the invite code before showing the form
-        match validate_invite(&state, &instance, &invite).await {
-            Ok(()) => {}
-            Err(msg) => return render(&instance, &invite, false, Some(msg)),
+        if let Err(msg) = validate_invite(&state, &instance, &invite).await {
+            return render(&instance, &invite, false, Some(msg));
         }
     }
 
@@ -55,15 +53,21 @@ pub async fn signup_post(
 ) -> Response {
     let invite = form.invite.as_deref().unwrap_or("").trim().to_string();
 
-    // Check registrations / invite
-    if !instance.registrations_open {
-        if invite.is_empty() {
-            return render(&instance, &invite, false, Some("An invite code is required."));
+    // Check registrations / invite — always validate a provided code; require
+    // one when registrations are closed.
+    let invite_id: Option<uuid::Uuid> = if !invite.is_empty() {
+        match validate_invite(&state, &instance, &invite).await {
+            Ok(id) => Some(id),
+            Err(msg) => {
+                let show_form = instance.registrations_open;
+                return render(&instance, &invite, show_form, Some(msg));
+            }
         }
-        if let Err(msg) = validate_invite(&state, &instance, &invite).await {
-            return render(&instance, &invite, false, Some(msg));
-        }
-    }
+    } else if !instance.registrations_open {
+        return render(&instance, &invite, false, Some("An invite code is required."));
+    } else {
+        None
+    };
 
     // Unwrap fields — if any are missing the browser should have caught it, but
     // guard anyway to avoid a confusing error.
@@ -182,13 +186,14 @@ pub async fn signup_post(
 
     let user_result = sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at)
-           VALUES ($1,$2,$3,$4,$5,now())"#,
+             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id)
+           VALUES ($1,$2,$3,$4,$5,now(),$6)"#,
         account_id,
         instance.id,
         email,
         email_normalised,
         password_hash,
+        invite_id,
     )
     .execute(&state.db)
     .await;
@@ -197,12 +202,11 @@ pub async fn signup_post(
         return render(&instance, &invite, true, Some("Server error. Please try again."));
     }
 
-    // Consume invite if registrations are closed
-    if !instance.registrations_open && !invite.is_empty() {
+    // Increment invite uses (always, so the tree is accurate even with open registrations)
+    if let Some(id) = invite_id {
         let _ = sqlx::query!(
-            "UPDATE invites SET uses = uses + 1 WHERE code = $1 AND instance_id = $2",
-            invite,
-            instance.id,
+            "UPDATE invites SET uses = uses + 1 WHERE id = $1",
+            id,
         )
         .execute(&state.db)
         .await;
@@ -214,13 +218,14 @@ pub async fn signup_post(
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
+/// Validates an invite code and returns its UUID if valid.
 async fn validate_invite(
     state: &AppState,
     instance: &Instance,
     code: &str,
-) -> Result<(), &'static str> {
+) -> Result<uuid::Uuid, &'static str> {
     let row = sqlx::query!(
-        "SELECT uses, max_uses, expires_at FROM invites WHERE code = $1 AND instance_id = $2",
+        "SELECT id, uses, max_uses, expires_at FROM invites WHERE code = $1 AND instance_id = $2",
         code,
         instance.id,
     )
@@ -238,7 +243,7 @@ async fn validate_invite(
     if inv.expires_at.map_or(false, |e| e < chrono::Utc::now()) {
         return Err("This invite has expired.");
     }
-    Ok(())
+    Ok(inv.id)
 }
 
 fn render(instance: &Instance, invite: &str, show_form: bool, error: Option<&str>) -> Response {

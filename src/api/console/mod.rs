@@ -31,6 +31,10 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .patch(instances::update)
                 .delete(instances::delete),
         )
+        .route(
+            "/api/console/instances/{domain}/invites",
+            get(instances::invite_tree).post(instances::create_console_invite),
+        )
         .with_state(state)
 }
 

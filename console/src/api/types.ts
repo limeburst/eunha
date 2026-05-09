@@ -19,6 +19,31 @@ export interface Instance {
   admin_account?: string
 }
 
+export interface ConsoleInvite {
+  id: string
+  code: string
+  url: string
+  created_by_account_id: string | null
+  created_by_username: string | null
+  max_uses: number | null
+  uses: number
+  expires_at: string | null
+  created_at: string
+}
+
+export interface InviteTreeMember {
+  account_id: string
+  username: string
+  invited_by_account_id: string | null
+  invited_by_username: string | null
+  joined_at: string
+}
+
+export interface InviteTree {
+  members: InviteTreeMember[]
+  invites: ConsoleInvite[]
+}
+
 export interface CreateInstanceRequest {
   domain: string
   custom_domain?: string
