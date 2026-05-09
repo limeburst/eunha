@@ -36,6 +36,7 @@ impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         dotenvy::dotenv().ok();
         let cfg = config::Config::builder()
+            .add_source(config::File::with_name("config").required(false))
             .add_source(config::Environment::default().separator("__"))
             .build()?;
         Ok(cfg.try_deserialize()?)
