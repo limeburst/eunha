@@ -1533,6 +1533,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "image",
+ "img-parts",
  "itertools",
  "mime",
  "mime_guess",
@@ -2351,6 +2352,17 @@ checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
 dependencies = [
  "byteorder-lite",
  "quick-error",
+]
+
+[[package]]
+name = "img-parts"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19734e3c43b2a850f5889c077056e47c874095f2d87e853c7c41214ae67375f0"
+dependencies = [
+ "bytes",
+ "crc32fast",
+ "miniz_oxide",
 ]
 
 [[package]]

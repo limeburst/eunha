@@ -3,6 +3,7 @@ use axum::{
     Json,
 };
 use image::imageops::FilterType;
+use img_parts::ImageEXIF;
 
 use crate::{
     error::{AppError, AppResult},
@@ -46,6 +47,7 @@ pub async fn upload_media(
     let media_type = classify_media_type(&content_type);
     let keys = crate::media::media_attachment_keys(instance.id, &content_type);
 
+    let data = strip_exif(&data, &content_type);
     state.storage.store(&data, &keys.original, &content_type).await?;
     let file_url = state.storage.public_url(&keys.original);
 
@@ -127,6 +129,39 @@ fn image_dim_json(w: u32, h: u32) -> serde_json::Value {
         "size": format!("{}x{}", w, h),
         "aspect": w as f64 / h as f64,
     })
+}
+
+/// Strip EXIF (including GPS) from JPEG, PNG, and WebP without re-encoding.
+/// Falls back to returning the original bytes unchanged for unsupported formats.
+fn strip_exif(data: &[u8], content_type: &str) -> Vec<u8> {
+    let bytes: bytes::Bytes = data.to_vec().into();
+    match content_type {
+        ct if ct.contains("jpeg") || ct.contains("jpg") => {
+            if let Ok(mut jpeg) = img_parts::jpeg::Jpeg::from_bytes(bytes) {
+                jpeg.set_exif(None);
+                jpeg.encoder().bytes().to_vec()
+            } else {
+                data.to_vec()
+            }
+        }
+        ct if ct.contains("png") => {
+            if let Ok(mut png) = img_parts::png::Png::from_bytes(bytes) {
+                png.set_exif(None);
+                png.encoder().bytes().to_vec()
+            } else {
+                data.to_vec()
+            }
+        }
+        ct if ct.contains("webp") => {
+            if let Ok(mut webp) = img_parts::webp::WebP::from_bytes(bytes) {
+                webp.set_exif(None);
+                webp.encoder().bytes().to_vec()
+            } else {
+                data.to_vec()
+            }
+        }
+        _ => data.to_vec(),
+    }
 }
 
 fn classify_media_type(content_type: &str) -> &'static str {
