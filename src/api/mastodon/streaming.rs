@@ -122,7 +122,7 @@ async fn run(
                     // subscriptions over the socket instead.
                     Some(Ok(Message::Text(text))) => {
                         #[derive(serde::Deserialize)]
-                        struct Cmd { #[serde(rename = "type")] kind: String }
+                        struct Cmd { #[serde(rename = "type")] _kind: String }
                         // Ignore parse errors; unrecognised commands are no-ops.
                         let _ = serde_json::from_str::<Cmd>(&text);
                     }

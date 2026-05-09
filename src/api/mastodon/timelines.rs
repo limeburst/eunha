@@ -118,7 +118,7 @@ pub async fn home_timeline(
 async fn build_status_list(
     state: &AppState,
     statuses: Vec<DbStatus>,
-    viewer_id: Option<uuid::Uuid>,
+    _viewer_id: Option<uuid::Uuid>,
 ) -> AppResult<Vec<Status>> {
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {

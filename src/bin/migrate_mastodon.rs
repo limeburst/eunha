@@ -215,7 +215,7 @@ async fn migrate_accounts(
     dst: &mut PgConnection,
     instance_id: Uuid,
     limit: Option<i64>,
-    args_domain: &str,
+    _args_domain: &str,
 ) -> Result<HashMap<i64, Uuid>> {
     let rows = sqlx::query(
         r#"SELECT a.*,
@@ -281,8 +281,8 @@ async fn migrate_accounts(
 
         let avatar_remote_url: Option<String> = row.try_get("avatar_remote_url").ok().flatten();
         let header_remote_url: Option<String> = row.try_get("header_remote_url").ok().flatten();
-        let avatar_file_name: Option<String> = row.try_get("avatar_file_name").ok().flatten();
-        let header_file_name: Option<String> = row.try_get("header_file_name").ok().flatten();
+        let _avatar_file_name: Option<String> = row.try_get("avatar_file_name").ok().flatten();
+        let _header_file_name: Option<String> = row.try_get("header_file_name").ok().flatten();
 
         // Remote accounts: use cached remote URL directly.
         // Local accounts: avatar/header files live in R2; the URL is set later

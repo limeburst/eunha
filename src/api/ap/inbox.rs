@@ -109,9 +109,9 @@ async fn handle_undo(
 }
 
 async fn handle_create(
-    state: &AppState,
-    instance: &crate::db::models::Instance,
-    activity: &Value,
+    _state: &AppState,
+    _instance: &crate::db::models::Instance,
+    _activity: &Value,
 ) -> AppResult<()> {
     // TODO: parse Note objects, create remote statuses
     Ok(())
@@ -139,9 +139,9 @@ async fn handle_delete(
 }
 
 async fn handle_announce(
-    state: &AppState,
-    instance: &crate::db::models::Instance,
-    activity: &Value,
+    _state: &AppState,
+    _instance: &crate::db::models::Instance,
+    _activity: &Value,
 ) -> AppResult<()> {
     // TODO: create boost (reblog) status
     Ok(())
@@ -213,9 +213,9 @@ async fn handle_accept_reject(
 }
 
 async fn handle_update(
-    state: &AppState,
+    _state: &AppState,
     _instance: &crate::db::models::Instance,
-    activity: &Value,
+    _activity: &Value,
 ) -> AppResult<()> {
     // TODO: handle actor updates, status edits
     Ok(())

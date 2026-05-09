@@ -14,7 +14,7 @@ pub mod timelines;
 pub mod types;
 
 use axum::{
-    http::{header, HeaderMap},
+    http::HeaderMap,
     middleware,
     routing::{delete, get, patch, post},
     Router,

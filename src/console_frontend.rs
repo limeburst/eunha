@@ -1,11 +1,11 @@
 use axum::{
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Response},
 };
 
 const DIST: &str = "console/dist";
 
-pub async fn serve(uri: Uri, headers: HeaderMap) -> Response {
+pub async fn serve(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
 
     if !path.is_empty() && !path.contains("..") {

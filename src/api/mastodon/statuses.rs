@@ -209,7 +209,7 @@ pub async fn favourite_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
-    let (status, account) = fetch_status_with_account(&state, id).await?;
+    fetch_status_with_account(&state, id).await?;
 
     sqlx::query!(
         "INSERT INTO favourites (account_id, status_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
@@ -274,7 +274,6 @@ pub async fn reblog_status(
     }
 
     let boost_account = fetch_account(&state, auth.account_id).await?;
-    let content = String::new();
     let boost = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses (instance_id, account_id, text, content, visibility, reblog_of_id)
@@ -375,7 +374,7 @@ pub async fn unreblog_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
-    let (original, account) = fetch_status_with_account(&state, id).await?;
+    let (original, _account) = fetch_status_with_account(&state, id).await?;
 
     let deleted = sqlx::query!(
         "DELETE FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL RETURNING id",

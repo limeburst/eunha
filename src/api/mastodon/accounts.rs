@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Multipart, Path, Query, State},
-    http::{header, HeaderMap, Uri},
+    http::{HeaderMap, Uri},
     response::IntoResponse,
     Json,
 };
@@ -15,14 +15,14 @@ use crate::{
 };
 use super::{
     convert::{account_from_db, status_from_db},
-    types::{Account as ApiAccount, PaginationParams, Preferences, Relationship, Status},
+    types::{Account as ApiAccount, PaginationParams, Preferences, Relationship},
 };
 
 // ── GET /api/v1/accounts/verify_credentials ────────────────────────────────
 
 pub async fn verify_credentials(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, auth.account_id).await?;

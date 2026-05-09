@@ -164,7 +164,7 @@ msgstr "내 커뮤니티"
 
 #: src/pages/NewInstance.tsx:72
 msgid "myinstance"
-msgstr "내인스턴스"
+msgstr "my-instance"
 
 #: src/pages/NewInstance.tsx:59
 msgid "New instance"
