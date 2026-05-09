@@ -472,20 +472,20 @@ pub async fn update_credentials(
                 discoverable = Some(v == "true" || v == "1");
             }
             "avatar" => {
-                let filename = field.file_name().unwrap_or("avatar").to_string();
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
                 let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
-                    let key = state.storage.store(&data, &filename, &content_type, &instance.domain).await?;
+                    let key = crate::media::account_avatar_key(instance.id, auth.account_id, &content_type);
+                    state.storage.store(&data, &key, &content_type).await?;
                     avatar_url = Some(state.storage.public_url(&key));
                 }
             }
             "header" => {
-                let filename = field.file_name().unwrap_or("header").to_string();
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
                 let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
-                    let key = state.storage.store(&data, &filename, &content_type, &instance.domain).await?;
+                    let key = crate::media::account_header_key(instance.id, auth.account_id, &content_type);
+                    state.storage.store(&data, &key, &content_type).await?;
                     header_url = Some(state.storage.public_url(&key));
                 }
             }

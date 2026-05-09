@@ -38,9 +38,10 @@ pub async fn upload_media(
         }
     }
 
-    let (filename, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
+    let (_, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
     let media_type = classify_media_type(&content_type);
-    let key = state.storage.store(&data, &filename, &content_type, &instance.domain).await?;
+    let key = crate::media::media_attachment_key(instance.id, &content_type);
+    state.storage.store(&data, &key, &content_type).await?;
     let url = state.storage.public_url(&key);
 
     let attachment = sqlx::query_as!(
