@@ -16,6 +16,10 @@ path = "src/bin/migrate_mastodon.rs"
 name = "eunha-upload-media"
 path = "src/bin/upload_media.rs"
 
+[[bin]]
+name = "eunha-init-r2"
+path = "src/bin/init_r2.rs"
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["multipart", "macros", "ws"] }

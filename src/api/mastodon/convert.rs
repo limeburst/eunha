@@ -2,8 +2,8 @@
 use crate::db::models;
 use super::types;
 
-const DEFAULT_AVATAR: &str = "/avatars/original/missing.png";
-const DEFAULT_HEADER: &str = "/headers/original/missing.png";
+const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
+const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
 
 pub fn account_from_db(a: &models::Account) -> types::Account {
     types::Account {
