@@ -26,6 +26,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/account", get(account_home))
         .route("/account/login", get(login_page).post(login_post))
         .route("/account/logout", post(logout_post))
+        .route("/account/sso", post(sso_post))
         .route("/account/password", get(password_page).post(password_post))
         .route("/account/invites", get(invites_page))
         .with_state(state)
@@ -57,12 +58,14 @@ async fn get_session(
     let token = extract_session_token(headers)?;
     let row = sqlx::query!(
         r#"SELECT u.id as user_id, a.username
-           FROM instance_user_sessions s
-           JOIN users u ON u.id = s.user_id
-           JOIN accounts a ON a.id = u.account_id
-           WHERE s.token = $1
+           FROM oauth_access_tokens t
+           JOIN accounts a ON a.id = t.account_id
+           JOIN users u ON u.account_id = a.id
+           WHERE t.token = $1
              AND u.instance_id = $2
-             AND (s.expires_at IS NULL OR s.expires_at > now())"#,
+             AND t.revoked_at IS NULL
+             AND (t.expires_at IS NULL OR t.expires_at > now())
+             AND a.domain IS NULL"#,
         token,
         instance.id,
     )
@@ -182,7 +185,7 @@ pub async fn login_post(
     };
 
     let row = match sqlx::query!(
-        r#"SELECT u.id, u.password_hash, a.username
+        r#"SELECT u.id, u.password_hash, a.id as account_id, a.username
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            WHERE u.email_normalized = $1
@@ -203,18 +206,35 @@ pub async fn login_post(
         return render_error(locale.t("invalid_credentials"));
     }
 
-    let token = generate_token(64);
-    if sqlx::query!(
-        "INSERT INTO instance_user_sessions (user_id, token) VALUES ($1, $2)",
-        row.id,
-        token,
+    // Reuse an existing non-revoked OAuth token, or mint a new one.
+    let token = match sqlx::query_scalar!(
+        r#"SELECT token FROM oauth_access_tokens
+           WHERE account_id = $1
+             AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > now())
+           LIMIT 1"#,
+        row.account_id,
     )
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await
-    .is_err()
     {
-        return render_error(locale.t("err_server"));
-    }
+        Ok(Some(t)) => t,
+        _ => {
+            let t = generate_token(64);
+            if sqlx::query!(
+                "INSERT INTO oauth_access_tokens (account_id, token, scopes) VALUES ($1, $2, 'read write follow push')",
+                row.account_id,
+                t,
+            )
+            .execute(&state.db)
+            .await
+            .is_err()
+            {
+                return render_error(locale.t("err_server"));
+            }
+            t
+        }
+    };
 
     (
         [(header::SET_COOKIE, set_cookie(&token))],
@@ -223,15 +243,73 @@ pub async fn login_post(
         .into_response()
 }
 
+// ── POST /account/sso ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SsoForm {
+    pub token: String,
+}
+
+pub async fn sso_post(
+    State(state): State<AppState>,
+    axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<ResolvedInstance>,
+    Form(form): Form<SsoForm>,
+) -> Response {
+    let valid = sqlx::query!(
+        r#"SELECT 1 as "exists!"
+           FROM oauth_access_tokens t
+           JOIN accounts a ON a.id = t.account_id
+           JOIN users u ON u.account_id = a.id
+           WHERE t.token = $1
+             AND u.instance_id = $2
+             AND t.revoked_at IS NULL
+             AND (t.expires_at IS NULL OR t.expires_at > now())
+             AND a.domain IS NULL"#,
+        form.token,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .is_some();
+
+    if !valid {
+        return Redirect::to("/account/login").into_response();
+    }
+
+    (
+        [(header::SET_COOKIE, set_cookie(&form.token))],
+        Redirect::to("/account"),
+    )
+        .into_response()
+}
+
 // ── POST /account/logout ───────────────────────────────────────────────────────
 
-pub async fn logout_post(headers: HeaderMap) -> Response {
-    // Attempt to delete the session from the DB would be nice but we don't have
-    // the state here easily — the cookie expiry is sufficient for security.
-    let _ = headers; // suppress unused warning
+pub async fn logout_post(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(token) = extract_session_token(&headers) {
+        let _ = sqlx::query!(
+            "UPDATE oauth_access_tokens SET revoked_at = now() WHERE token = $1",
+            token,
+        )
+        .execute(&state.db)
+        .await;
+    }
+
+    // Inline script clears all elk-* localStorage keys then redirects.
+    // Same origin guarantees access to Elk's localStorage.
+    let html = r#"<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+Object.keys(localStorage).filter(k=>k.startsWith('elk-')).forEach(k=>localStorage.removeItem(k));
+location.replace('/account/login');
+</script></body></html>"#;
+
     (
         [(header::SET_COOKIE, clear_cookie())],
-        Redirect::to("/account/login"),
+        Html(html),
     )
         .into_response()
 }
