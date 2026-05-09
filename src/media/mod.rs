@@ -56,7 +56,7 @@ pub fn account_avatar_key(instance_id: Uuid, account_id: Uuid, content_type: &st
     let ext = ext_for(content_type);
     format!(
         "{}/accounts/avatars/{}/original/{}.{}",
-        uuid_to_path(instance_id),
+        instance_id,
         uuid_to_path(account_id),
         random_hex(),
         ext,
@@ -67,7 +67,7 @@ pub fn account_header_key(instance_id: Uuid, account_id: Uuid, content_type: &st
     let ext = ext_for(content_type);
     format!(
         "{}/accounts/headers/{}/original/{}.{}",
-        uuid_to_path(instance_id),
+        instance_id,
         uuid_to_path(account_id),
         random_hex(),
         ext,
@@ -78,7 +78,7 @@ pub fn media_attachment_key(instance_id: Uuid, content_type: &str) -> String {
     let ext = ext_for(content_type);
     format!(
         "{}/media_attachments/files/{}/original/{}.{}",
-        uuid_to_path(instance_id),
+        instance_id,
         uuid_to_path(Uuid::new_v4()),
         random_hex(),
         ext,
