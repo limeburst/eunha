@@ -14,10 +14,27 @@ RUN pnpm install --frozen-lockfile
 COPY console/ .
 RUN pnpm build
 
-# ── Stage 3: Build Rust binary ──────────────────────────────────────────────
-FROM rust:1-slim-bookworm AS rust-builder
+# ── Stage 3a: Install cargo-chef ────────────────────────────────────────────
+FROM rust:1-slim-bookworm AS chef
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN cargo install cargo-chef --locked
 WORKDIR /app
+
+# ── Stage 3b: Generate dependency recipe ────────────────────────────────────
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── Stage 3c: Cache dependency compilation ──────────────────────────────────
+FROM chef AS cacher
+COPY --from=planner /app/recipe.json recipe.json
+ENV SQLX_OFFLINE=true
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# ── Stage 3d: Build application ─────────────────────────────────────────────
+FROM chef AS rust-builder
+COPY --from=cacher /app/target target
+COPY --from=cacher $CARGO_HOME $CARGO_HOME
 COPY . .
 ENV SQLX_OFFLINE=true
 RUN cargo build --release --bin eunha
