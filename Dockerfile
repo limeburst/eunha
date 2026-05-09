@@ -28,15 +28,17 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ── Stage 3c: Cache dependency compilation ──────────────────────────────────
 FROM chef AS cacher
 COPY --from=planner /app/recipe.json recipe.json
+# Dependencies don't contain sqlx queries so offline mode is fine here.
 ENV SQLX_OFFLINE=true
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # ── Stage 3d: Build application ─────────────────────────────────────────────
 FROM chef AS rust-builder
+ARG DATABASE_URL
+ENV DATABASE_URL=${DATABASE_URL}
 COPY --from=cacher /app/target target
 COPY --from=cacher $CARGO_HOME $CARGO_HOME
 COPY . .
-ENV SQLX_OFFLINE=true
 RUN cargo build --release --bin eunha
 
 # ── Stage 4: Runtime ────────────────────────────────────────────────────────

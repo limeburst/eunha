@@ -5,7 +5,7 @@ config.toml
 seoulearth_*
 /frontend/node_modules
 /frontend/dist
-# /.sqlx is intentionally tracked for SQLX_OFFLINE Docker builds
+/.sqlx
 /console/node_modules
 /console/dist
 /console/src/locales/*/messages.js
