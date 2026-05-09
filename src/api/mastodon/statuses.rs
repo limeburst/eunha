@@ -128,8 +128,36 @@ pub async fn get_status(
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Status>> {
     let (status, account) = fetch_status_with_account(&state, id).await?;
-    let media = fetch_status_media(&state, id).await?;
 
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+
+    match status.visibility.as_str() {
+        "private" => {
+            let is_author = viewer_id == Some(status.account_id);
+            let is_follower = if let Some(vid) = viewer_id {
+                sqlx::query_scalar!(
+                    "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                    vid, status.account_id
+                )
+                .fetch_optional(&state.db)
+                .await?
+                .is_some()
+            } else {
+                false
+            };
+            if !is_author && !is_follower {
+                return Err(AppError::NotFound);
+            }
+        }
+        "direct" => {
+            if viewer_id != Some(status.account_id) {
+                return Err(AppError::NotFound);
+            }
+        }
+        _ => {}
+    }
+
+    let media = fetch_status_media(&state, id).await?;
     let viewer_ctx = if let Some(Extension(auth)) = auth {
         Some(build_viewer_context(&state, auth.account_id, id).await?)
     } else {

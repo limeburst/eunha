@@ -169,6 +169,7 @@ pub async fn get_account_statuses(
              )
              AND (
                text != '' OR content != ''
+               OR reblog_of_id IS NOT NULL
                OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
              )
            ORDER BY id DESC

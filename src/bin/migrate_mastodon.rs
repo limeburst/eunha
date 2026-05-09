@@ -347,6 +347,7 @@ async fn migrate_statuses(
         let url: Option<String> = row.try_get("url").ok().flatten();
         let uri: Option<String> = row.try_get("uri").ok().flatten();
         let in_reply_to_id_src: Option<i64> = row.try_get("in_reply_to_id").ok().flatten();
+        let reblog_of_id_src: Option<i64> = row.try_get("reblog_of_id").ok().flatten();
         let replies_count: Option<i64> = row.try_get("replies_count").ok().flatten();
         let reblogs_count: Option<i64> = row.try_get("reblogs_count").ok().flatten();
         let favourites_count: Option<i64> = row.try_get("favourites_count").ok().flatten();
@@ -354,17 +355,19 @@ async fn migrate_statuses(
         let edited_at = get_ts_opt(&row, "edited_at");
         let created_at = get_ts(&row, "created_at")?;
 
-        // Best-effort in_reply_to remapping using already-processed statuses
+        // Best-effort remapping using already-processed statuses (ORDER BY id ensures
+        // originals come before their boosts/replies in the vast majority of cases).
         let in_reply_to_id: Option<i64> = in_reply_to_id_src.and_then(|id| map.get(&id)).copied();
+        let reblog_of_id: Option<i64> = reblog_of_id_src.and_then(|id| map.get(&id)).copied();
 
         let new_id: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO statuses
                  (instance_id, account_id, text, content, spoiler_text,
                   visibility, language, sensitive, url, uri,
-                  in_reply_to_id,
+                  in_reply_to_id, reblog_of_id,
                   replies_count, reblogs_count, favourites_count,
                   deleted_at, edited_at, created_at)
-               VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+               VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                ON CONFLICT (uri) DO NOTHING
                RETURNING id"#,
         )
@@ -378,6 +381,7 @@ async fn migrate_statuses(
         .bind(&url)
         .bind(&uri)
         .bind(in_reply_to_id)
+        .bind(reblog_of_id)
         .bind(replies_count.unwrap_or(0))
         .bind(reblogs_count.unwrap_or(0))
         .bind(favourites_count.unwrap_or(0))

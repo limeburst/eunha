@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.*\n           FROM statuses s\n           WHERE s.visibility = 'public'\n             AND s.deleted_at IS NULL\n             AND s.reblog_of_id IS NULL\n             AND ($1::bool IS FALSE OR s.instance_id = $2)\n             AND ($3::bigint IS NULL OR s.id < $3)\n             AND ($4::bigint IS NULL OR s.id > $4)\n             AND (s.text != '' OR s.content != ''\n                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $5",
+  "query": "SELECT * FROM statuses\n           WHERE account_id = $1\n             AND deleted_at IS NULL\n             AND ($2::bigint IS NULL OR id < $2)\n             AND ($3::bigint IS NULL OR id > $3)\n             AND ($4::boolean IS NOT TRUE OR reblog_of_id IS NULL)\n             AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL)\n             AND (\n               visibility IN ('public', 'unlisted')\n               OR ($6::boolean = true)\n               OR ($7::boolean = true AND visibility = 'private')\n             )\n             AND (\n               text != '' OR content != ''\n               OR reblog_of_id IS NOT NULL\n               OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)\n             )\n           ORDER BY id DESC\n           LIMIT $8",
   "describe": {
     "columns": [
       {
@@ -106,10 +106,13 @@
     ],
     "parameters": {
       "Left": [
-        "Bool",
         "Uuid",
         "Int8",
         "Int8",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
         "Int8"
       ]
     },
@@ -136,5 +139,5 @@
       false
     ]
   },
-  "hash": "2763c32afecd4098cfce6c9244cd0f545034d4df585313fa76db6948cd5a2f73"
+  "hash": "d10562bc09240de4b43a92a80c2ca017306a620d1aa1bbd26cd71a6bf6994273"
 }

@@ -52,6 +52,7 @@ pub async fn public_timeline(
              AND ($3::bigint IS NULL OR s.id < $3)
              AND ($4::bigint IS NULL OR s.id > $4)
              AND (s.text != '' OR s.content != ''
+                  OR s.reblog_of_id IS NOT NULL
                   OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
            ORDER BY s.id DESC
            LIMIT $5"#,
@@ -95,6 +96,7 @@ pub async fn home_timeline(
            AND ($2::bigint IS NULL OR s.id < $2)
            AND ($3::bigint IS NULL OR s.id > $3)
            AND (s.text != '' OR s.content != ''
+                OR s.reblog_of_id IS NOT NULL
                 OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
            ORDER BY s.id DESC
            LIMIT $4"#,
