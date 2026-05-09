@@ -8,6 +8,11 @@ static ENV: Lazy<Environment<'static>> = Lazy::new(|| {
         include_str!("templates/authorize.html").to_string(),
     )
     .expect("authorize.html template is invalid");
+    env.add_template_owned(
+        "unknown_host.html",
+        include_str!("templates/unknown_host.html").to_string(),
+    )
+    .expect("unknown_host.html template is invalid");
     env
 });
 

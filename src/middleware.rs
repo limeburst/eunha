@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{db, error::AppError, state::AppState, db::models::Instance};
+use crate::{db, error::AppError, state::AppState, db::models::Instance, templates};
 
 /// Resolved instance, injected into request extensions by [`resolve_instance`].
 #[derive(Clone)]
@@ -87,47 +87,7 @@ pub async fn authenticate(
 }
 
 fn unknown_host_page(host: &str) -> impl IntoResponse {
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>No instance found — eunha.social</title>
-  <style>
-    *, *::before, *::after {{ box-sizing: border-box; }}
-    body {{
-      font-family: ui-monospace, monospace;
-      background: #0f0f0f;
-      color: #e0e0e0;
-      margin: 0;
-      min-height: 100svh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-    }}
-    main {{
-      max-width: 480px;
-      width: 100%;
-    }}
-    p {{ margin: 0 0 1rem; font-size: 0.8rem; line-height: 1.6; color: #888; }}
-    h1 {{ margin: 0 0 2rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em; color: #555; }}
-    .host {{ color: #e0e0e0; }}
-    a {{ color: #e0e0e0; }}
-    a:hover {{ color: #888; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>eunha.social</h1>
-    <p>No fediverse instance is hosted at <span class="host">{host}</span>.</p>
-    <p>eunha.social is a fediverse instance hosting service. You can create your own Mastodon-compatible instance and be part of the open social web.</p>
-    <p><a href="https://eunha.social">Sign up at eunha.social →</a></p>
-  </main>
-</body>
-</html>"#
-    );
+    let html = templates::render("unknown_host.html", minijinja::context! { host });
     (StatusCode::NOT_FOUND, Html(html))
 }
 
