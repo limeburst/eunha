@@ -8,7 +8,7 @@ use self::models::Instance;
 pub async fn get_instance_by_domain(db: &PgPool, domain: &str) -> AppResult<Instance> {
     sqlx::query_as!(
         Instance,
-        "SELECT * FROM instances WHERE domain = $1",
+        "SELECT * FROM instances WHERE domain = $1 OR custom_domain = $1",
         domain
     )
     .fetch_optional(db)

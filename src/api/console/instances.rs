@@ -17,6 +17,7 @@ use super::ConsoleAuth;
 pub struct InstanceResponse {
     pub id: String,
     pub domain: String,
+    pub custom_domain: Option<String>,
     pub title: String,
     pub status: String,
     pub plan: String,
@@ -30,6 +31,7 @@ impl InstanceResponse {
         InstanceResponse {
             id: instance.id.to_string(),
             domain: instance.domain.clone(),
+            custom_domain: instance.custom_domain.clone(),
             title: instance.title.clone(),
             status: "running".to_string(),
             plan: "free".to_string(),
@@ -74,6 +76,7 @@ pub async fn get_one(
 #[derive(Debug, Deserialize)]
 pub struct CreateInstanceRequest {
     pub domain: String,
+    pub custom_domain: Option<String>,
     pub title: String,
     pub admin_username: String,
     pub admin_email: String,
@@ -98,12 +101,34 @@ pub async fn create(
         return Err(AppError::Unprocessable("admin_password must be at least 8 characters".into()));
     }
 
+    // Normalise custom domain
+    let custom_domain: Option<String> = body.custom_domain
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase());
+
     // Check domain not already taken
-    let exists = sqlx::query_scalar!("SELECT 1 FROM instances WHERE domain = $1", domain)
-        .fetch_optional(&state.db)
-        .await?;
+    let exists = sqlx::query_scalar!(
+        "SELECT 1 FROM instances WHERE domain = $1 OR custom_domain = $1",
+        domain
+    )
+    .fetch_optional(&state.db)
+    .await?;
     if exists.is_some() {
         return Err(AppError::Conflict);
+    }
+
+    if let Some(ref cd) = custom_domain {
+        let taken = sqlx::query_scalar!(
+            "SELECT 1 FROM instances WHERE domain = $1 OR custom_domain = $1",
+            cd
+        )
+        .fetch_optional(&state.db)
+        .await?;
+        if taken.is_some() {
+            return Err(AppError::Conflict);
+        }
     }
 
     // Generate instance keypair (for ActivityPub instance actor)
@@ -112,10 +137,11 @@ pub async fn create(
     let instance = sqlx::query_as!(
         Instance,
         r#"INSERT INTO instances
-             (domain, title, private_key, public_key, console_user_id)
-           VALUES ($1, $2, $3, $4, $5)
+             (domain, custom_domain, title, private_key, public_key, console_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING *"#,
         domain,
+        custom_domain,
         body.title.trim(),
         instance_private_key,
         instance_public_key,

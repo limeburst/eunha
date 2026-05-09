@@ -9,7 +9,7 @@ const EUNHA_DOMAIN = 'eunha.social'
 export function NewInstance() {
   useLingui()
   const navigate = useNavigate()
-  const [domainType, setDomainType] = useState<'subdomain' | 'custom'>('subdomain')
+  const [useCustomDomain, setUseCustomDomain] = useState(false)
   const [subdomain, setSubdomain] = useState('')
   const [customDomain, setCustomDomain] = useState('')
   const [title, setTitle] = useState('')
@@ -19,18 +19,13 @@ export function NewInstance() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const domain =
-    domainType === 'subdomain'
-      ? `${subdomain.trim()}.${EUNHA_DOMAIN}`
-      : customDomain.trim()
-
-  const domainValid =
-    domainType === 'subdomain'
-      ? subdomain.trim().length > 0
-      : customDomain.trim().length > 0 && customDomain.includes('.')
+  const domain = `${subdomain.trim()}.${EUNHA_DOMAIN}`
+  const customDomainValue = customDomain.trim()
+  const customDomainValid = !useCustomDomain || (customDomainValue.length > 0 && customDomainValue.includes('.'))
 
   const valid =
-    domainValid &&
+    subdomain.trim().length > 0 &&
+    customDomainValid &&
     title.trim() &&
     adminUsername.trim() &&
     adminEmail.trim() &&
@@ -44,6 +39,7 @@ export function NewInstance() {
     try {
       await createInstance({
         domain,
+        custom_domain: useCustomDomain && customDomainValue ? customDomainValue : undefined,
         title: title.trim(),
         admin_username: adminUsername.trim(),
         admin_email: adminEmail.trim(),
@@ -75,43 +71,37 @@ export function NewInstance() {
             <Trans>Domain</Trans>
           </p>
 
-          <div className="flex gap-0 border border-border w-fit">
-            {(['subdomain', 'custom'] as const).map((type, i) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setDomainType(type)}
-                className={`px-3 py-1.5 text-xs transition-colors ${i > 0 ? 'border-l border-border' : ''} ${
-                  domainType === type ? 'bg-text text-bg' : 'text-muted hover:text-text'
-                }`}
-              >
-                {type === 'subdomain' ? t`Subdomain` : t`Custom domain`}
-              </button>
-            ))}
+          <div className="flex">
+            <input
+              value={subdomain}
+              onChange={(e) =>
+                setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
+              }
+              placeholder={t`my-instance`}
+              className="flex-1 bg-surface border border-border border-r-0 px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors"
+              required
+            />
+            <span className="px-3 py-2 border border-border bg-elevated text-xs text-muted select-none whitespace-nowrap">
+              .{EUNHA_DOMAIN}
+            </span>
           </div>
 
-          {domainType === 'subdomain' ? (
-            <div className="flex">
-              <input
-                value={subdomain}
-                onChange={(e) =>
-                  setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
-                }
-                placeholder={t`my-instance`}
-                className="flex-1 bg-surface border border-border border-r-0 px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors"
-                required
-              />
-              <span className="px-3 py-2 border border-border bg-elevated text-xs text-muted select-none whitespace-nowrap">
-                .{EUNHA_DOMAIN}
-              </span>
-            </div>
-          ) : (
+          <label className="flex items-center gap-2 cursor-pointer w-fit">
+            <input
+              type="checkbox"
+              checked={useCustomDomain}
+              onChange={(e) => setUseCustomDomain(e.target.checked)}
+              className="accent-text"
+            />
+            <span className="text-xs text-muted"><Trans>Custom domain</Trans></span>
+          </label>
+
+          {useCustomDomain && (
             <input
               value={customDomain}
               onChange={(e) => setCustomDomain(e.target.value.toLowerCase().trim())}
               placeholder="mastodon.example.com"
               className={inputCls}
-              required
             />
           )}
         </section>

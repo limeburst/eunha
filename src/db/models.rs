@@ -6,6 +6,7 @@ use uuid::Uuid;
 pub struct Instance {
     pub id: Uuid,
     pub domain: String,
+    pub custom_domain: Option<String>,
     pub title: String,
     pub description: String,
     pub short_description: String,
