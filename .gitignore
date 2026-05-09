@@ -1,5 +1,6 @@
 /target
 .env
+r2.toml
 /media
 seoulearth_*
 /frontend/node_modules
