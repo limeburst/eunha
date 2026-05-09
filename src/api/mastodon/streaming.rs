@@ -3,8 +3,10 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Extension, Query, State,
     },
+    http::HeaderMap,
     response::IntoResponse,
 };
+use bytes::Bytes;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -31,16 +33,30 @@ pub async fn handler(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     // Auth may already be resolved by the authenticate middleware (Bearer header).
     auth: Option<Extension<AuthenticatedUser>>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    // Resolve account_id: prefer middleware-injected auth, fall back to query param token.
     let account_id = auth.map(|a| a.0.account_id);
-    let token = params.access_token.clone();
-    let stream = params.stream.clone().unwrap_or_else(|| "public".into());
+
+    // The masto library passes the access token as the WebSocket subprotocol rather
+    // than as a query param. Browsers require the server to echo back the requested
+    // subprotocol — if we don't, the browser aborts the connection immediately.
+    let protocol_token = headers
+        .get("sec-websocket-protocol")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+
+    let token = params.access_token.clone().or_else(|| protocol_token.clone());
+    let initial_stream = params.stream.clone();
     let instance_id = instance.id;
 
-    tracing::info!(stream = %stream, ?account_id, "streaming: upgrade accepted");
+    let ws = if let Some(proto) = protocol_token.clone() {
+        ws.protocols([proto])
+    } else {
+        ws
+    };
+
+    tracing::info!(?initial_stream, ?account_id, "streaming: upgrade accepted");
     ws.on_upgrade(move |socket| async move {
-        // Resolve token from query param if not already authenticated.
         let account_id = if account_id.is_some() {
             account_id
         } else if let Some(tok) = token {
@@ -49,8 +65,8 @@ pub async fn handler(
             None
         };
 
-        tracing::info!(stream = %stream, ?account_id, "streaming: connection open");
-        run(socket, stream, account_id, instance_id, state).await;
+        tracing::info!(?initial_stream, ?account_id, "streaming: connection open");
+        run(socket, initial_stream, account_id, instance_id, state).await;
         tracing::info!("streaming: connection closed");
     })
 }
@@ -71,23 +87,14 @@ async fn resolve_token(state: &AppState, token: &str) -> Option<Uuid> {
 
 async fn run(
     mut socket: WebSocket,
-    stream: String,
+    initial_stream: Option<String>,
     account_id: Option<Uuid>,
     instance_id: Uuid,
     state: AppState,
 ) {
-    // `user` stream requires authentication.
-    if stream == "user" && account_id.is_none() {
-        let _ = socket
-            .send(Message::Close(None))
-            .await;
-        return;
-    }
-
-    // For `user` stream: pre-load the set of followed account IDs so we can
-    // filter home-timeline events without a DB query per message.
-    let following: HashSet<Uuid> = if stream == "user" {
-        let aid = account_id.unwrap();
+    // Load followed account IDs for any authenticated user so we can filter
+    // home-timeline events without a DB query per message.
+    let following: HashSet<Uuid> = if let Some(aid) = account_id {
         sqlx::query_scalar!(
             "SELECT target_account_id FROM follows
              WHERE account_id = $1 AND state = 'accepted'",
@@ -102,6 +109,10 @@ async fn run(
         HashSet::new()
     };
 
+    // Active stream subscriptions. Seeded by ?stream= query param; updated via
+    // {"type":"subscribe"/"unsubscribe","stream":"..."} messages (multiplexed protocol).
+    let mut subscribed: HashSet<String> = initial_stream.into_iter().collect();
+
     let mut rx = state.streaming.subscribe();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
     heartbeat.tick().await; // consume the immediate first tick
@@ -111,10 +122,13 @@ async fn run(
             result = rx.recv() => {
                 match result {
                     Ok(event) => {
-                        let Some(msg) = to_wire(&event, &stream, account_id, instance_id, &following)
-                        else { continue };
-                        if socket.send(Message::Text(msg.into())).await.is_err() {
-                            break;
+                        for stream in &subscribed {
+                            if let Some(msg) = to_wire(&event, stream, account_id, instance_id, &following) {
+                                if socket.send(Message::Text(msg.into())).await.is_err() {
+                                    return;
+                                }
+                                break; // avoid duplicate delivery if multiple streams match
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -123,41 +137,61 @@ async fn run(
             }
             msg = socket.recv() => {
                 match msg {
-                    // Handle subscribe/unsubscribe commands from clients that
-                    // connect without a `stream` query param and negotiate
-                    // subscriptions over the socket instead.
                     Some(Ok(Message::Text(text))) => {
-                        tracing::info!(stream = %stream, text = %text, "streaming: client message");
-                        #[derive(serde::Deserialize)]
-                        struct Cmd { #[serde(rename = "type")] _kind: String }
-                        // Ignore parse errors; unrecognised commands are no-ops.
-                        let _ = serde_json::from_str::<Cmd>(&text);
+                        tracing::info!(stream = ?subscribed, text = %text, "streaming: client message");
+                        #[derive(Deserialize)]
+                        struct Cmd {
+                            #[serde(rename = "type")]
+                            kind: String,
+                            stream: Option<String>,
+                        }
+                        if let Ok(cmd) = serde_json::from_str::<Cmd>(&text) {
+                            match cmd.kind.as_str() {
+                                "subscribe" => {
+                                    if let Some(s) = cmd.stream {
+                                        // user stream requires authentication
+                                        if s == "user" && account_id.is_none() {
+                                            tracing::warn!("streaming: unauthenticated user stream subscribe ignored");
+                                        } else {
+                                            tracing::info!(stream = %s, "streaming: subscribed");
+                                            subscribed.insert(s);
+                                        }
+                                    }
+                                }
+                                "unsubscribe" => {
+                                    if let Some(s) = cmd.stream {
+                                        tracing::info!(stream = %s, "streaming: unsubscribed");
+                                        subscribed.remove(&s);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                     Some(Ok(Message::Ping(p))) => {
                         let _ = socket.send(Message::Pong(p)).await;
                     }
                     Some(Ok(Message::Close(frame))) => {
-                        tracing::info!(stream = %stream, ?frame, "streaming: client close frame");
+                        tracing::info!(?frame, "streaming: client close frame");
                         break;
                     }
                     Some(Ok(other)) => {
-                        tracing::info!(stream = %stream, ?other, "streaming: unexpected message type");
+                        tracing::info!(?other, "streaming: unexpected message type");
                         break;
                     }
                     Some(Err(e)) => {
-                        tracing::warn!(stream = %stream, error = %e, "streaming: socket error");
+                        tracing::warn!(error = %e, "streaming: socket error");
                         break;
                     }
                     None => {
-                        tracing::info!(stream = %stream, "streaming: socket recv returned None");
+                        tracing::info!("streaming: socket recv returned None");
                         break;
                     }
                 }
             }
             _ = heartbeat.tick() => {
-                // Mastodon streaming protocol heartbeat: send an empty `:thump\n\n` or a ping frame.
-                // We use a WebSocket ping frame; Cloudflare resets its idle timer on any frame.
-                if socket.send(Message::Ping(bytes::Bytes::new())).await.is_err() {
+                // Ping frame resets Cloudflare's idle connection timer.
+                if socket.send(Message::Ping(Bytes::new())).await.is_err() {
                     break;
                 }
             }
