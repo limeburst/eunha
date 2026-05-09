@@ -1,4 +1,6 @@
 /// Uploads Mastodon backup media to R2 and patches the eunha database with file URLs.
+/// Objects are stored under <instance-uuid>/ in the bucket, derived automatically from
+/// the instance domain in the eunha DB (stable across domain renames).
 ///
 /// Usage:
 ///   eunha-upload-media \
@@ -7,10 +9,10 @@
 ///     --media-dir ~/seoulearth_dump/media \
 ///     --bucket eunha-social \
 ///     --endpoint https://5d508a37b0c6ea183620094959bbc8d1.r2.cloudflarestorage.com \
-///     --access-key-id d2f345c5441ed9c58fcef0173833afad \
-///     --secret-access-key 02cbaabf4a806a6d43eafdc0c16192bf5ee29860f48ef4ca1683c91a9bbaa89f \
+///     --access-key-id KEY \
+///     --secret-access-key SECRET \
 ///     --base-url https://r2.eunha.social \
-///     --prefix seoul-earth.eunha.social
+///     --domain seoul-earth.eunha.social
 use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use clap::Parser;
@@ -31,9 +33,8 @@ struct Args {
     #[arg(long)] access_key_id: String,
     #[arg(long)] secret_access_key: String,
     #[arg(long)] base_url: String,
-    /// Instance domain prefix for all object keys (e.g. seoul-earth.eunha.social).
-    /// Objects are uploaded under <prefix>/media_attachments/... and DB URLs updated accordingly.
-    #[arg(long)] prefix: String,
+    /// Instance domain in eunha DB — its UUID is used as the R2 key prefix.
+    #[arg(long)] domain: String,
     /// Number of concurrent S3 uploads (default: 32).
     #[arg(long, default_value_t = 32)] concurrency: usize,
 }
@@ -57,7 +58,17 @@ async fn main() -> Result<()> {
         .build();
     let client = aws_sdk_s3::Client::from_conf(s3_conf);
     let media_dir = PathBuf::from(&args.media_dir);
-    let prefix = args.prefix.trim_matches('/').to_string();
+
+    // Derive prefix from the instance UUID — stable across domain renames.
+    let instance_uuid: Uuid = sqlx::query_scalar(
+        "SELECT id FROM instances WHERE domain = $1",
+    )
+    .bind(&args.domain)
+    .fetch_one(&dst)
+    .await
+    .with_context(|| format!("instance '{}' not found in eunha DB", args.domain))?;
+    let prefix = instance_uuid.to_string();
+    tracing::info!("using R2 prefix: {}", prefix);
 
     // ── 1. Account mapping: mastodon i64 id → eunha UUID ─────────────────────
     tracing::info!("building account map...");

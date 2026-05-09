@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     tracing::info!("instance_id = {}", instance_id);
 
     tracing::info!("migrating accounts...");
-    let account_map = migrate_accounts(&src, &mut *tx, instance_id, args.limit_accounts).await?;
+    let account_map = migrate_accounts(&src, &mut *tx, instance_id, args.limit_accounts, &args.domain).await?;
     tracing::info!("migrated {} accounts", account_map.len());
 
     tracing::info!("migrating users...");
@@ -167,6 +167,7 @@ async fn migrate_accounts(
     dst: &mut PgConnection,
     instance_id: Uuid,
     limit: Option<i64>,
+    args_domain: &str,
 ) -> Result<HashMap<i64, Uuid>> {
     let rows = sqlx::query(
         r#"SELECT a.*,
@@ -230,6 +231,17 @@ async fn migrate_accounts(
         let created_at = get_ts(&row, "created_at")?;
         let updated_at = get_ts(&row, "updated_at")?;
 
+        let avatar_remote_url: Option<String> = row.try_get("avatar_remote_url").ok().flatten();
+        let header_remote_url: Option<String> = row.try_get("header_remote_url").ok().flatten();
+        let avatar_file_name: Option<String> = row.try_get("avatar_file_name").ok().flatten();
+        let header_file_name: Option<String> = row.try_get("header_file_name").ok().flatten();
+
+        // Remote accounts: use cached remote URL directly.
+        // Local accounts: avatar/header files live in R2; the URL is set later
+        // by eunha-upload-media. Leave NULL here so upload-media's patch step wins.
+        let avatar = avatar_remote_url.filter(|s| !s.is_empty());
+        let header = header_remote_url.filter(|s| !s.is_empty());
+
         let new_id: Option<Uuid> = sqlx::query_scalar(
             r#"INSERT INTO accounts
                  (instance_id, username, domain, display_name, note,
@@ -238,8 +250,9 @@ async fn migrate_accounts(
                   followers_count, following_count, statuses_count,
                   inbox_url, outbox_url, shared_inbox_url,
                   suspended_at, silenced_at,
+                  avatar, header,
                   created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
                ON CONFLICT DO NOTHING
                RETURNING id"#,
         )
@@ -263,6 +276,8 @@ async fn migrate_accounts(
         .bind(&shared_inbox_url)
         .bind(suspended_at)
         .bind(silenced_at)
+        .bind(&avatar)
+        .bind(&header)
         .bind(created_at)
         .bind(updated_at)
         .fetch_optional(&mut *dst)
