@@ -2,6 +2,9 @@
 use crate::db::models;
 use super::types;
 
+const DEFAULT_AVATAR: &str = "/avatars/original/missing.png";
+const DEFAULT_HEADER: &str = "/headers/original/missing.png";
+
 pub fn account_from_db(a: &models::Account) -> types::Account {
     types::Account {
         id: a.id.to_string(),
@@ -16,10 +19,10 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         note: a.note.clone(),
         url: a.url.clone(),
         uri: a.uri.clone(),
-        avatar: a.avatar.clone(),
-        avatar_static: a.avatar_static.clone(),
-        header: a.header.clone(),
-        header_static: a.header_static.clone(),
+        avatar: a.avatar.clone().unwrap_or_else(|| DEFAULT_AVATAR.to_string()),
+        avatar_static: a.avatar_static.clone().unwrap_or_else(|| DEFAULT_AVATAR.to_string()),
+        header: a.header.clone().unwrap_or_else(|| DEFAULT_HEADER.to_string()),
+        header_static: a.header_static.clone().unwrap_or_else(|| DEFAULT_HEADER.to_string()),
         followers_count: a.followers_count,
         following_count: a.following_count,
         statuses_count: a.statuses_count,

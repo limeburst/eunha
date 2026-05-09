@@ -13,6 +13,7 @@ use clap::Parser;
 use sqlx::{PgPool, PgConnection, Row};
 use std::collections::HashMap;
 use uuid::Uuid;
+use serde_json;
 
 #[derive(Parser, Debug)]
 #[command(about = "Migrate a Mastodon database into eunha")]
@@ -94,6 +95,53 @@ async fn main() -> Result<()> {
 
     tracing::info!("migrating notifications...");
     migrate_notifications(&src, &mut *tx, &account_map, &status_map).await?;
+
+    tracing::info!("migrating follow requests...");
+    migrate_follow_requests(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating status pins...");
+    migrate_status_pins(&src, &mut *tx, &account_map, &status_map).await?;
+
+    tracing::info!("migrating account notes...");
+    migrate_account_notes(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating lists...");
+    let list_map = migrate_lists(&src, &mut *tx, &account_map).await?;
+    tracing::info!("migrated {} lists", list_map.len());
+
+    tracing::info!("migrating list accounts...");
+    migrate_list_accounts(&src, &mut *tx, &account_map, &list_map).await?;
+
+    tracing::info!("migrating custom filters...");
+    migrate_custom_filters(&src, &mut *tx, &account_map, &status_map).await?;
+
+    tracing::info!("migrating featured tags...");
+    migrate_featured_tags(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating domain blocks...");
+    migrate_domain_blocks(&src, &mut *tx).await?;
+
+    tracing::info!("migrating domain allows...");
+    migrate_domain_allows(&src, &mut *tx).await?;
+
+    tracing::info!("migrating reports...");
+    let report_map = migrate_reports(&src, &mut *tx, &account_map, &status_map).await?;
+    tracing::info!("migrated {} reports", report_map.len());
+
+    tracing::info!("migrating report notes...");
+    migrate_report_notes(&src, &mut *tx, &account_map, &report_map).await?;
+
+    tracing::info!("migrating account warnings...");
+    migrate_account_warnings(&src, &mut *tx, &account_map, &status_map, &report_map).await?;
+
+    tracing::info!("migrating account moderation notes...");
+    migrate_account_moderation_notes(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating admin action logs...");
+    migrate_admin_action_logs(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating scheduled statuses...");
+    migrate_scheduled_statuses(&src, &mut *tx, &account_map).await?;
 
     tx.commit().await.context("committing transaction")?;
     tracing::info!("migration complete");
@@ -990,6 +1038,717 @@ async fn migrate_notifications(
         .bind(from_account_id)
         .bind(&notification_type)
         .bind(status_id)
+        .bind(created_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_follow_requests(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT account_id, target_account_id, uri, created_at FROM follow_requests",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let src_target: i64 = row.get("target_account_id");
+        let (Some(&account_id), Some(&target_id)) = (account_map.get(&src_account), account_map.get(&src_target))
+        else { continue };
+
+        let uri: Option<String> = row.try_get("uri").ok().flatten();
+        let created_at = get_ts(&row, "created_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO follows (account_id, target_account_id, state, uri, created_at)
+               VALUES ($1,$2,'pending',$3,$4)
+               ON CONFLICT DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(target_id)
+        .bind(&uri)
+        .bind(created_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_status_pins(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    status_map: &HashMap<i64, i64>,
+) -> Result<()> {
+    let rows = sqlx::query("SELECT account_id, status_id, created_at FROM status_pins")
+        .fetch_all(src)
+        .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let src_status: i64 = row.get("status_id");
+        let (Some(&account_id), Some(&status_id)) = (account_map.get(&src_account), status_map.get(&src_status))
+        else { continue };
+
+        let created_at = get_ts(&row, "created_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO status_pins (account_id, status_id, created_at)
+               VALUES ($1,$2,$3) ON CONFLICT DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(status_id)
+        .bind(created_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_account_notes(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT account_id, target_account_id, comment, created_at, updated_at FROM account_notes",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let src_target: i64 = row.get("target_account_id");
+        let (Some(&account_id), Some(&target_id)) = (account_map.get(&src_account), account_map.get(&src_target))
+        else { continue };
+
+        let comment: String = row.try_get("comment").unwrap_or_default();
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO account_notes (account_id, target_account_id, comment, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(target_id)
+        .bind(&comment)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_lists(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<HashMap<i64, i64>> {
+    let rows = sqlx::query(
+        "SELECT id, account_id, title, replies_policy, exclusive, created_at, updated_at FROM lists",
+    )
+    .fetch_all(src)
+    .await?;
+
+    let mut map = HashMap::new();
+
+    for row in &rows {
+        let src_id: i64 = row.get("id");
+        let src_account: i64 = row.get("account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let title: String = row.try_get("title").unwrap_or_default();
+        let replies_policy = match row.try_get::<i32, _>("replies_policy").ok().unwrap_or(1) {
+            0 => "followed", 1 => "list", 2 => "none", _ => "list",
+        };
+        let exclusive: bool = row.try_get("exclusive").unwrap_or(false);
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        let new_id: Option<i64> = sqlx::query_scalar(
+            r#"INSERT INTO lists (account_id, title, replies_policy, exclusive, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6)
+               RETURNING id"#,
+        )
+        .bind(account_id)
+        .bind(&title)
+        .bind(replies_policy)
+        .bind(exclusive)
+        .bind(created_at)
+        .bind(updated_at)
+        .fetch_optional(&mut *dst)
+        .await?;
+
+        if let Some(new_id) = new_id {
+            map.insert(src_id, new_id);
+        }
+    }
+
+    Ok(map)
+}
+
+async fn migrate_list_accounts(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    list_map: &HashMap<i64, i64>,
+) -> Result<()> {
+    let rows = sqlx::query("SELECT list_id, account_id FROM list_accounts")
+        .fetch_all(src)
+        .await?;
+
+    for row in &rows {
+        let src_list: i64 = row.get("list_id");
+        let src_account: i64 = row.get("account_id");
+        let (Some(&list_id), Some(&account_id)) = (list_map.get(&src_list), account_map.get(&src_account))
+        else { continue };
+
+        sqlx::query(
+            "INSERT INTO list_accounts (list_id, account_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(list_id)
+        .bind(account_id)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_custom_filters(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    status_map: &HashMap<i64, i64>,
+) -> Result<()> {
+    let filter_rows = sqlx::query(
+        "SELECT id, account_id, expires_at, phrase, context, action, created_at, updated_at FROM custom_filters",
+    )
+    .fetch_all(src)
+    .await?;
+
+    let mut filter_id_map: HashMap<i64, i64> = HashMap::new();
+
+    for row in &filter_rows {
+        let src_id: i64 = row.get("id");
+        let src_account: i64 = row.get("account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let expires_at = get_ts_opt(&row, "expires_at");
+        let phrase: String = row.try_get("phrase").unwrap_or_default();
+        let context: Vec<String> = row.try_get("context").unwrap_or_default();
+        let action = match row.try_get::<i32, _>("action").ok().unwrap_or(0) {
+            0 => "warn", 1 => "hide", _ => "warn",
+        };
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        let new_id: Option<i64> = sqlx::query_scalar(
+            r#"INSERT INTO custom_filters (account_id, expires_at, phrase, context, action, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7)
+               RETURNING id"#,
+        )
+        .bind(account_id)
+        .bind(expires_at)
+        .bind(&phrase)
+        .bind(&context)
+        .bind(action)
+        .bind(created_at)
+        .bind(updated_at)
+        .fetch_optional(&mut *dst)
+        .await?;
+
+        if let Some(new_id) = new_id {
+            filter_id_map.insert(src_id, new_id);
+        }
+    }
+
+    let kw_rows = sqlx::query(
+        "SELECT custom_filter_id, keyword, whole_word, created_at, updated_at FROM custom_filter_keywords",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &kw_rows {
+        let src_filter: i64 = row.get("custom_filter_id");
+        let Some(&filter_id) = filter_id_map.get(&src_filter) else { continue };
+
+        let keyword: String = row.try_get("keyword").unwrap_or_default();
+        let whole_word: bool = row.try_get("whole_word").unwrap_or(true);
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5)"#,
+        )
+        .bind(filter_id)
+        .bind(&keyword)
+        .bind(whole_word)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    let st_rows = sqlx::query(
+        "SELECT custom_filter_id, status_id, created_at, updated_at FROM custom_filter_statuses",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &st_rows {
+        let src_filter: i64 = row.get("custom_filter_id");
+        let src_status: i64 = row.get("status_id");
+        let (Some(&filter_id), Some(&status_id)) = (filter_id_map.get(&src_filter), status_map.get(&src_status))
+        else { continue };
+
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO custom_filter_statuses (custom_filter_id, status_id, created_at, updated_at)
+               VALUES ($1,$2,$3,$4)"#,
+        )
+        .bind(filter_id)
+        .bind(status_id)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_featured_tags(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    // Build mastodon tag_id → name map from source
+    let masto_tags = sqlx::query("SELECT id, name FROM tags")
+        .fetch_all(src)
+        .await?;
+    let masto_tag_names: HashMap<i64, String> = masto_tags
+        .iter()
+        .map(|r| (r.get::<i64, _>("id"), r.get::<String, _>("name")))
+        .collect();
+
+    // Build eunha tag name → uuid map from destination
+    let eunha_tags = sqlx::query("SELECT name, id FROM tags")
+        .fetch_all(&mut *dst)
+        .await?;
+    let eunha_tag_by_name: HashMap<String, Uuid> = eunha_tags
+        .iter()
+        .map(|r| (r.get::<String, _>("name").to_lowercase(), r.get::<Uuid, _>("id")))
+        .collect();
+
+    let rows = sqlx::query(
+        "SELECT account_id, tag_id, statuses_count, last_status_at, created_at, updated_at FROM featured_tags",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let src_tag: i64 = row.get("tag_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+        let Some(tag_name) = masto_tag_names.get(&src_tag) else { continue };
+        let Some(&tag_id) = eunha_tag_by_name.get(&tag_name.to_lowercase()) else { continue };
+
+        let statuses_count: i64 = row.try_get("statuses_count").unwrap_or(0);
+        // last_status_at is a DATE column in Mastodon
+        let last_status_at: Option<chrono::DateTime<chrono::Utc>> = row
+            .try_get::<Option<chrono::NaiveDate>, _>("last_status_at")
+            .ok()
+            .flatten()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| dt.and_utc());
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO featured_tags (account_id, tag_id, name, statuses_count, last_status_at, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(tag_id)
+        .bind(tag_name)
+        .bind(statuses_count)
+        .bind(last_status_at)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_domain_blocks(
+    src: &PgPool,
+    dst: &mut PgConnection,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at, updated_at FROM domain_blocks",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let domain: String = row.try_get("domain").unwrap_or_default();
+        let severity = match row.try_get::<i32, _>("severity").ok().unwrap_or(1) {
+            0 => "noop", 1 => "silence", 2 => "suspend", _ => "silence",
+        };
+        let reject_media: bool = row.try_get("reject_media").unwrap_or(false);
+        let reject_reports: bool = row.try_get("reject_reports").unwrap_or(false);
+        let private_comment: Option<String> = row.try_get("private_comment").ok().flatten();
+        let public_comment: Option<String> = row.try_get("public_comment").ok().flatten();
+        let obfuscate: bool = row.try_get("obfuscate").unwrap_or(false);
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO domain_blocks (domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (domain) DO NOTHING"#,
+        )
+        .bind(&domain)
+        .bind(severity)
+        .bind(reject_media)
+        .bind(reject_reports)
+        .bind(&private_comment)
+        .bind(&public_comment)
+        .bind(obfuscate)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_domain_allows(
+    src: &PgPool,
+    dst: &mut PgConnection,
+) -> Result<()> {
+    let rows = sqlx::query("SELECT domain, created_at, updated_at FROM domain_allows")
+        .fetch_all(src)
+        .await?;
+
+    for row in &rows {
+        let domain: String = row.try_get("domain").unwrap_or_default();
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            "INSERT INTO domain_allows (domain, created_at, updated_at) VALUES ($1,$2,$3) ON CONFLICT (domain) DO NOTHING",
+        )
+        .bind(&domain)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_reports(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    status_map: &HashMap<i64, i64>,
+) -> Result<HashMap<i64, i64>> {
+    let rows = sqlx::query(
+        "SELECT id, account_id, target_account_id, assigned_account_id, action_taken_by_account_id, status_ids, comment, forwarded, category, action_taken_at, uri, created_at, updated_at FROM reports ORDER BY id",
+    )
+    .fetch_all(src)
+    .await?;
+
+    let mut map = HashMap::new();
+
+    for row in &rows {
+        let src_id: i64 = row.get("id");
+        let src_account: i64 = row.get("account_id");
+        let src_target: i64 = row.get("target_account_id");
+        let (Some(&account_id), Some(&target_id)) = (account_map.get(&src_account), account_map.get(&src_target))
+        else { continue };
+
+        let assigned_id: Option<i64> = row.try_get("assigned_account_id").ok().flatten();
+        let action_taken_by_id: Option<i64> = row.try_get("action_taken_by_account_id").ok().flatten();
+        let assigned_account_id: Option<Uuid> = assigned_id.and_then(|id| account_map.get(&id)).copied();
+        let action_taken_by_account_id: Option<Uuid> = action_taken_by_id.and_then(|id| account_map.get(&id)).copied();
+
+        let src_status_ids: Vec<i64> = row.try_get("status_ids").unwrap_or_default();
+        let status_ids: Vec<i64> = src_status_ids.iter()
+            .filter_map(|sid| status_map.get(sid))
+            .copied()
+            .collect();
+
+        let comment: String = row.try_get("comment").unwrap_or_default();
+        let forwarded: Option<bool> = row.try_get("forwarded").ok().flatten();
+        let category: String = row.try_get("category").unwrap_or_else(|_| "other".to_string());
+        let action_taken_at = get_ts_opt(&row, "action_taken_at");
+        let uri: Option<String> = row.try_get("uri").ok().flatten();
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        let new_id: Option<i64> = sqlx::query_scalar(
+            r#"INSERT INTO reports
+                 (account_id, target_account_id, assigned_account_id, action_taken_by_account_id,
+                  status_ids, comment, forwarded, category, action_taken_at, uri, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+               RETURNING id"#,
+        )
+        .bind(account_id)
+        .bind(target_id)
+        .bind(assigned_account_id)
+        .bind(action_taken_by_account_id)
+        .bind(&status_ids)
+        .bind(&comment)
+        .bind(forwarded)
+        .bind(&category)
+        .bind(action_taken_at)
+        .bind(&uri)
+        .bind(created_at)
+        .bind(updated_at)
+        .fetch_optional(&mut *dst)
+        .await?;
+
+        if let Some(new_id) = new_id {
+            map.insert(src_id, new_id);
+        }
+    }
+
+    Ok(map)
+}
+
+async fn migrate_report_notes(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    report_map: &HashMap<i64, i64>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT content, report_id, account_id, created_at, updated_at FROM report_notes",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_report: i64 = row.get("report_id");
+        let src_account: i64 = row.get("account_id");
+        let (Some(&report_id), Some(&account_id)) = (report_map.get(&src_report), account_map.get(&src_account))
+        else { continue };
+
+        let content: String = row.try_get("content").unwrap_or_default();
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO report_notes (content, report_id, account_id, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5)"#,
+        )
+        .bind(&content)
+        .bind(report_id)
+        .bind(account_id)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_account_warnings(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    status_map: &HashMap<i64, i64>,
+    report_map: &HashMap<i64, i64>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT account_id, target_account_id, action, text, status_ids, report_id, overruled_at, created_at, updated_at FROM account_warnings",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: Option<i64> = row.try_get("account_id").ok().flatten();
+        let src_target: Option<i64> = row.try_get("target_account_id").ok().flatten();
+        let account_id: Option<Uuid> = src_account.and_then(|id| account_map.get(&id)).copied();
+        let target_id: Option<Uuid> = src_target.and_then(|id| account_map.get(&id)).copied();
+
+        if target_id.is_none() { continue }
+
+        let action = match row.try_get::<i32, _>("action").ok().unwrap_or(0) {
+            0 => "none",
+            1 => "disable",
+            2 => "mark_statuses_as_sensitive",
+            3 => "silence",
+            4 => "suspend",
+            5 => "delete_statuses",
+            6 => "none_and_reject_appeal",
+            _ => "none",
+        };
+
+        let text: String = row.try_get("text").unwrap_or_default();
+        let src_status_ids: Vec<i64> = row.try_get("status_ids").unwrap_or_default();
+        let status_ids: Vec<i64> = src_status_ids.iter()
+            .filter_map(|sid| status_map.get(sid))
+            .copied()
+            .collect();
+
+        let src_report_id: Option<i64> = row.try_get("report_id").ok().flatten();
+        let report_id: Option<i64> = src_report_id.and_then(|id| report_map.get(&id)).copied();
+
+        let overruled_at = get_ts_opt(&row, "overruled_at");
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO account_warnings
+                 (account_id, target_account_id, action, text, status_ids, report_id, overruled_at, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+        )
+        .bind(account_id)
+        .bind(target_id)
+        .bind(action)
+        .bind(&text)
+        .bind(&status_ids)
+        .bind(report_id)
+        .bind(overruled_at)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_account_moderation_notes(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT content, account_id, target_account_id, created_at, updated_at FROM account_moderation_notes",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let src_target: i64 = row.get("target_account_id");
+        let (Some(&account_id), Some(&target_id)) = (account_map.get(&src_account), account_map.get(&src_target))
+        else { continue };
+
+        let content: String = row.try_get("content").unwrap_or_default();
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO account_moderation_notes (content, account_id, target_account_id, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5)"#,
+        )
+        .bind(&content)
+        .bind(account_id)
+        .bind(target_id)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_admin_action_logs(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT account_id, action, target_type, target_id, human_identifier, route_param, permalink, created_at, updated_at FROM admin_action_logs",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let action: String = row.try_get("action").unwrap_or_default();
+        let target_type: Option<String> = row.try_get("target_type").ok().flatten();
+        let target_id: Option<i64> = row.try_get("target_id").ok().flatten();
+        let human_identifier: Option<String> = row.try_get("human_identifier").ok().flatten();
+        let route_param: Option<String> = row.try_get("route_param").ok().flatten();
+        let permalink: Option<String> = row.try_get("permalink").ok().flatten();
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO admin_action_logs
+                 (account_id, action, target_type, target_id, human_identifier, route_param, permalink, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
+        )
+        .bind(account_id)
+        .bind(&action)
+        .bind(&target_type)
+        .bind(target_id)
+        .bind(&human_identifier)
+        .bind(&route_param)
+        .bind(&permalink)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn migrate_scheduled_statuses(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT account_id, scheduled_at, params, created_at FROM scheduled_statuses",
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let scheduled_at = get_ts_opt(&row, "scheduled_at");
+        let params: Option<serde_json::Value> = row.try_get("params").ok().flatten();
+        let created_at = get_ts(&row, "created_at")?;
+
+        sqlx::query(
+            "INSERT INTO scheduled_statuses (account_id, scheduled_at, params, created_at) VALUES ($1,$2,$3,$4)",
+        )
+        .bind(account_id)
+        .bind(scheduled_at)
+        .bind(&params)
         .bind(created_at)
         .execute(&mut *dst)
         .await?;
