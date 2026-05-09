@@ -127,7 +127,8 @@ async fn run(
                                 if socket.send(Message::Text(msg.into())).await.is_err() {
                                     return;
                                 }
-                                break; // avoid duplicate delivery if multiple streams match
+                                // No break: send a separate message per matching stream,
+                                // matching Mastodon's behaviour.
                             }
                         }
                     }
