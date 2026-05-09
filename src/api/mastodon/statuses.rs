@@ -112,6 +112,7 @@ pub async fn post_status(
                 instance_id: instance.id,
                 author_id: account.id,
                 is_public: visibility == "public",
+                status_id: status.id,
                 payload: std::sync::Arc::new(payload),
             });
         }

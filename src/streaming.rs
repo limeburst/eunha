@@ -8,6 +8,7 @@ pub enum Event {
         instance_id: Uuid,
         author_id: Uuid,
         is_public: bool,
+        status_id: i64,
         payload: Arc<String>,
     },
     Notification {

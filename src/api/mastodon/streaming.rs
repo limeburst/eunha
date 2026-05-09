@@ -123,7 +123,12 @@ async fn run(
                 match result {
                     Ok(event) => {
                         for stream in &subscribed {
-                            if let Some(msg) = to_wire(&event, stream, account_id, instance_id, &following) {
+                            let msg = if stream == "user" {
+                                to_wire_user(&event, account_id, instance_id, &following, &state.db).await
+                            } else {
+                                to_wire(&event, stream, account_id, instance_id, &following)
+                            };
+                            if let Some(msg) = msg {
                                 if socket.send(Message::Text(msg.into())).await.is_err() {
                                     return;
                                 }
@@ -200,6 +205,68 @@ async fn run(
     }
 }
 
+/// Like `to_wire` but for the `user` stream: injects per-viewer context fields
+/// (favourited, reblogged, bookmarked, etc.) via a DB lookup.
+async fn to_wire_user(
+    event: &Event,
+    account_id: Option<Uuid>,
+    instance_id: Uuid,
+    following: &HashSet<Uuid>,
+    db: &sqlx::PgPool,
+) -> Option<String> {
+    match event {
+        Event::NewStatus {
+            instance_id: ev_iid,
+            author_id,
+            status_id,
+            payload,
+            ..
+        } => {
+            let deliver = *ev_iid == instance_id
+                && account_id
+                    .map(|aid| aid == *author_id || following.contains(author_id))
+                    .unwrap_or(false);
+            if !deliver {
+                return None;
+            }
+            let aid = account_id?;
+
+            let favourited = sqlx::query_scalar!(
+                "SELECT 1 AS e FROM favourites WHERE account_id = $1 AND status_id = $2",
+                aid, status_id
+            )
+            .fetch_optional(db).await.ok().flatten().is_some();
+
+            let reblogged = sqlx::query_scalar!(
+                "SELECT 1 AS e FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
+                aid, status_id
+            )
+            .fetch_optional(db).await.ok().flatten().is_some();
+
+            let bookmarked = sqlx::query_scalar!(
+                "SELECT 1 AS e FROM bookmarks WHERE account_id = $1 AND status_id = $2",
+                aid, status_id
+            )
+            .fetch_optional(db).await.ok().flatten().is_some();
+
+            // Inject viewer context fields into the existing payload JSON.
+            let mut value: serde_json::Value = serde_json::from_str(payload).ok()?;
+            if let serde_json::Value::Object(ref mut obj) = value {
+                obj.insert("favourited".into(), serde_json::json!(favourited));
+                obj.insert("reblogged".into(), serde_json::json!(reblogged));
+                obj.insert("muted".into(), serde_json::json!(false));
+                obj.insert("bookmarked".into(), serde_json::json!(bookmarked));
+                obj.insert("pinned".into(), serde_json::json!(false));
+                obj.insert("filtered".into(), serde_json::json!([]));
+            }
+            let enriched = serde_json::to_string(&value).ok()?;
+            Some(wire("update", &["user"], &enriched))
+        }
+        // Notifications and deletes fall through to the standard path.
+        other => to_wire(other, "user", account_id, instance_id, following),
+    }
+}
+
 /// Build the Mastodon streaming wire format for an event, or return `None`
 /// if the event should not be delivered to this subscription.
 fn to_wire(
@@ -215,6 +282,7 @@ fn to_wire(
             author_id,
             is_public,
             payload,
+            ..
         } => {
             let deliver = match stream {
                 "public" => *is_public,
