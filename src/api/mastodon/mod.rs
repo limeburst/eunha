@@ -142,6 +142,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/announcements", get(empty_array))
         .route("/api/v1/suggestions", get(empty_array))
         .route("/api/v1/conversations", get(empty_array))
+        .route("/api/v1/followed_tags", get(empty_array))
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
         .route("/api/{server}/login", post(oauth::elk_login))
