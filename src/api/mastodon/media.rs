@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Extension, Multipart, State},
+    extract::{Extension, Multipart, Path, State},
     Json,
 };
 use image::imageops::FilterType;
 use img_parts::ImageEXIF;
+use serde::Deserialize;
 
 use crate::{
     error::{AppError, AppResult},
@@ -162,6 +163,66 @@ fn strip_exif(data: &[u8], content_type: &str) -> Vec<u8> {
         }
         _ => data.to_vec(),
     }
+}
+
+// ── GET /api/v1/media/:id ─────────────────────────────────────────────────
+
+pub async fn get_media(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<MediaAttachment>> {
+    let attachment = sqlx::query_as!(
+        crate::db::models::MediaAttachment,
+        "SELECT * FROM media_attachments WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(media_from_db(&attachment)))
+}
+
+// ── PUT /api/v1/media/:id ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMediaForm {
+    pub description: Option<String>,
+}
+
+pub async fn update_media(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<UpdateMediaForm>,
+) -> AppResult<Json<MediaAttachment>> {
+    sqlx::query!(
+        "SELECT id FROM media_attachments WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if let Some(ref desc) = form.description {
+        sqlx::query!(
+            "UPDATE media_attachments SET description = $1 WHERE id = $2",
+            desc, id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    let updated = sqlx::query_as!(
+        crate::db::models::MediaAttachment,
+        "SELECT * FROM media_attachments WHERE id = $1",
+        id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(media_from_db(&updated)))
 }
 
 fn classify_media_type(content_type: &str) -> &'static str {

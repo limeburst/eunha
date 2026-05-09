@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 // ── Account ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Account {
     pub id: String,
     pub username: String,
@@ -34,7 +34,7 @@ pub struct Account {
     pub source: Option<AccountSource>,  // only on CredentialAccount
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AccountSource {
     pub privacy: String,
     pub sensitive: bool,
@@ -279,7 +279,7 @@ pub struct Token {
 
 // ── Emoji ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CustomEmoji {
     pub shortcode: String,
     pub url: String,
@@ -418,6 +418,59 @@ pub struct Preferences {
     pub reading_expand_media: String,
     #[serde(rename = "reading:expand:spoilers")]
     pub reading_expand_spoilers: bool,
+}
+
+// ── List ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct List {
+    pub id: String,
+    pub title: String,
+    pub replies_policy: String,
+    pub exclusive: bool,
+}
+
+// ── Status Edit ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct StatusEdit {
+    pub content: String,
+    pub spoiler_text: String,
+    pub sensitive: bool,
+    pub created_at: String,
+    pub account: Account,
+    pub media_attachments: Vec<MediaAttachment>,
+    pub emojis: Vec<CustomEmoji>,
+    pub poll: Option<serde_json::Value>,
+}
+
+// ── Instance V1 ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct InstanceV1 {
+    pub uri: String,
+    pub title: String,
+    pub short_description: String,
+    pub description: String,
+    pub email: String,
+    pub version: String,
+    pub urls: InstanceV1Urls,
+    pub stats: InstanceV1Stats,
+    pub languages: Vec<String>,
+    pub contact_account: Option<Account>,
+    pub rules: Vec<Rule>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstanceV1Urls {
+    pub streaming_api: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstanceV1Stats {
+    pub user_count: i64,
+    pub status_count: i64,
+    pub domain_count: i64,
 }
 
 // ── Pagination ─────────────────────────────────────────────────────────────

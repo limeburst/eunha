@@ -219,3 +219,39 @@ pub struct Favourite {
     pub uri: Option<String>,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, FromRow)]
+pub struct List {
+    pub id: i64,
+    pub account_id: Uuid,
+    pub title: String,
+    pub replies_policy: String,
+    pub exclusive: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct StatusEdit {
+    pub id: Uuid,
+    pub status_id: i64,
+    pub account_id: Option<Uuid>,
+    pub text: String,
+    pub content: String,
+    pub spoiler_text: String,
+    pub sensitive: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct Poll {
+    pub id: Uuid,
+    pub status_id: i64,
+    pub account_id: Uuid,
+    pub options: serde_json::Value,
+    pub votes_count: i64,
+    pub voters_count: Option<i64>,
+    pub multiple: bool,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}

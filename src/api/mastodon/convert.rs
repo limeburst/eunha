@@ -104,7 +104,7 @@ pub fn status_from_db(
         reblogged: viewer_context.as_ref().map(|c| c.reblogged),
         muted: viewer_context.as_ref().map(|c| c.muted),
         bookmarked: viewer_context.as_ref().map(|c| c.bookmarked),
-        pinned: viewer_context.as_ref().map(|_| false),
+        pinned: viewer_context.as_ref().map(|c| c.pinned),
         filtered: None,
         text: None,
     }
@@ -116,4 +116,5 @@ pub struct StatusViewerContext {
     pub reblogged: bool,
     pub muted: bool,
     pub bookmarked: bool,
+    pub pinned: bool,
 }

@@ -81,6 +81,7 @@ pub async fn get_bookmarks(
             reblogged,
             muted: false,
             bookmarked: true,
+            pinned: false,
         };
         result.push(status_from_db(&s, &account, media, None, Some(ctx)));
     }

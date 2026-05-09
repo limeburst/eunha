@@ -105,7 +105,7 @@ pub async fn search(
                 .fetch_optional(&state.db)
                 .await?
                 .is_some();
-                Some(super::convert::StatusViewerContext { favourited, reblogged, muted: false, bookmarked })
+                Some(super::convert::StatusViewerContext { favourited, reblogged, muted: false, bookmarked, pinned: false })
             } else {
                 None
             };

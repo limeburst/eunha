@@ -94,6 +94,22 @@ pub async fn clear_notifications(
     Ok(Json(serde_json::json!({})))
 }
 
+// ── POST /api/v1/notifications/:id/dismiss ────────────────────────────────
+
+pub async fn dismiss_notification(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    sqlx::query!(
+        "DELETE FROM notifications WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({})))
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<Notification> {

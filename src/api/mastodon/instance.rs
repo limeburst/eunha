@@ -5,6 +5,32 @@ use crate::{
 };
 use super::types::*;
 
+// ── GET /api/v1/instance ──────────────────────────────────────────────────
+
+pub async fn get_instance_v1(
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> AppResult<Json<InstanceV1>> {
+    let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
+
+    Ok(Json(InstanceV1 {
+        uri: instance.domain.clone(),
+        title: instance.title.clone(),
+        short_description: instance.short_description.clone(),
+        description: instance.description.clone(),
+        email: instance.contact_email.clone().unwrap_or_default(),
+        version: "4.3.0+eunha".to_string(),
+        urls: InstanceV1Urls { streaming_api: streaming_url },
+        stats: InstanceV1Stats {
+            user_count: 0,
+            status_count: 0,
+            domain_count: 0,
+        },
+        languages: vec!["en".to_string()],
+        contact_account: None,
+        rules: vec![],
+    }))
+}
+
 pub async fn get_instance_v2(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV2>> {

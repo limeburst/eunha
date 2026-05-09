@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{header, HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::{
     db::models::{Account, Status as DbStatus},
-    error::AppResult,
+    error::{AppError, AppResult},
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
@@ -111,6 +111,89 @@ pub async fn home_timeline(
     .await?;
 
     let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
+    let resp = with_pagination_link(&req_headers, &uri, result);
+    Ok(resp)
+}
+
+// ── GET /api/v1/timelines/list/:id ───────────────────────────────────────
+
+pub async fn list_timeline(
+    State(state): State<AppState>,
+    Path(list_id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    uri: Uri,
+    req_headers: HeaderMap,
+    Query(q): Query<PaginationParams>,
+) -> AppResult<impl IntoResponse> {
+    sqlx::query!(
+        "SELECT id FROM lists WHERE id = $1 AND account_id = $2",
+        list_id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let limit = q.limit_clamped(20, 40);
+    let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
+    let statuses = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.* FROM statuses s
+           JOIN list_accounts la ON la.account_id = s.account_id
+           WHERE la.list_id = $1
+             AND s.deleted_at IS NULL
+             AND ($2::bigint IS NULL OR s.id < $2)
+             AND ($3::bigint IS NULL OR s.id > $3)
+             AND (s.text != '' OR s.content != ''
+                  OR s.reblog_of_id IS NOT NULL
+                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+           ORDER BY s.id DESC
+           LIMIT $4"#,
+        list_id, max_id, since_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
+    let resp = with_pagination_link(&req_headers, &uri, result);
+    Ok(resp)
+}
+
+// ── GET /api/v1/timelines/tag/:hashtag ───────────────────────────────────
+
+pub async fn tag_timeline(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Path(hashtag): Path<String>,
+    uri: Uri,
+    req_headers: HeaderMap,
+    Query(q): Query<PaginationParams>,
+) -> AppResult<impl IntoResponse> {
+    let limit = q.limit_clamped(20, 40);
+    let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let tag_name = hashtag.to_lowercase();
+
+    let statuses = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.* FROM statuses s
+           JOIN status_tags st ON st.status_id = s.id
+           JOIN tags t ON t.id = st.tag_id
+           WHERE lower(t.name) = $1
+             AND s.instance_id = $2
+             AND s.visibility = 'public'
+             AND s.deleted_at IS NULL
+             AND ($3::bigint IS NULL OR s.id < $3)
+             AND ($4::bigint IS NULL OR s.id > $4)
+           ORDER BY s.id DESC
+           LIMIT $5"#,
+        tag_name, instance.id, max_id, since_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let result = build_status_list(&state, statuses, None).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }

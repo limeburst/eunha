@@ -14,8 +14,8 @@ use crate::{
 };
 use super::{
     accounts::fetch_status_media,
-    convert::status_from_db,
-    types::{Status, StatusContext, StatusSource},
+    convert::{account_from_db, status_from_db},
+    types::{Status, StatusContext, StatusEdit, StatusSource},
 };
 
 #[derive(Debug, Deserialize)]
@@ -445,6 +445,242 @@ pub async fn unbookmark_status(
     Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
 }
 
+// ── POST /api/v1/statuses/:id/pin ─────────────────────────────────────────
+
+pub async fn pin_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (status, account) = fetch_status_with_account(&state, id).await?;
+    if status.account_id != auth.account_id {
+        return Err(AppError::Forbidden);
+    }
+    sqlx::query!(
+        "INSERT INTO status_pins (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auth.account_id, id
+    )
+    .execute(&state.db)
+    .await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── POST /api/v1/statuses/:id/unpin ───────────────────────────────────────
+
+pub async fn unpin_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (status, account) = fetch_status_with_account(&state, id).await?;
+    sqlx::query!(
+        "DELETE FROM status_pins WHERE account_id = $1 AND status_id = $2",
+        auth.account_id, id
+    )
+    .execute(&state.db)
+    .await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── POST /api/v1/statuses/:id/mute ────────────────────────────────────────
+
+pub async fn mute_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (status, account) = fetch_status_with_account(&state, id).await?;
+    sqlx::query!(
+        "INSERT INTO conversation_mutes (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auth.account_id, id
+    )
+    .execute(&state.db)
+    .await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── POST /api/v1/statuses/:id/unmute ──────────────────────────────────────
+
+pub async fn unmute_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    let (status, account) = fetch_status_with_account(&state, id).await?;
+    sqlx::query!(
+        "DELETE FROM conversation_mutes WHERE account_id = $1 AND status_id = $2",
+        auth.account_id, id
+    )
+    .execute(&state.db)
+    .await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
+}
+
+// ── GET /api/v1/statuses/:id/favourited_by ────────────────────────────────
+
+pub async fn favourited_by(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Vec<super::types::Account>>> {
+    sqlx::query!("SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL", id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN favourites f ON f.account_id = a.id
+           WHERE f.status_id = $1
+           ORDER BY f.id DESC LIMIT 80"#,
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
+// ── GET /api/v1/statuses/:id/reblogged_by ─────────────────────────────────
+
+pub async fn reblogged_by(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Vec<super::types::Account>>> {
+    sqlx::query!("SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL", id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN statuses s ON s.account_id = a.id
+           WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
+           ORDER BY s.id DESC LIMIT 80"#,
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
+// ── PUT /api/v1/statuses/:id ──────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct EditStatusForm {
+    pub status: Option<String>,
+    pub spoiler_text: Option<String>,
+    pub sensitive: Option<bool>,
+    pub language: Option<String>,
+}
+
+pub async fn edit_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<EditStatusForm>,
+) -> AppResult<Json<Status>> {
+    let (status, account) = fetch_status_with_account(&state, id).await?;
+    if status.account_id != auth.account_id {
+        return Err(AppError::Forbidden);
+    }
+
+    // Save current version to edits before updating
+    sqlx::query!(
+        r#"INSERT INTO status_edits (status_id, account_id, text, content, spoiler_text, sensitive)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+        id, auth.account_id, status.text, status.content, status.spoiler_text, status.sensitive,
+    )
+    .execute(&state.db)
+    .await?;
+
+    let new_text = form.status.unwrap_or_else(|| status.text.clone());
+    let new_content = render_markdown(&new_text);
+    let new_spoiler = form.spoiler_text.unwrap_or_else(|| status.spoiler_text.clone());
+    let new_sensitive = form.sensitive.unwrap_or(status.sensitive);
+    let new_language = form.language.or(status.language.clone());
+
+    sqlx::query!(
+        "UPDATE statuses SET text = $1, content = $2, spoiler_text = $3, sensitive = $4, language = $5, edited_at = now() WHERE id = $6",
+        new_text, new_content, new_spoiler, new_sensitive, new_language, id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    let (updated_status, _) = fetch_status_with_account(&state, id).await?;
+    let media = fetch_status_media(&state, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(status_from_db(&updated_status, &account, media, None, Some(ctx))))
+}
+
+// ── GET /api/v1/statuses/:id/history ──────────────────────────────────────
+
+pub async fn get_status_history(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Vec<StatusEdit>>> {
+    let status = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let account = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        status.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let edits = sqlx::query_as!(
+        crate::db::models::StatusEdit,
+        "SELECT * FROM status_edits WHERE status_id = $1 ORDER BY created_at ASC",
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let api_account = account_from_db(&account);
+    let mut result: Vec<StatusEdit> = edits.iter().map(|e| StatusEdit {
+        content: e.content.clone(),
+        spoiler_text: e.spoiler_text.clone(),
+        sensitive: e.sensitive,
+        created_at: e.created_at.to_rfc3339(),
+        account: api_account.clone(),
+        media_attachments: vec![],
+        emojis: vec![],
+        poll: None,
+    }).collect();
+
+    // Append current version
+    result.push(StatusEdit {
+        content: status.content.clone(),
+        spoiler_text: status.spoiler_text.clone(),
+        sensitive: status.sensitive,
+        created_at: status.edited_at.unwrap_or(status.created_at).to_rfc3339(),
+        account: api_account,
+        media_attachments: vec![],
+        emojis: vec![],
+        poll: None,
+    });
+
+    Ok(Json(result))
+}
+
 // ── GET /api/v1/statuses/:id/source ───────────────────────────────────────
 
 pub async fn get_status_source(
@@ -531,11 +767,28 @@ async fn build_viewer_context(
     .await?
     .is_some();
 
+    let muted = sqlx::query!(
+        "SELECT 1 as e FROM conversation_mutes WHERE account_id = $1 AND status_id = $2",
+        viewer_id, status_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
+    let pinned = sqlx::query!(
+        "SELECT 1 as e FROM status_pins WHERE account_id = $1 AND status_id = $2",
+        viewer_id, status_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
     Ok(super::convert::StatusViewerContext {
         favourited,
         reblogged,
-        muted: false,
+        muted,
         bookmarked,
+        pinned,
     })
 }
 

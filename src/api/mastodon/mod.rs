@@ -4,10 +4,12 @@ pub mod convert;
 pub mod favourites;
 pub mod instance;
 pub mod invites;
+pub mod lists;
 pub mod markers;
 pub mod media;
 pub mod notifications;
 pub mod oauth;
+pub mod polls;
 pub mod search;
 pub mod signup;
 pub mod statuses;
@@ -87,14 +89,29 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/follow_requests/{id}/reject", post(accounts::reject_follow_request))
         // Statuses — authenticated writes
         .route("/api/v1/statuses", post(statuses::post_status))
-        .route("/api/v1/statuses/{id}", delete(statuses::delete_status))
+        .route("/api/v1/statuses/{id}", delete(statuses::delete_status).put(statuses::edit_status))
         .route("/api/v1/statuses/{id}/favourite", post(statuses::favourite_status))
         .route("/api/v1/statuses/{id}/unfavourite", post(statuses::unfavourite_status))
         .route("/api/v1/statuses/{id}/reblog", post(statuses::reblog_status))
         .route("/api/v1/statuses/{id}/unreblog", post(statuses::unreblog_status))
         .route("/api/v1/statuses/{id}/bookmark", post(statuses::bookmark_status))
         .route("/api/v1/statuses/{id}/unbookmark", post(statuses::unbookmark_status))
+        .route("/api/v1/statuses/{id}/pin", post(statuses::pin_status))
+        .route("/api/v1/statuses/{id}/unpin", post(statuses::unpin_status))
+        .route("/api/v1/statuses/{id}/mute", post(statuses::mute_status))
+        .route("/api/v1/statuses/{id}/unmute", post(statuses::unmute_status))
         .route("/api/v1/statuses/{id}/source", get(statuses::get_status_source))
+        // Blocks / Mutes lists
+        .route("/api/v1/blocks", get(accounts::get_blocks))
+        .route("/api/v1/mutes", get(accounts::get_mutes))
+        // Lists
+        .route("/api/v1/lists", get(lists::get_lists).post(lists::create_list))
+        .route("/api/v1/lists/{id}", get(lists::get_list).put(lists::update_list).delete(lists::delete_list))
+        .route("/api/v1/lists/{id}/accounts", get(lists::get_list_accounts).post(lists::add_list_accounts).delete(lists::remove_list_accounts))
+        // Notifications — single dismiss
+        .route("/api/v1/notifications/{id}/dismiss", post(notifications::dismiss_notification))
+        // Media — get / update
+        .route("/api/v1/media/{id}", get(media::get_media).put(media::update_media))
         // Bookmarks / Favourites
         .route("/api/v1/bookmarks", get(bookmarks::get_bookmarks))
         .route("/api/v1/favourites", get(favourites::get_favourites))
@@ -102,6 +119,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/markers", get(markers::get_markers).post(markers::set_markers))
         // Timelines
         .route("/api/v1/timelines/home", get(timelines::home_timeline))
+        .route("/api/v1/timelines/list/{id}", get(timelines::list_timeline))
+        // Polls (authenticated write)
+        .route("/api/v1/polls/{id}/votes", post(polls::vote_poll))
         // Notifications
         .route("/api/v1/notifications", get(notifications::get_notifications))
         .route("/api/v1/notifications/{id}", get(notifications::get_notification))
@@ -121,6 +141,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     let public = Router::new()
         // Instance info
+        .route("/api/v1/instance", get(instance::get_instance_v1))
         .route("/api/v2/instance", get(instance::get_instance_v2))
         // Accounts (public)
         .route("/api/v1/accounts/lookup", get(accounts::lookup_account))
@@ -131,10 +152,16 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Statuses (public read)
         .route("/api/v1/statuses/{id}", get(statuses::get_status))
         .route("/api/v1/statuses/{id}/context", get(statuses::get_status_context))
+        .route("/api/v1/statuses/{id}/favourited_by", get(statuses::favourited_by))
+        .route("/api/v1/statuses/{id}/reblogged_by", get(statuses::reblogged_by))
+        .route("/api/v1/statuses/{id}/history", get(statuses::get_status_history))
+        // Polls (public read)
+        .route("/api/v1/polls/{id}", get(polls::get_poll))
         // Search
         .route("/api/v2/search", get(search::search))
         // Timelines
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
+        .route("/api/v1/timelines/tag/{hashtag}", get(timelines::tag_timeline))
         // Sign-up (server-rendered form)
         .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
         // Trends / suggestions / announcements / emojis — not yet implemented; return empty lists

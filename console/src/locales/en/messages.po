@@ -13,21 +13,24 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/Account.tsx:49
 #: src/pages/InstanceDetail.tsx:226
 #: src/pages/NewInstance.tsx:63
-msgid "← instances"
-msgstr "← instances"
+msgid "← dashboard"
+msgstr "← dashboard"
+
+#: src/pages/NewInstance.tsx:63
+#~ msgid "← instances"
+#~ msgstr "← instances"
 
 #: src/pages/InstanceDetail.tsx:178
 msgid "+ Generate link"
 msgstr "+ Generate link"
 
-#: src/pages/Dashboard.tsx:28
+#: src/pages/Dashboard.tsx:70
 msgid "+ New"
 msgstr "+ New"
 
-#: src/pages/Account.tsx:53
+#: src/pages/Dashboard.tsx:111
 msgid "Account"
 msgstr "Account"
 
@@ -43,18 +46,18 @@ msgstr "Already have an account?"
 msgid "An account with that email already exists."
 msgstr "An account with that email already exists."
 
-#: src/pages/Account.tsx:104
+#: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
 #: src/pages/Signup.tsx:68
 msgid "At least 8 characters"
 msgstr "At least 8 characters"
 
-#: src/pages/Account.tsx:79
-#: src/pages/Account.tsx:126
+#: src/pages/Dashboard.tsx:137
+#: src/pages/Dashboard.tsx:184
 msgid "Change password"
 msgstr "Change password"
 
-#: src/pages/Account.tsx:107
+#: src/pages/Dashboard.tsx:165
 msgid "Confirm new password"
 msgstr "Confirm new password"
 
@@ -72,7 +75,7 @@ msgstr "Create instance"
 msgid "Create one"
 msgstr "Create one"
 
-#: src/pages/Dashboard.tsx:42
+#: src/pages/Dashboard.tsx:84
 msgid "Create your first instance"
 msgstr "Create your first instance"
 
@@ -84,11 +87,11 @@ msgstr "Creating account…"
 msgid "Creating…"
 msgstr "Creating…"
 
-#: src/pages/Account.tsx:83
+#: src/pages/Dashboard.tsx:141
 msgid "Current password"
 msgstr "Current password"
 
-#: src/pages/Account.tsx:39
+#: src/pages/Dashboard.tsx:52
 msgid "Current password is incorrect."
 msgstr "Current password is incorrect."
 
@@ -128,7 +131,7 @@ msgstr "Email"
 msgid "error"
 msgstr "error"
 
-#: src/pages/Account.tsx:39
+#: src/pages/Dashboard.tsx:52
 msgid "Failed to change password."
 msgstr "Failed to change password."
 
@@ -136,7 +139,7 @@ msgstr "Failed to change password."
 msgid "Failed to create instance."
 msgstr "Failed to create instance."
 
-#: src/pages/Dashboard.tsx:33
+#: src/pages/Dashboard.tsx:75
 #: src/pages/InstanceDetail.tsx:97
 msgid "Failed to load instances."
 msgstr "Failed to load instances."
@@ -161,7 +164,7 @@ msgstr "Go to console"
 msgid "Instance"
 msgstr "Instance"
 
-#: src/pages/Dashboard.tsx:23
+#: src/pages/Dashboard.tsx:65
 msgid "Instances"
 msgstr "Instances"
 
@@ -173,11 +176,11 @@ msgstr "Invalid email or password."
 msgid "Invites"
 msgstr "Invites"
 
-#: src/pages/Account.tsx:59
+#: src/pages/Dashboard.tsx:117
 msgid "Language"
 msgstr "Language"
 
-#: src/pages/Dashboard.tsx:32
+#: src/pages/Dashboard.tsx:74
 #: src/pages/InstanceDetail.tsx:90
 msgid "Loading…"
 msgstr "Loading…"
@@ -198,7 +201,7 @@ msgstr "my-instance"
 msgid "New instance"
 msgstr "New instance"
 
-#: src/pages/Account.tsx:94
+#: src/pages/Dashboard.tsx:152
 msgid "New password"
 msgstr "New password"
 
@@ -206,7 +209,7 @@ msgstr "New password"
 msgid "No account?"
 msgstr "No account?"
 
-#: src/pages/Dashboard.tsx:37
+#: src/pages/Dashboard.tsx:79
 msgid "No instances yet."
 msgstr "No instances yet."
 
@@ -224,11 +227,11 @@ msgstr "Not found."
 msgid "Password"
 msgstr "Password"
 
-#: src/pages/Account.tsx:31
+#: src/pages/Dashboard.tsx:44
 msgid "Password changed."
 msgstr "Password changed."
 
-#: src/pages/Account.tsx:116
+#: src/pages/Dashboard.tsx:174
 msgid "Passwords do not match."
 msgstr "Passwords do not match."
 
@@ -252,7 +255,7 @@ msgstr "Save"
 msgid "Saved."
 msgstr "Saved."
 
-#: src/pages/Account.tsx:126
+#: src/pages/Dashboard.tsx:184
 #: src/pages/InstanceDetail.tsx:159
 msgid "Saving…"
 msgstr "Saving…"

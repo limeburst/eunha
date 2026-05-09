@@ -125,10 +125,25 @@ pub async fn get_account_statuses(
 ) -> AppResult<impl IntoResponse> {
     let account = fetch_account(&state, id).await?;
 
-    // We don't implement pinned statuses; return empty list rather than
-    // serving regular statuses which Elk would render as pinned.
     if q.pinned == Some(true) {
-        return Ok((HeaderMap::new(), Json(vec![])));
+        let pinned_statuses = sqlx::query_as!(
+            crate::db::models::Status,
+            r#"SELECT s.* FROM statuses s
+               JOIN status_pins sp ON sp.status_id = s.id
+               WHERE sp.account_id = $1 AND s.deleted_at IS NULL
+               ORDER BY sp.id DESC"#,
+            account.id,
+        )
+        .fetch_all(&state.db)
+        .await?;
+        let mut result = Vec::with_capacity(pinned_statuses.len());
+        for s in &pinned_statuses {
+            let media = fetch_status_media(&state, s.id).await?;
+            let mut api_status = status_from_db(s, &account, media, None, None);
+            api_status.pinned = Some(true);
+            result.push(api_status);
+        }
+        return Ok((HeaderMap::new(), Json(result)));
     }
 
     let limit = q.pagination.limit_clamped(20, 40);
@@ -652,6 +667,48 @@ pub async fn unblock_account(
     .await?;
 
     build_relationship(&state, auth.account_id, target_id).await.map(Json)
+}
+
+// ── GET /api/v1/blocks ────────────────────────────────────────────────────
+
+pub async fn get_blocks(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(q): Query<PaginationParams>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    let limit = q.limit_clamped(40, 80);
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN blocks b ON b.target_account_id = a.id
+           WHERE b.account_id = $1
+           ORDER BY b.created_at DESC LIMIT $2"#,
+        auth.account_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
+// ── GET /api/v1/mutes ─────────────────────────────────────────────────────
+
+pub async fn get_mutes(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(q): Query<PaginationParams>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    let limit = q.limit_clamped(40, 80);
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN mutes m ON m.target_account_id = a.id
+           WHERE m.account_id = $1
+           ORDER BY m.created_at DESC LIMIT $2"#,
+        auth.account_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
 }
 
 // ── GET /api/v1/preferences ───────────────────────────────────────────────

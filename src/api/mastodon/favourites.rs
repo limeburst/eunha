@@ -81,6 +81,7 @@ pub async fn get_favourites(
             reblogged,
             muted: false,
             bookmarked,
+            pinned: false,
         };
         result.push(status_from_db(&s, &account, media, None, Some(ctx)));
     }
