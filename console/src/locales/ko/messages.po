@@ -14,12 +14,13 @@ msgstr ""
 "Plural-Forms: \n"
 
 #: src/pages/InstanceDetail.tsx:226
+#: src/pages/NewInstance.tsx:63
 msgid "← dashboard"
 msgstr "← 대시보드"
 
 #: src/pages/NewInstance.tsx:63
-msgid "← instances"
-msgstr "← 인스턴스"
+#~ msgid "← instances"
+#~ msgstr "← 인스턴스"
 
 #: src/pages/InstanceDetail.tsx:178
 msgid "+ Generate link"

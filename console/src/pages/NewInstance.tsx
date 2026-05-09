@@ -60,7 +60,7 @@ export function NewInstance() {
   return (
     <div className="space-y-8">
       <Link to="/dashboard" className="text-xs text-muted hover:text-text transition-colors">
-        <Trans>← instances</Trans>
+        <Trans>← dashboard</Trans>
       </Link>
 
       <h1 className="text-xs uppercase tracking-widest text-muted"><Trans>New instance</Trans></h1>
