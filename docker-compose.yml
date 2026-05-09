@@ -10,21 +10,10 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       BIND_ADDRESS: 0.0.0.0:3000
       CONSOLE_DOMAIN: ${CONSOLE_DOMAIN}
-      MEDIA_STORAGE__TYPE: ${MEDIA_STORAGE__TYPE:-local}
-      MEDIA_STORAGE__BASE_PATH: /data/media
-      MEDIA_STORAGE__BASE_URL: ${MEDIA_STORAGE__BASE_URL}
-      MEDIA_STORAGE__BUCKET: ${MEDIA_STORAGE__BUCKET:-}
-      MEDIA_STORAGE__REGION: ${MEDIA_STORAGE__REGION:-auto}
-      MEDIA_STORAGE__ENDPOINT: ${MEDIA_STORAGE__ENDPOINT:-}
-      MEDIA_STORAGE__ACCESS_KEY_ID: ${MEDIA_STORAGE__ACCESS_KEY_ID:-}
-      MEDIA_STORAGE__SECRET_ACCESS_KEY: ${MEDIA_STORAGE__SECRET_ACCESS_KEY:-}
       RUST_LOG: info
     ports:
       - "50000:3000"
     volumes:
-      - media:/data/media
+      - ./config.toml:/app/config.toml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-volumes:
-  media:

@@ -10,17 +10,13 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum MediaStorageConfig {
-    Local { base_path: String, base_url: String },
-    S3 {
-        bucket: String,
-        region: String,
-        endpoint: Option<String>,
-        access_key_id: String,
-        secret_access_key: String,
-        base_url: String,
-    },
+pub struct MediaStorageConfig {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: Option<String>,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub base_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
