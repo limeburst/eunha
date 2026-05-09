@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM instances WHERE id = $1",
+  "query": "SELECT * FROM instances WHERE domain = $1 AND console_user_id = $2",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,7 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Uuid"
       ]
     },
@@ -90,5 +91,5 @@
       true
     ]
   },
-  "hash": "03c7d974fa2f90d6e41968757c241e1b73a7c375aa9fdd9c61f5ac71d651f812"
+  "hash": "9cdb6765d226cfb3687463bc0b08cdae88780108d0b61591304c356e0478481e"
 }

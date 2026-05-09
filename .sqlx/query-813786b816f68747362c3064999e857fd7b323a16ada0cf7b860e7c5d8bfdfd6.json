@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM instances WHERE id = $1",
+  "query": "SELECT * FROM instances WHERE console_user_id = $1 ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -90,5 +90,5 @@
       true
     ]
   },
-  "hash": "03c7d974fa2f90d6e41968757c241e1b73a7c375aa9fdd9c61f5ac71d651f812"
+  "hash": "813786b816f68747362c3064999e857fd7b323a16ada0cf7b860e7c5d8bfdfd6"
 }

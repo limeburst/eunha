@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM instances WHERE id = $1",
+  "query": "INSERT INTO instances\n             (domain, title, private_key, public_key, console_user_id)\n           VALUES ($1, $2, $3, $4, $5)\n           RETURNING *",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,10 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
         "Uuid"
       ]
     },
@@ -90,5 +94,5 @@
       true
     ]
   },
-  "hash": "03c7d974fa2f90d6e41968757c241e1b73a7c375aa9fdd9c61f5ac71d651f812"
+  "hash": "e000bf0a2c006fa6ae431b89a5c2db6eda07a08d9131eed11cc3175b50433886"
 }

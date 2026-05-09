@@ -35,7 +35,7 @@ pub fn build_app(state: state::AppState) -> Router {
                     let uri = req.uri().clone();
                     let headers = req.headers().clone();
                     if host == console_domain.as_str() {
-                        console_frontend::serve(uri, headers).await
+                        console_frontend::serve(uri).await
                     } else {
                         elk::serve(uri, headers).await
                     }

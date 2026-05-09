@@ -225,7 +225,7 @@ pub async fn favourite_status(
     .execute(&state.db)
     .await?;
 
-    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let (status, account) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
     Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))
@@ -374,7 +374,7 @@ pub async fn unreblog_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
-    let (original, _account) = fetch_status_with_account(&state, id).await?;
+    fetch_status_with_account(&state, id).await?;
 
     let deleted = sqlx::query!(
         "DELETE FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL RETURNING id",
@@ -392,7 +392,7 @@ pub async fn unreblog_status(
         .await?;
     }
 
-    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let (status, account) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
     Ok(Json(status_from_db(&status, &account, media, None, Some(ctx))))

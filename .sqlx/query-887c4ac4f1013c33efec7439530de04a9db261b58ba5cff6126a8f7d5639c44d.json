@@ -62,6 +62,11 @@
         "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "console_user_id",
+        "type_info": "Uuid"
       }
     ],
     "parameters": {
@@ -81,7 +86,8 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
   "hash": "887c4ac4f1013c33efec7439530de04a9db261b58ba5cff6126a8f7d5639c44d"

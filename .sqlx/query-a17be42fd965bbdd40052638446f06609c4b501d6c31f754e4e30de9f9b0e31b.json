@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO accounts\n             (instance_id, username, display_name, note, note_text, url, uri,\n              private_key, public_key, inbox_url, outbox_url, shared_inbox_url)\n           VALUES ($1, $2, $2, '', '', $3, $4, $5, $6, $7, $8, $9)\n           RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a17be42fd965bbdd40052638446f06609c4b501d6c31f754e4e30de9f9b0e31b"
+}
