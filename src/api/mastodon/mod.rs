@@ -147,6 +147,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
         .route("/api/{server}/login", post(oauth::elk_login))
+        .route("/api/{server}/oauth/{origin}", get(oauth::elk_oauth_callback))
         .route("/oauth/authorize", get(oauth::authorize_form).post(oauth::authorize_submit))
         .route("/oauth/token", post(oauth::issue_token))
         .route("/oauth/revoke", post(oauth::revoke_token));

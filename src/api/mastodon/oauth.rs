@@ -267,16 +267,24 @@ pub struct ElkLoginBody {
     pub lang: Option<String>,
 }
 
+/// Build the redirect_uri Elk expects: `{origin}/api/{server}/oauth/{encoded_origin}`.
+/// This matches Elk's `getRedirectURI(origin, server)` in server/utils/shared.ts.
+fn elk_redirect_uri(origin: &str, server: &str) -> String {
+    let origin = origin.trim_end_matches('/');
+    format!("{}/api/{}/oauth/{}", origin, server, urlencoding::encode(origin))
+}
+
 pub async fn elk_login(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Json(body): Json<ElkLoginBody>,
 ) -> AppResult<Json<String>> {
-    let redirect_uri = format!("{}/signin/callback", body.origin.trim_end_matches('/'));
+    let redirect_uri = elk_redirect_uri(&body.origin, &instance.domain);
     let scopes = "read write follow push";
 
-    // Find or create a stable "Elk" OAuth app for this instance.
-    let app = sqlx::query_as!(
+    // Find or create a stable "Elk" OAuth app for this instance, keeping
+    // redirect_uri in sync with the current origin.
+    let existing = sqlx::query_as!(
         OauthApplication,
         "SELECT * FROM oauth_applications WHERE instance_id = $1 AND name = 'Elk' LIMIT 1",
         instance.id,
@@ -284,8 +292,19 @@ pub async fn elk_login(
     .fetch_optional(&state.db)
     .await?;
 
-    let app = match app {
-        Some(a) => a,
+    let app = match existing {
+        Some(a) if a.redirect_uris == redirect_uri => a,
+        Some(a) => {
+            // Origin changed (or old entry used /signin/callback) — update in place.
+            sqlx::query!(
+                "UPDATE oauth_applications SET redirect_uris = $1 WHERE id = $2",
+                redirect_uri,
+                a.id,
+            )
+            .execute(&state.db)
+            .await?;
+            OauthApplication { redirect_uris: redirect_uri.clone(), ..a }
+        }
         None => {
             let client_id = generate_token(32);
             let client_secret = generate_token(64);
@@ -323,6 +342,106 @@ pub async fn elk_login(
     }
 
     Ok(Json(url))
+}
+
+// ── GET /api/:server/oauth/:origin  (Elk OAuth callback — server route) ───
+
+#[derive(Debug, Deserialize)]
+pub struct ElkOAuthCallbackQuery {
+    pub code: Option<String>,
+}
+
+pub async fn elk_oauth_callback(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    axum::extract::Path((_server, encoded_origin)): axum::extract::Path<(String, String)>,
+    Query(q): Query<ElkOAuthCallbackQuery>,
+) -> Response {
+    let origin = urlencoding::decode(&encoded_origin)
+        .map(|s| s.into_owned())
+        .unwrap_or_default();
+
+    let code = match q.code {
+        Some(c) => c,
+        None => {
+            tracing::warn!("elk_oauth_callback: missing code");
+            return Redirect::to(&format!("{}/signin/callback?error=missing_code", origin))
+                .into_response();
+        }
+    };
+
+    let app = match sqlx::query_as!(
+        OauthApplication,
+        "SELECT * FROM oauth_applications WHERE instance_id = $1 AND name = 'Elk' LIMIT 1",
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    {
+        Some(a) => a,
+        None => {
+            tracing::warn!("elk_oauth_callback: no Elk app found for {}", instance.domain);
+            return Redirect::to(&format!("{}/signin/callback?error=no_app", origin))
+                .into_response();
+        }
+    };
+
+    let code_row = sqlx::query!(
+        r#"DELETE FROM oauth_authorization_codes
+           WHERE code = $1 AND application_id = $2 AND expires_at > now()
+           RETURNING account_id, scopes"#,
+        code,
+        app.id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(code_row) = code_row else {
+        tracing::warn!("elk_oauth_callback: code not found or expired");
+        return Redirect::to(&format!("{}/signin/callback?error=invalid_code", origin))
+            .into_response();
+    };
+
+    let Some(account_id) = code_row.account_id else {
+        tracing::warn!("elk_oauth_callback: code has no account_id");
+        return Redirect::to(&format!("{}/signin/callback?error=no_account", origin))
+            .into_response();
+    };
+
+    let token_str = generate_token(64);
+    let db_ok = sqlx::query!(
+        r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
+           VALUES ($1, $2, $3, $4)"#,
+        app.id,
+        account_id,
+        token_str,
+        code_row.scopes,
+    )
+    .execute(&state.db)
+    .await
+    .is_ok();
+
+    if !db_ok {
+        tracing::error!("elk_oauth_callback: failed to insert access token");
+        return Redirect::to(&format!("{}/signin/callback?error=db_error", origin))
+            .into_response();
+    }
+
+    tracing::info!(
+        instance = %instance.domain,
+        "elk_oauth_callback: issued token, redirecting to signin/callback"
+    );
+    let redirect = format!(
+        "{}/signin/callback?server={}&token={}",
+        origin.trim_end_matches('/'),
+        instance.domain,
+        token_str,
+    );
+    Redirect::to(&redirect).into_response()
 }
 
 // ── GET /oauth/authorize ───────────────────────────────────────────────────
