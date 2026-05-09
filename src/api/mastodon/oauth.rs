@@ -1,10 +1,42 @@
 use axum::{
-    extract::{Extension, Form, Query, State},
+    extract::{Extension, Form, FromRequest, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     Json,
 };
 use serde::Deserialize;
+
+/// Extractor that accepts both JSON and form-encoded bodies.
+pub(super) struct FormOrJson<T>(T);
+
+impl<T, S> FromRequest<S> for FormOrJson<T>
+where
+    T: serde::de::DeserializeOwned + Send + 'static,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
+        let is_json = req
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.contains("application/json"))
+            .unwrap_or(false);
+
+        if is_json {
+            Json::<T>::from_request(req, state)
+                .await
+                .map(|Json(v)| FormOrJson(v))
+                .map_err(IntoResponse::into_response)
+        } else {
+            Form::<T>::from_request(req, state)
+                .await
+                .map(|Form(v)| FormOrJson(v))
+                .map_err(IntoResponse::into_response)
+        }
+    }
+}
 
 use crate::{
     db::models::OauthApplication,
@@ -84,7 +116,7 @@ pub struct TokenRequest {
 pub async fn issue_token(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Form(form): Form<TokenRequest>,
+    FormOrJson(form): FormOrJson<TokenRequest>,
 ) -> AppResult<Json<Token>> {
     // Verify client credentials
     let app = sqlx::query_as!(
@@ -177,7 +209,7 @@ pub struct RevokeRequest {
 
 pub async fn revoke_token(
     State(state): State<AppState>,
-    Form(form): Form<RevokeRequest>,
+    FormOrJson(form): FormOrJson<RevokeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     sqlx::query!(
         r#"UPDATE oauth_access_tokens SET revoked_at = now()
