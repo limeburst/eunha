@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
 pub fn build_app(state: state::AppState) -> Router {
-    Router::new()
+    let compressed = Router::new()
         .merge(well_known::router())
         .merge(api::mastodon::router(state.clone()))
         .merge(api::console::router(state.clone()))
@@ -50,10 +50,15 @@ pub fn build_app(state: state::AppState) -> Router {
                 }
             })
         })
+        .layer(CompressionLayer::new())
+        .layer(CorsLayer::permissive());
+
+    Router::new()
+        .merge(compressed)
+        // Streaming WebSocket must be outside CompressionLayer to avoid body wrapping.
+        .merge(api::mastodon::streaming_router())
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::authenticate))
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::resolve_instance))
-        .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -38,6 +38,7 @@ pub async fn handler(
     let stream = params.stream.clone().unwrap_or_else(|| "public".into());
     let instance_id = instance.id;
 
+    tracing::info!(stream = %stream, ?account_id, "streaming: upgrade accepted");
     ws.on_upgrade(move |socket| async move {
         // Resolve token from query param if not already authenticated.
         let account_id = if account_id.is_some() {
@@ -48,7 +49,9 @@ pub async fn handler(
             None
         };
 
+        tracing::info!(stream = %stream, ?account_id, "streaming: connection open");
         run(socket, stream, account_id, instance_id, state).await;
+        tracing::info!("streaming: connection closed");
     })
 }
 

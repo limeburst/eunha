@@ -132,8 +132,6 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v2/search", get(search::search))
         // Timelines
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
-        // Streaming
-        .route("/api/v1/streaming", get(streaming::handler))
         // Sign-up (server-rendered form)
         .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
         // Trends / suggestions / announcements / emojis — not yet implemented; return empty lists
@@ -153,6 +151,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/oauth/revoke", post(oauth::revoke_token));
 
     Router::new().merge(auth_required).merge(public)
+}
+
+/// Routes that must NOT be wrapped by CompressionLayer (WebSocket upgrades).
+pub fn streaming_router() -> Router<AppState> {
+    Router::new().route("/api/v1/streaming", get(streaming::handler))
 }
 
 async fn empty_array() -> Json<[(); 0]> {
