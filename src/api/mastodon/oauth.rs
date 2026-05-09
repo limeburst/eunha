@@ -118,6 +118,12 @@ pub async fn issue_token(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     FormOrJson(form): FormOrJson<TokenRequest>,
 ) -> AppResult<Json<Token>> {
+    tracing::info!(
+        grant_type = %form.grant_type,
+        client_id = %form.client_id,
+        instance = %instance.domain,
+        "token request",
+    );
     // Verify client credentials
     let app = sqlx::query_as!(
         OauthApplication,
@@ -127,9 +133,13 @@ pub async fn issue_token(
     )
     .fetch_optional(&state.db)
     .await?
-    .ok_or(AppError::Unauthorized)?;
+    .ok_or_else(|| {
+        tracing::warn!(client_id = %form.client_id, instance = %instance.domain, "unknown client_id");
+        AppError::Unauthorized
+    })?;
 
     if app.client_secret != form.client_secret {
+        tracing::warn!(client_id = %form.client_id, "client_secret mismatch");
         return Err(AppError::Unauthorized);
     }
 
@@ -147,7 +157,10 @@ pub async fn issue_token(
             )
             .fetch_optional(&state.db)
             .await?
-            .ok_or(AppError::Unauthorized)?;
+            .ok_or_else(|| {
+                tracing::warn!(code = %code_str, "authorization code not found or expired");
+                AppError::Unauthorized
+            })?;
             (code.account_id, code.scopes)
         }
 
