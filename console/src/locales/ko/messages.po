@@ -13,7 +13,7 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/InstanceDetail.tsx:226
+#: src/pages/InstanceDetail.tsx:227
 #: src/pages/NewInstance.tsx:63
 msgid "← dashboard"
 msgstr "← 대시보드"
@@ -22,7 +22,7 @@ msgstr "← 대시보드"
 #~ msgid "← instances"
 #~ msgstr "← 인스턴스"
 
-#: src/pages/InstanceDetail.tsx:178
+#: src/pages/InstanceDetail.tsx:179
 msgid "+ Generate link"
 msgstr "+ 링크 생성"
 
@@ -37,6 +37,10 @@ msgstr "계정"
 #: src/pages/NewInstance.tsx:127
 msgid "Admin account"
 msgstr "관리자 계정"
+
+#: src/pages/Landing.tsx:26
+msgid "Already a member of an instance?"
+msgstr "이미 인스턴스 멤버이신가요?"
 
 #: src/pages/Signup.tsx:76
 msgid "Already have an account?"
@@ -54,6 +58,8 @@ msgstr "8자 이상"
 
 #: src/pages/Dashboard.tsx:137
 #: src/pages/Dashboard.tsx:184
+#: src/pages/InstanceUserHome.tsx:84
+#: src/pages/InstanceUserHome.tsx:114
 msgid "Change password"
 msgstr "비밀번호 변경"
 
@@ -88,6 +94,7 @@ msgid "Creating…"
 msgstr "생성 중…"
 
 #: src/pages/Dashboard.tsx:141
+#: src/pages/InstanceUserHome.tsx:88
 msgid "Current password"
 msgstr "현재 비밀번호"
 
@@ -95,24 +102,24 @@ msgstr "현재 비밀번호"
 msgid "Current password is incorrect."
 msgstr "현재 비밀번호가 올바르지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:145
+#: src/pages/InstanceDetail.tsx:146
 #: src/pages/NewInstance.tsx:96
 msgid "Custom domain"
 msgstr "커스텀 도메인"
 
-#: src/pages/InstanceDetail.tsx:195
+#: src/pages/InstanceDetail.tsx:196
 msgid "Danger zone"
 msgstr "위험 구역"
 
-#: src/pages/InstanceDetail.tsx:215
+#: src/pages/InstanceDetail.tsx:216
 msgid "Delete instance"
 msgstr "인스턴스 삭제"
 
-#: src/pages/InstanceDetail.tsx:215
+#: src/pages/InstanceDetail.tsx:216
 msgid "Deleting…"
 msgstr "삭제 중…"
 
-#: src/pages/InstanceDetail.tsx:136
+#: src/pages/InstanceDetail.tsx:137
 #: src/pages/NewInstance.tsx:114
 msgid "Display name"
 msgstr "표시 이름"
@@ -121,6 +128,7 @@ msgstr "표시 이름"
 msgid "Domain"
 msgstr "도메인"
 
+#: src/pages/InstanceUserLogin.tsx:62
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
 #: src/pages/Signup.tsx:46
@@ -140,19 +148,23 @@ msgid "Failed to create instance."
 msgstr "인스턴스 생성에 실패했습니다."
 
 #: src/pages/Dashboard.tsx:75
-#: src/pages/InstanceDetail.tsx:97
+#: src/pages/InstanceDetail.tsx:98
 msgid "Failed to load instances."
 msgstr "인스턴스를 불러오지 못했습니다."
 
-#: src/pages/InstanceDetail.tsx:56
+#: src/pages/InstanceDetail.tsx:57
 msgid "Failed to save."
 msgstr "저장에 실패했습니다."
+
+#: src/pages/InstanceUserHome.tsx:44
+msgid "Failed. Check your current password."
+msgstr "실패했습니다. 현재 비밀번호를 확인해 주세요."
 
 #: src/pages/Landing.tsx:13
 msgid "fediverse instance hosting"
 msgstr "페디버스 인스턴스 호스팅"
 
-#: src/pages/InstanceDetail.tsx:178
+#: src/pages/InstanceDetail.tsx:179
 msgid "Generating…"
 msgstr "생성 중…"
 
@@ -164,15 +176,23 @@ msgstr "콘솔로 이동"
 msgid "Instance"
 msgstr "인스턴스"
 
+#: src/pages/InstanceUserLogin.tsx:51
+msgid "Instance domain"
+msgstr "인스턴스 도메인"
+
 #: src/pages/Dashboard.tsx:65
 msgid "Instances"
 msgstr "인스턴스"
+
+#: src/pages/InstanceUserLogin.tsx:29
+msgid "Invalid domain, email, or password."
+msgstr "도메인, 이메일 또는 비밀번호가 올바르지 않습니다."
 
 #: src/pages/Login.tsx:31
 msgid "Invalid email or password."
 msgstr "이메일 또는 비밀번호가 올바르지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:172
+#: src/pages/InstanceDetail.tsx:173
 msgid "Invites"
 msgstr "초대"
 
@@ -181,9 +201,14 @@ msgid "Language"
 msgstr "언어"
 
 #: src/pages/Dashboard.tsx:74
-#: src/pages/InstanceDetail.tsx:90
+#: src/pages/InstanceDetail.tsx:91
+#: src/pages/InstanceUserHome.tsx:78
 msgid "Loading…"
 msgstr "불러오는 중…"
+
+#: src/pages/InstanceUserHome.tsx:73
+msgid "Members & invites"
+msgstr "멤버 및 초대"
 
 #: src/pages/NewInstance.tsx:118
 msgid "My Community"
@@ -202,6 +227,7 @@ msgid "New instance"
 msgstr "새 인스턴스"
 
 #: src/pages/Dashboard.tsx:152
+#: src/pages/InstanceUserHome.tsx:98
 msgid "New password"
 msgstr "새 비밀번호"
 
@@ -213,14 +239,15 @@ msgstr "계정이 없으신가요?"
 msgid "No instances yet."
 msgstr "인스턴스가 없습니다."
 
-#: src/pages/InstanceDetail.tsx:233
+#: src/components/InviteListView.tsx:23
 msgid "No members yet."
 msgstr "아직 멤버가 없습니다."
 
-#: src/pages/InstanceDetail.tsx:97
+#: src/pages/InstanceDetail.tsx:98
 msgid "Not found."
 msgstr "찾을 수 없습니다."
 
+#: src/pages/InstanceUserLogin.tsx:73
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
 #: src/pages/Signup.tsx:58
@@ -228,6 +255,7 @@ msgid "Password"
 msgstr "비밀번호"
 
 #: src/pages/Dashboard.tsx:44
+#: src/pages/InstanceUserHome.tsx:39
 msgid "Password changed."
 msgstr "비밀번호가 변경되었습니다."
 
@@ -235,7 +263,7 @@ msgstr "비밀번호가 변경되었습니다."
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:198
+#: src/pages/InstanceDetail.tsx:199
 msgid "Permanently delete this instance and all its data."
 msgstr "이 인스턴스와 모든 데이터를 영구적으로 삭제합니다."
 
@@ -247,23 +275,25 @@ msgstr "준비 중"
 msgid "running"
 msgstr "실행 중"
 
-#: src/pages/InstanceDetail.tsx:159
+#: src/pages/InstanceDetail.tsx:160
 msgid "Save"
 msgstr "저장"
 
-#: src/pages/InstanceDetail.tsx:53
+#: src/pages/InstanceDetail.tsx:54
 msgid "Saved."
 msgstr "저장되었습니다."
 
 #: src/pages/Dashboard.tsx:184
-#: src/pages/InstanceDetail.tsx:159
+#: src/pages/InstanceDetail.tsx:160
+#: src/pages/InstanceUserHome.tsx:114
 msgid "Saving…"
 msgstr "저장 중…"
 
-#: src/pages/InstanceDetail.tsx:132
+#: src/pages/InstanceDetail.tsx:133
 msgid "Settings"
 msgstr "설정"
 
+#: src/pages/InstanceUserLogin.tsx:90
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
@@ -271,7 +301,16 @@ msgstr "설정"
 msgid "Sign in"
 msgstr "로그인"
 
+#: src/pages/InstanceUserLogin.tsx:45
+msgid "Sign in as instance member"
+msgstr "인스턴스 멤버로 로그인"
+
+#: src/pages/Landing.tsx:28
+msgid "Sign in here"
+msgstr "여기서 로그인"
+
 #: src/components/ConsoleLayout.tsx:21
+#: src/pages/InstanceUserHome.tsx:60
 msgid "Sign out"
 msgstr "로그아웃"
 
@@ -279,6 +318,7 @@ msgstr "로그아웃"
 msgid "Sign up failed. Please try again."
 msgstr "가입에 실패했습니다. 다시 시도해 주세요."
 
+#: src/pages/InstanceUserLogin.tsx:90
 #: src/pages/Login.tsx:67
 msgid "Signing in…"
 msgstr "로그인 중…"
@@ -294,9 +334,13 @@ msgstr "중지됨"
 msgid "That domain is already taken."
 msgstr "이미 사용 중인 도메인입니다."
 
-#: src/pages/InstanceDetail.tsx:202
+#: src/pages/InstanceDetail.tsx:203
 msgid "Type <0>{0}</0> to confirm"
 msgstr "<0>{0}</0>을(를) 입력하여 확인"
+
+#: src/pages/InstanceUserLogin.tsx:46
+msgid "Use your Fediverse account credentials."
+msgstr "페디버스 계정 정보를 사용하세요."
 
 #: src/pages/NewInstance.tsx:130
 msgid "Username"

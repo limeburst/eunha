@@ -13,7 +13,7 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/InstanceDetail.tsx:226
+#: src/pages/InstanceDetail.tsx:227
 #: src/pages/NewInstance.tsx:63
 msgid "← dashboard"
 msgstr "← dashboard"
@@ -22,7 +22,7 @@ msgstr "← dashboard"
 #~ msgid "← instances"
 #~ msgstr "← instances"
 
-#: src/pages/InstanceDetail.tsx:178
+#: src/pages/InstanceDetail.tsx:179
 msgid "+ Generate link"
 msgstr "+ Generate link"
 
@@ -37,6 +37,10 @@ msgstr "Account"
 #: src/pages/NewInstance.tsx:127
 msgid "Admin account"
 msgstr "Admin account"
+
+#: src/pages/Landing.tsx:26
+msgid "Already a member of an instance?"
+msgstr "Already a member of an instance?"
 
 #: src/pages/Signup.tsx:76
 msgid "Already have an account?"
@@ -54,6 +58,8 @@ msgstr "At least 8 characters"
 
 #: src/pages/Dashboard.tsx:137
 #: src/pages/Dashboard.tsx:184
+#: src/pages/InstanceUserHome.tsx:84
+#: src/pages/InstanceUserHome.tsx:114
 msgid "Change password"
 msgstr "Change password"
 
@@ -88,6 +94,7 @@ msgid "Creating…"
 msgstr "Creating…"
 
 #: src/pages/Dashboard.tsx:141
+#: src/pages/InstanceUserHome.tsx:88
 msgid "Current password"
 msgstr "Current password"
 
@@ -95,24 +102,24 @@ msgstr "Current password"
 msgid "Current password is incorrect."
 msgstr "Current password is incorrect."
 
-#: src/pages/InstanceDetail.tsx:145
+#: src/pages/InstanceDetail.tsx:146
 #: src/pages/NewInstance.tsx:96
 msgid "Custom domain"
 msgstr "Custom domain"
 
-#: src/pages/InstanceDetail.tsx:195
+#: src/pages/InstanceDetail.tsx:196
 msgid "Danger zone"
 msgstr "Danger zone"
 
-#: src/pages/InstanceDetail.tsx:215
+#: src/pages/InstanceDetail.tsx:216
 msgid "Delete instance"
 msgstr "Delete instance"
 
-#: src/pages/InstanceDetail.tsx:215
+#: src/pages/InstanceDetail.tsx:216
 msgid "Deleting…"
 msgstr "Deleting…"
 
-#: src/pages/InstanceDetail.tsx:136
+#: src/pages/InstanceDetail.tsx:137
 #: src/pages/NewInstance.tsx:114
 msgid "Display name"
 msgstr "Display name"
@@ -121,6 +128,7 @@ msgstr "Display name"
 msgid "Domain"
 msgstr "Domain"
 
+#: src/pages/InstanceUserLogin.tsx:62
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
 #: src/pages/Signup.tsx:46
@@ -140,19 +148,23 @@ msgid "Failed to create instance."
 msgstr "Failed to create instance."
 
 #: src/pages/Dashboard.tsx:75
-#: src/pages/InstanceDetail.tsx:97
+#: src/pages/InstanceDetail.tsx:98
 msgid "Failed to load instances."
 msgstr "Failed to load instances."
 
-#: src/pages/InstanceDetail.tsx:56
+#: src/pages/InstanceDetail.tsx:57
 msgid "Failed to save."
 msgstr "Failed to save."
+
+#: src/pages/InstanceUserHome.tsx:44
+msgid "Failed. Check your current password."
+msgstr "Failed. Check your current password."
 
 #: src/pages/Landing.tsx:13
 msgid "fediverse instance hosting"
 msgstr "fediverse instance hosting"
 
-#: src/pages/InstanceDetail.tsx:178
+#: src/pages/InstanceDetail.tsx:179
 msgid "Generating…"
 msgstr "Generating…"
 
@@ -164,15 +176,23 @@ msgstr "Go to console"
 msgid "Instance"
 msgstr "Instance"
 
+#: src/pages/InstanceUserLogin.tsx:51
+msgid "Instance domain"
+msgstr "Instance domain"
+
 #: src/pages/Dashboard.tsx:65
 msgid "Instances"
 msgstr "Instances"
+
+#: src/pages/InstanceUserLogin.tsx:29
+msgid "Invalid domain, email, or password."
+msgstr "Invalid domain, email, or password."
 
 #: src/pages/Login.tsx:31
 msgid "Invalid email or password."
 msgstr "Invalid email or password."
 
-#: src/pages/InstanceDetail.tsx:172
+#: src/pages/InstanceDetail.tsx:173
 msgid "Invites"
 msgstr "Invites"
 
@@ -181,9 +201,14 @@ msgid "Language"
 msgstr "Language"
 
 #: src/pages/Dashboard.tsx:74
-#: src/pages/InstanceDetail.tsx:90
+#: src/pages/InstanceDetail.tsx:91
+#: src/pages/InstanceUserHome.tsx:78
 msgid "Loading…"
 msgstr "Loading…"
+
+#: src/pages/InstanceUserHome.tsx:73
+msgid "Members & invites"
+msgstr "Members & invites"
 
 #: src/pages/NewInstance.tsx:118
 msgid "My Community"
@@ -202,6 +227,7 @@ msgid "New instance"
 msgstr "New instance"
 
 #: src/pages/Dashboard.tsx:152
+#: src/pages/InstanceUserHome.tsx:98
 msgid "New password"
 msgstr "New password"
 
@@ -213,14 +239,15 @@ msgstr "No account?"
 msgid "No instances yet."
 msgstr "No instances yet."
 
-#: src/pages/InstanceDetail.tsx:233
+#: src/components/InviteListView.tsx:23
 msgid "No members yet."
 msgstr "No members yet."
 
-#: src/pages/InstanceDetail.tsx:97
+#: src/pages/InstanceDetail.tsx:98
 msgid "Not found."
 msgstr "Not found."
 
+#: src/pages/InstanceUserLogin.tsx:73
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
 #: src/pages/Signup.tsx:58
@@ -228,6 +255,7 @@ msgid "Password"
 msgstr "Password"
 
 #: src/pages/Dashboard.tsx:44
+#: src/pages/InstanceUserHome.tsx:39
 msgid "Password changed."
 msgstr "Password changed."
 
@@ -235,7 +263,7 @@ msgstr "Password changed."
 msgid "Passwords do not match."
 msgstr "Passwords do not match."
 
-#: src/pages/InstanceDetail.tsx:198
+#: src/pages/InstanceDetail.tsx:199
 msgid "Permanently delete this instance and all its data."
 msgstr "Permanently delete this instance and all its data."
 
@@ -247,23 +275,25 @@ msgstr "provisioning"
 msgid "running"
 msgstr "running"
 
-#: src/pages/InstanceDetail.tsx:159
+#: src/pages/InstanceDetail.tsx:160
 msgid "Save"
 msgstr "Save"
 
-#: src/pages/InstanceDetail.tsx:53
+#: src/pages/InstanceDetail.tsx:54
 msgid "Saved."
 msgstr "Saved."
 
 #: src/pages/Dashboard.tsx:184
-#: src/pages/InstanceDetail.tsx:159
+#: src/pages/InstanceDetail.tsx:160
+#: src/pages/InstanceUserHome.tsx:114
 msgid "Saving…"
 msgstr "Saving…"
 
-#: src/pages/InstanceDetail.tsx:132
+#: src/pages/InstanceDetail.tsx:133
 msgid "Settings"
 msgstr "Settings"
 
+#: src/pages/InstanceUserLogin.tsx:90
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
@@ -271,7 +301,16 @@ msgstr "Settings"
 msgid "Sign in"
 msgstr "Sign in"
 
+#: src/pages/InstanceUserLogin.tsx:45
+msgid "Sign in as instance member"
+msgstr "Sign in as instance member"
+
+#: src/pages/Landing.tsx:28
+msgid "Sign in here"
+msgstr "Sign in here"
+
 #: src/components/ConsoleLayout.tsx:21
+#: src/pages/InstanceUserHome.tsx:60
 msgid "Sign out"
 msgstr "Sign out"
 
@@ -279,6 +318,7 @@ msgstr "Sign out"
 msgid "Sign up failed. Please try again."
 msgstr "Sign up failed. Please try again."
 
+#: src/pages/InstanceUserLogin.tsx:90
 #: src/pages/Login.tsx:67
 msgid "Signing in…"
 msgstr "Signing in…"
@@ -291,9 +331,13 @@ msgstr "stopped"
 msgid "That domain is already taken."
 msgstr "That domain is already taken."
 
-#: src/pages/InstanceDetail.tsx:202
+#: src/pages/InstanceDetail.tsx:203
 msgid "Type <0>{0}</0> to confirm"
 msgstr "Type <0>{0}</0> to confirm"
+
+#: src/pages/InstanceUserLogin.tsx:46
+msgid "Use your Fediverse account credentials."
+msgstr "Use your Fediverse account credentials."
 
 #: src/pages/NewInstance.tsx:130
 msgid "Username"
