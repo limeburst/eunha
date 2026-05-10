@@ -41,8 +41,8 @@ export const deleteInstance = (domain: string) =>
 export const getInviteTree = (domain: string) =>
   api.get<InviteTree>(`/api/console/instances/${domain}/invites`)
 
-export const createConsoleInvite = (domain: string) =>
-  api.post<ConsoleInvite>(`/api/console/instances/${domain}/invites`, {})
+export const createConsoleInvite = (domain: string, maxUses?: number | null) =>
+  api.post<ConsoleInvite>(`/api/console/instances/${domain}/invites`, { max_uses: maxUses ?? null })
 
 export const listApplications = (domain: string) =>
   api.get<Application[]>(`/api/console/instances/${domain}/applications`)

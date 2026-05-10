@@ -429,12 +429,25 @@ pub async fn invite_tree(
     Ok(Json(InviteTreeResponse { members, invites }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateConsoleInviteRequest {
+    pub max_uses: Option<i32>,
+}
+
 pub async fn create_console_invite(
     State(state): State<AppState>,
     ConsoleAuth(user): ConsoleAuth,
     Path(domain): Path<String>,
+    body: Option<Json<CreateConsoleInviteRequest>>,
 ) -> AppResult<Json<ConsoleInviteResponse>> {
     let instance = instance_for_user(&state, &domain, user.id).await?;
+    let max_uses = body.and_then(|Json(b)| b.max_uses);
+
+    if let Some(n) = max_uses {
+        if n < 1 {
+            return Err(AppError::Unprocessable("max_uses must be at least 1".into()));
+        }
+    }
 
     // Create the invite on behalf of the first admin account (if one exists),
     // so it appears in the tree rooted at the admin.
@@ -451,12 +464,13 @@ pub async fn create_console_invite(
     let code = crate::api::mastodon::invites::generate_code();
 
     let row = sqlx::query!(
-        r#"INSERT INTO invites (instance_id, code, created_by)
-           VALUES ($1, $2, $3)
+        r#"INSERT INTO invites (instance_id, code, created_by, max_uses)
+           VALUES ($1, $2, $3, $4)
            RETURNING id, code, max_uses, uses, expires_at, created_at"#,
         instance.id,
         code,
         admin_id,
+        max_uses,
     )
     .fetch_one(&state.db)
     .await?;

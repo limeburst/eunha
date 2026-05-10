@@ -27,6 +27,7 @@ export function InstanceDetail() {
   const [inviteTree, setInviteTree] = useState<InviteTree | null>(null)
   const [creatingInvite, setCreatingInvite] = useState(false)
   const [newInvite, setNewInvite] = useState<ConsoleInvite | null>(null)
+  const [inviteMaxUses, setInviteMaxUses] = useState('')
 
   const [applications, setApplications] = useState<Application[]>([])
   const [appActing, setAppActing] = useState<string | null>(null)
@@ -106,14 +107,17 @@ export function InstanceDetail() {
     }
   }
 
-  const handleCreateInvite = async () => {
+  const handleCreateInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
     if (!domain || creatingInvite) return
     setCreatingInvite(true)
     setNewInvite(null)
+    const maxUses = inviteMaxUses.trim() ? parseInt(inviteMaxUses, 10) : null
     try {
-      const invite = await createConsoleInvite(domain)
+      const invite = await createConsoleInvite(domain, maxUses)
       setNewInvite(invite)
       setInviteTree((prev) => prev ? { ...prev, invites: [invite, ...prev.invites] } : prev)
+      setInviteMaxUses('')
     } finally {
       setCreatingInvite(false)
     }
@@ -278,18 +282,31 @@ export function InstanceDetail() {
       <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-border pb-2">
           <p className="text-xs text-muted uppercase tracking-widest"><Trans>Invites</Trans></p>
-          <button
-            onClick={handleCreateInvite}
-            disabled={creatingInvite}
-            className="text-xs text-muted hover:text-text transition-colors disabled:opacity-40"
-          >
-            {creatingInvite ? <Trans>Generating…</Trans> : <Trans>+ Generate link</Trans>}
-          </button>
+          <form onSubmit={handleCreateInvite} className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              value={inviteMaxUses}
+              onChange={(e) => setInviteMaxUses(e.target.value)}
+              placeholder={t`unlimited`}
+              className="w-24 bg-surface border border-border px-2 py-1 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors"
+            />
+            <button
+              type="submit"
+              disabled={creatingInvite}
+              className="text-xs text-muted hover:text-text transition-colors disabled:opacity-40 shrink-0"
+            >
+              {creatingInvite ? <Trans>Generating…</Trans> : <Trans>+ Generate link</Trans>}
+            </button>
+          </form>
         </div>
 
         {newInvite && (
           <div className="text-xs font-mono bg-surface border border-border px-3 py-2 text-text break-all">
             {newInvite.url}
+            {newInvite.max_uses != null && (
+              <span className="ml-2 text-muted">({newInvite.max_uses} use{newInvite.max_uses !== 1 ? 's' : ''})</span>
+            )}
           </div>
         )}
 

@@ -13,7 +13,7 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/InstanceDetail.tsx:334
+#: src/pages/InstanceDetail.tsx:351
 #: src/pages/NewInstance.tsx:63
 msgid "← dashboard"
 msgstr "← dashboard"
@@ -22,7 +22,7 @@ msgstr "← dashboard"
 #~ msgid "← instances"
 #~ msgstr "← instances"
 
-#: src/pages/InstanceDetail.tsx:286
+#: src/pages/InstanceDetail.tsx:299
 msgid "+ Generate link"
 msgstr "+ Generate link"
 
@@ -38,7 +38,7 @@ msgstr "Account"
 msgid "Admin account"
 msgstr "Admin account"
 
-#: src/pages/InstanceDetail.tsx:218
+#: src/pages/InstanceDetail.tsx:222
 msgid "Allow new users to sign up"
 msgstr "Allow new users to sign up"
 
@@ -54,11 +54,11 @@ msgstr "Already have an account?"
 msgid "An account with that email already exists."
 msgstr "An account with that email already exists."
 
-#: src/pages/InstanceDetail.tsx:234
+#: src/pages/InstanceDetail.tsx:238
 msgid "Applications"
 msgstr "Applications"
 
-#: src/pages/InstanceDetail.tsx:256
+#: src/pages/InstanceDetail.tsx:260
 msgid "Approve"
 msgstr "Approve"
 
@@ -111,24 +111,24 @@ msgstr "Current password"
 msgid "Current password is incorrect."
 msgstr "Current password is incorrect."
 
-#: src/pages/InstanceDetail.tsx:191
+#: src/pages/InstanceDetail.tsx:195
 #: src/pages/NewInstance.tsx:96
 msgid "Custom domain"
 msgstr "Custom domain"
 
-#: src/pages/InstanceDetail.tsx:303
+#: src/pages/InstanceDetail.tsx:320
 msgid "Danger zone"
 msgstr "Danger zone"
 
-#: src/pages/InstanceDetail.tsx:323
+#: src/pages/InstanceDetail.tsx:340
 msgid "Delete instance"
 msgstr "Delete instance"
 
-#: src/pages/InstanceDetail.tsx:323
+#: src/pages/InstanceDetail.tsx:340
 msgid "Deleting…"
 msgstr "Deleting…"
 
-#: src/pages/InstanceDetail.tsx:182
+#: src/pages/InstanceDetail.tsx:186
 #: src/pages/NewInstance.tsx:114
 msgid "Display name"
 msgstr "Display name"
@@ -156,11 +156,11 @@ msgid "Failed to create instance."
 msgstr "Failed to create instance."
 
 #: src/pages/Dashboard.tsx:75
-#: src/pages/InstanceDetail.tsx:143
+#: src/pages/InstanceDetail.tsx:147
 msgid "Failed to load instances."
 msgstr "Failed to load instances."
 
-#: src/pages/InstanceDetail.tsx:61
+#: src/pages/InstanceDetail.tsx:62
 msgid "Failed to save."
 msgstr "Failed to save."
 
@@ -172,7 +172,7 @@ msgstr "Failed to save."
 msgid "fediverse instance hosting"
 msgstr "fediverse instance hosting"
 
-#: src/pages/InstanceDetail.tsx:286
+#: src/pages/InstanceDetail.tsx:299
 msgid "Generating…"
 msgstr "Generating…"
 
@@ -200,7 +200,7 @@ msgstr "Instances"
 msgid "Invalid email or password."
 msgstr "Invalid email or password."
 
-#: src/pages/InstanceDetail.tsx:280
+#: src/pages/InstanceDetail.tsx:284
 msgid "Invites"
 msgstr "Invites"
 
@@ -209,7 +209,7 @@ msgid "Language"
 msgstr "Language"
 
 #: src/pages/Dashboard.tsx:74
-#: src/pages/InstanceDetail.tsx:136
+#: src/pages/InstanceDetail.tsx:140
 msgid "Loading…"
 msgstr "Loading…"
 
@@ -237,7 +237,7 @@ msgstr "New instance"
 msgid "New password"
 msgstr "New password"
 
-#: src/pages/InstanceDetail.tsx:224
+#: src/pages/InstanceDetail.tsx:228
 msgid "New sign-ups must be approved before they can log in"
 msgstr "New sign-ups must be approved before they can log in"
 
@@ -253,15 +253,15 @@ msgstr "No instances yet."
 msgid "No members yet."
 msgstr "No members yet."
 
-#: src/pages/InstanceDetail.tsx:240
+#: src/pages/InstanceDetail.tsx:244
 msgid "No pending applications."
 msgstr "No pending applications."
 
-#: src/pages/InstanceDetail.tsx:143
+#: src/pages/InstanceDetail.tsx:147
 msgid "Not found."
 msgstr "Not found."
 
-#: src/pages/InstanceDetail.tsx:217
+#: src/pages/InstanceDetail.tsx:221
 msgid "Open registrations"
 msgstr "Open registrations"
 
@@ -279,7 +279,7 @@ msgstr "Password changed."
 msgid "Passwords do not match."
 msgstr "Passwords do not match."
 
-#: src/pages/InstanceDetail.tsx:306
+#: src/pages/InstanceDetail.tsx:323
 msgid "Permanently delete this instance and all its data."
 msgstr "Permanently delete this instance and all its data."
 
@@ -287,11 +287,11 @@ msgstr "Permanently delete this instance and all its data."
 msgid "provisioning"
 msgstr "provisioning"
 
-#: src/pages/InstanceDetail.tsx:263
+#: src/pages/InstanceDetail.tsx:267
 msgid "Reject"
 msgstr "Reject"
 
-#: src/pages/InstanceDetail.tsx:223
+#: src/pages/InstanceDetail.tsx:227
 msgid "Require approval"
 msgstr "Require approval"
 
@@ -299,20 +299,20 @@ msgstr "Require approval"
 msgid "running"
 msgstr "running"
 
-#: src/pages/InstanceDetail.tsx:205
+#: src/pages/InstanceDetail.tsx:209
 msgid "Save"
 msgstr "Save"
 
-#: src/pages/InstanceDetail.tsx:58
+#: src/pages/InstanceDetail.tsx:59
 msgid "Saved."
 msgstr "Saved."
 
 #: src/pages/Dashboard.tsx:184
-#: src/pages/InstanceDetail.tsx:205
+#: src/pages/InstanceDetail.tsx:209
 msgid "Saving…"
 msgstr "Saving…"
 
-#: src/pages/InstanceDetail.tsx:178
+#: src/pages/InstanceDetail.tsx:182
 msgid "Settings"
 msgstr "Settings"
 
@@ -351,13 +351,17 @@ msgstr "stopped"
 msgid "That domain is already taken."
 msgstr "That domain is already taken."
 
-#: src/pages/InstanceDetail.tsx:72
+#: src/pages/InstanceDetail.tsx:73
 msgid "Turning off approval will immediately approve all {0} pending application(s). Continue?"
 msgstr "Turning off approval will immediately approve all {0} pending application(s). Continue?"
 
-#: src/pages/InstanceDetail.tsx:310
+#: src/pages/InstanceDetail.tsx:327
 msgid "Type <0>{0}</0> to confirm"
 msgstr "Type <0>{0}</0> to confirm"
+
+#: src/pages/InstanceDetail.tsx:291
+msgid "unlimited"
+msgstr "unlimited"
 
 #: src/pages/InstanceUserLogin.tsx:46
 #~ msgid "Use your Fediverse account credentials."
