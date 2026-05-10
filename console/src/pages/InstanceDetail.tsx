@@ -67,9 +67,18 @@ export function InstanceDetail() {
 
   const handleToggle = async (field: 'registrations_open' | 'approval_required', value: boolean) => {
     if (!domain || !instance) return
+    if (field === 'approval_required' && !value && applications.length > 0) {
+      const confirmed = window.confirm(
+        t`Turning off approval will immediately approve all ${applications.length} pending application(s). Continue?`
+      )
+      if (!confirmed) return
+    }
     try {
       const updated = await updateInstance(domain, { [field]: value })
       setInstance(updated)
+      if (field === 'approval_required' && !value) {
+        setApplications([])
+      }
     } catch {
       // silently ignore — the toggle will snap back on next render
     }

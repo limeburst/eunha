@@ -267,6 +267,16 @@ pub async fn update(
         )
         .execute(&state.db)
         .await?;
+
+        // Turning approval off: approve everyone who was waiting
+        if !approval_required {
+            sqlx::query!(
+                "UPDATE users SET approved_at = now(), updated_at = now() WHERE instance_id = $1 AND approved_at IS NULL",
+                instance.id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
     }
 
     if let MaybeAbsent::Present(ref custom_domain) = body.custom_domain {
