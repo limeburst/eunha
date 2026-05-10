@@ -25,7 +25,7 @@ pub struct ConsoleUser {
     pub id: Uuid,
     pub email: String,
     pub email_normalized: String,
-    pub password_hash: String,
+    pub password_hash: Option<String>,
     pub locale: String,
     pub confirmed_at: Option<DateTime<Utc>>,
     pub confirmation_token: Option<String>,

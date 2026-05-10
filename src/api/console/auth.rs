@@ -1,7 +1,5 @@
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    extract::State,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -13,17 +11,18 @@ use crate::{
 };
 use super::ConsoleAuth;
 
-#[derive(Debug, Deserialize)]
-pub struct AuthRequest {
-    pub email: String,
-    pub password: String,
-}
+// ── Response types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum AuthResponse {
-    Confirmed { token: String, user: UserResponse },
+pub enum SignupResponse {
     NeedsConfirmation { needs_confirmation: bool },
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthResponse {
+    pub token: String,
+    pub user: UserResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,47 +44,63 @@ impl From<&ConsoleUser> for UserResponse {
     }
 }
 
+// ── POST /api/console/auth/signup ──────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SignupRequest {
+    pub email: String,
+    pub locale: Option<String>,
+}
+
 pub async fn signup(
     State(state): State<AppState>,
-    Json(body): Json<AuthRequest>,
-) -> AppResult<Json<AuthResponse>> {
-    if body.password.len() < 8 {
-        return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));
-    }
-
-    let email = body.email.trim();
+    Json(body): Json<SignupRequest>,
+) -> AppResult<Json<SignupResponse>> {
+    let email = body.email.trim().to_string();
     let email_normalized = email.to_lowercase();
+    let locale_str = body.locale.clone().unwrap_or_else(|| "en".into());
+    let confirmation_token = generate_token(64);
 
-    let exists = sqlx::query_scalar!(
-        "SELECT 1 FROM console_users WHERE email_normalized = $1",
-        email_normalized
+    let existing = sqlx::query_as!(
+        ConsoleUser,
+        "SELECT * FROM console_users WHERE email_normalized = $1",
+        email_normalized,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if exists.is_some() {
-        return Err(AppError::Conflict);
-    }
-
-    let password_hash = hash_password(&body.password)?;
-
-    if let Some(ref resend) = state.config.resend {
-        let confirmation_token = generate_token(64);
-        let user = sqlx::query_as!(
+    let user = if let Some(u) = existing {
+        if u.confirmed_at.is_some() {
+            // Confirmed account — don't reveal it exists; just no-op and return needs_confirmation
+            // so the form shows the same message regardless (prevents enumeration).
+            return Ok(Json(SignupResponse::NeedsConfirmation { needs_confirmation: true }));
+        }
+        // Unconfirmed: regenerate token and resend
+        sqlx::query_as!(
             ConsoleUser,
-            r#"INSERT INTO console_users (email, email_normalized, password_hash, confirmation_token)
-               VALUES ($1, $2, $3, $4)
+            "UPDATE console_users SET confirmation_token = $1 WHERE id = $2 RETURNING *",
+            confirmation_token,
+            u.id,
+        )
+        .fetch_one(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            ConsoleUser,
+            r#"INSERT INTO console_users (email, email_normalized, confirmation_token)
+               VALUES ($1, $2, $3)
                RETURNING *"#,
             email,
             email_normalized,
-            password_hash,
             confirmation_token,
         )
         .fetch_one(&state.db)
-        .await?;
+        .await?
+    };
 
+    if let Some(ref resend) = state.config.resend {
         let confirm_url = format!(
-            "https://{}/api/console/auth/confirm?token={}",
+            "https://{}/confirm-account?token={}",
             state.config.console_domain, confirmation_token
         );
         let http = state.http.clone();
@@ -94,36 +109,64 @@ pub async fn signup(
         let to = user.email.clone();
         tokio::spawn(async move {
             if let Err(e) = crate::email::send_confirmation(
-                &http, &api_key, &from, &to, &to, &confirm_url,
+                &http, &api_key, &from, &to, &to, &confirm_url, &locale_str,
             )
             .await
             {
                 tracing::error!(error = %e, "failed to send console confirmation email");
             }
         });
-
-        return Ok(Json(AuthResponse::NeedsConfirmation { needs_confirmation: true }));
     }
+
+    Ok(Json(SignupResponse::NeedsConfirmation { needs_confirmation: true }))
+}
+
+// ── POST /api/console/auth/confirm ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmRequest {
+    pub token: String,
+    pub password: String,
+}
+
+pub async fn confirm(
+    State(state): State<AppState>,
+    Json(body): Json<ConfirmRequest>,
+) -> AppResult<Json<AuthResponse>> {
+    if body.password.len() < 8 {
+        return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));
+    }
+
+    let password_hash = hash_password(&body.password)?;
 
     let user = sqlx::query_as!(
         ConsoleUser,
-        r#"INSERT INTO console_users (email, email_normalized, password_hash, confirmed_at)
-           VALUES ($1, $2, $3, now())
+        r#"UPDATE console_users
+           SET confirmed_at = now(), confirmation_token = NULL, password_hash = $2
+           WHERE confirmation_token = $1 AND confirmed_at IS NULL
            RETURNING *"#,
-        email,
-        email_normalized,
+        body.token,
         password_hash,
     )
-    .fetch_one(&state.db)
-    .await?;
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
 
     let token = issue_session(&state, user.id).await?;
-    Ok(Json(AuthResponse::Confirmed { token, user: UserResponse::from(&user) }))
+    Ok(Json(AuthResponse { token, user: UserResponse::from(&user) }))
+}
+
+// ── POST /api/console/auth/login ───────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
 }
 
 pub async fn login(
     State(state): State<AppState>,
-    Json(body): Json<AuthRequest>,
+    Json(body): Json<LoginRequest>,
 ) -> AppResult<Json<AuthResponse>> {
     let email_normalized = body.email.trim().to_lowercase();
 
@@ -136,74 +179,20 @@ pub async fn login(
     .await?
     .ok_or(AppError::Unauthorized)?;
 
-    verify_password(&body.password, &user.password_hash)?;
+    let hash = user.password_hash.as_deref().ok_or(AppError::Unauthorized)?;
+    verify_password(&body.password, hash)?;
 
     let token = issue_session(&state, user.id).await?;
-    Ok(Json(AuthResponse::Confirmed { token, user: UserResponse::from(&user) }))
+    Ok(Json(AuthResponse { token, user: UserResponse::from(&user) }))
 }
 
-// ── GET /api/console/auth/confirm ─────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct ConfirmQuery {
-    pub token: String,
-}
-
-pub async fn confirm(
-    State(state): State<AppState>,
-    Query(q): Query<ConfirmQuery>,
-) -> Response {
-    let user = sqlx::query_as!(
-        ConsoleUser,
-        r#"UPDATE console_users
-           SET confirmed_at = now(), confirmation_token = NULL
-           WHERE confirmation_token = $1 AND confirmed_at IS NULL
-           RETURNING *"#,
-        q.token,
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-
-    let Some(user) = user else {
-        return (
-            StatusCode::NOT_FOUND,
-            Html("<h1>Invalid confirmation link</h1><p>This link may have already been used or is invalid.</p>".to_string()),
-        )
-            .into_response();
-    };
-
-    let token = match issue_session(&state, user.id).await {
-        Ok(t) => t,
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Session creation failed").into_response();
-        }
-    };
-
-    let user_json = serde_json::to_string(&UserResponse::from(&user)).unwrap_or_default();
-    let escaped_user = user_json.replace('\\', "\\\\").replace('\'', "\\'");
-
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head><title>Email confirmed</title></head>
-<body>
-<p>Confirming your account…</p>
-<script>
-  localStorage.setItem('console_token', '{token}');
-  localStorage.setItem('console_user', '{escaped_user}');
-  window.location.replace('/');
-</script>
-</body>
-</html>"#
-    );
-    Html(html).into_response()
-}
+// ── GET /api/console/auth/me ───────────────────────────────────────────────
 
 pub async fn me(ConsoleAuth(user): ConsoleAuth) -> AppResult<Json<UserResponse>> {
     Ok(Json(UserResponse::from(&user)))
 }
+
+// ── PATCH /api/console/auth/password ──────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ChangePasswordRequest {
@@ -216,7 +205,8 @@ pub async fn change_password(
     ConsoleAuth(user): ConsoleAuth,
     Json(body): Json<ChangePasswordRequest>,
 ) -> AppResult<axum::http::StatusCode> {
-    verify_password(&body.current_password, &user.password_hash)?;
+    let hash = user.password_hash.as_deref().ok_or(AppError::Unauthorized)?;
+    verify_password(&body.current_password, hash)?;
 
     if body.new_password.len() < 8 {
         return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));
@@ -234,6 +224,8 @@ pub async fn change_password(
 
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
+
+// ── PATCH /api/console/auth/locale ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateLocaleRequest {
@@ -260,6 +252,8 @@ pub async fn update_locale(
 
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
+
+// ── helpers ────────────────────────────────────────────────────────────────
 
 async fn issue_session(state: &AppState, user_id: uuid::Uuid) -> AppResult<String> {
     let token = generate_token(64);

@@ -46,13 +46,13 @@ msgstr "새 사용자 가입 허용"
 #~ msgid "Already a member of an instance?"
 #~ msgstr "이미 인스턴스 멤버이신가요?"
 
-#: src/pages/Signup.tsx:93
+#: src/pages/Signup.tsx:66
 msgid "Already have an account?"
 msgstr "이미 계정이 있으신가요?"
 
 #: src/pages/Signup.tsx:37
-msgid "An account with that email already exists."
-msgstr "이미 등록된 이메일입니다."
+#~ msgid "An account with that email already exists."
+#~ msgstr "이미 등록된 이메일입니다."
 
 #: src/pages/InstanceDetail.tsx:238
 msgid "Applications"
@@ -62,9 +62,9 @@ msgstr "가입 신청"
 msgid "Approve"
 msgstr "승인"
 
+#: src/pages/ConfirmAccount.tsx:70
 #: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
-#: src/pages/Signup.tsx:85
 msgid "At least 8 characters"
 msgstr "8자 이상"
 
@@ -73,14 +73,20 @@ msgstr "8자 이상"
 msgid "Change password"
 msgstr "비밀번호 변경"
 
+#: src/pages/Signup.tsx:36
+msgid "Check your email to confirm your account."
+msgstr "이메일을 확인하여 계정을 인증하세요."
+
+#: src/pages/ConfirmAccount.tsx:73
 #: src/pages/Dashboard.tsx:165
 msgid "Confirm new password"
 msgstr "새 비밀번호 확인"
 
+#: src/pages/ConfirmAccount.tsx:86
 #: src/pages/Landing.tsx:20
-#: src/pages/Signup.tsx:49
-#: src/pages/Signup.tsx:60
-#: src/pages/Signup.tsx:89
+#: src/pages/Signup.tsx:35
+#: src/pages/Signup.tsx:46
+#: src/pages/Signup.tsx:62
 msgid "Create account"
 msgstr "계정 만들기"
 
@@ -96,7 +102,8 @@ msgstr "만들기"
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
 
-#: src/pages/Signup.tsx:89
+#: src/pages/ConfirmAccount.tsx:86
+#: src/pages/Signup.tsx:62
 msgid "Creating account…"
 msgstr "계정 생성 중…"
 
@@ -140,7 +147,7 @@ msgstr "도메인"
 
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
-#: src/pages/Signup.tsx:63
+#: src/pages/Signup.tsx:49
 msgid "Email"
 msgstr "이메일"
 
@@ -192,6 +199,10 @@ msgstr "인스턴스"
 #: src/pages/Dashboard.tsx:65
 msgid "Instances"
 msgstr "인스턴스"
+
+#: src/pages/ConfirmAccount.tsx:24
+msgid "Invalid confirmation link."
+msgstr "유효하지 않은 인증 링크입니다."
 
 #: src/pages/InstanceUserLogin.tsx:29
 #~ msgid "Invalid domain, email, or password."
@@ -266,9 +277,9 @@ msgstr "찾을 수 없습니다."
 msgid "Open registrations"
 msgstr "공개 가입"
 
+#: src/pages/ConfirmAccount.tsx:60
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
-#: src/pages/Signup.tsx:75
 msgid "Password"
 msgstr "비밀번호"
 
@@ -276,6 +287,7 @@ msgstr "비밀번호"
 msgid "Password changed."
 msgstr "비밀번호가 변경되었습니다."
 
+#: src/pages/ConfirmAccount.tsx:33
 #: src/pages/Dashboard.tsx:174
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
@@ -313,6 +325,10 @@ msgstr "저장되었습니다."
 msgid "Saving…"
 msgstr "저장 중…"
 
+#: src/pages/ConfirmAccount.tsx:57
+msgid "Set your password"
+msgstr "비밀번호 설정"
+
 #: src/pages/InstanceDetail.tsx:182
 msgid "Settings"
 msgstr "설정"
@@ -320,7 +336,7 @@ msgstr "설정"
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
-#: src/pages/Signup.tsx:94
+#: src/pages/Signup.tsx:67
 msgid "Sign in"
 msgstr "로그인"
 
@@ -336,7 +352,8 @@ msgstr "로그인"
 msgid "Sign out"
 msgstr "로그아웃"
 
-#: src/pages/Signup.tsx:38
+#: src/pages/ConfirmAccount.tsx:47
+#: src/pages/Signup.tsx:25
 msgid "Sign up failed. Please try again."
 msgstr "가입에 실패했습니다. 다시 시도해 주세요."
 
@@ -354,6 +371,10 @@ msgstr "중지됨"
 #: src/pages/NewInstance.tsx:52
 msgid "That domain is already taken."
 msgstr "이미 사용 중인 도메인입니다."
+
+#: src/pages/ConfirmAccount.tsx:46
+msgid "This confirmation link is invalid or has already been used."
+msgstr "유효하지 않거나 이미 사용된 인증 링크입니다."
 
 #: src/pages/InstanceDetail.tsx:73
 msgid "Turning off approval will immediately approve all {0} pending application(s). Continue?"
@@ -375,7 +396,11 @@ msgstr "무제한"
 msgid "Username"
 msgstr "사용자 이름"
 
+#: src/pages/Signup.tsx:37
+msgid "We sent a confirmation link to <0>{email}</0>. Click the link in the email to activate your account."
+msgstr "<0>{email}</0>로 인증 링크를 보냈습니다. 이메일의 링크를 클릭하여 계정을 활성화하세요."
+
 #: src/pages/Login.tsx:48
-#: src/pages/Signup.tsx:68
+#: src/pages/Signup.tsx:54
 msgid "you@example.com"
 msgstr "you@example.com"

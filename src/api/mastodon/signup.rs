@@ -309,11 +309,48 @@ pub async fn api_create_account(
         return Err(AppError::Unprocessable("Username is already taken".into()));
     }
 
-    let email_taken = sqlx::query_scalar!(
-        "SELECT 1 FROM users WHERE email_normalized = $1 AND instance_id = $2",
+    let existing_email = sqlx::query!(
+        "SELECT account_id, confirmation_token, email FROM users WHERE email_normalized = $1 AND instance_id = $2",
         email_normalized, instance.id,
-    ).fetch_optional(&state.db).await?.is_some();
-    if email_taken {
+    ).fetch_optional(&state.db).await?;
+
+    if let Some(ref row) = existing_email {
+        // Confirmed account → hard conflict
+        if row.confirmation_token.is_none() {
+            return Err(AppError::Unprocessable("Email is already taken".into()));
+        }
+        // Unconfirmed → resend and return a fresh profile token
+        if let Some(ref resend) = state.config.resend {
+            let tok = row.confirmation_token.clone().unwrap();
+            let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+            let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
+            let http = state.http.clone();
+            let api_key = resend.api_key.clone();
+            let from = resend.from.clone();
+            let to_addr = row.email.clone();
+            let uname = username.clone();
+            let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
+            tokio::spawn(async move {
+                if let Err(e) = crate::email::send_confirmation(
+                    &http, &api_key, &from, &to_addr, &uname, &confirm_url, &locale_str,
+                ).await {
+                    tracing::error!(error = %e, "failed to resend confirmation email");
+                }
+            });
+            let app_id = extract_app_from_bearer(&state, &req_headers).await;
+            let token_str = api_generate_token();
+            sqlx::query!(
+                r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
+                   VALUES ($1, $2, $3, 'profile')"#,
+                app_id, row.account_id, token_str,
+            ).execute(&state.db).await?;
+            return Ok(Json(super::types::Token {
+                access_token: token_str,
+                token_type: "Bearer".to_string(),
+                scope: "profile".to_string(),
+                created_at: chrono::Utc::now().timestamp(),
+            }));
+        }
         return Err(AppError::Unprocessable("Email is already taken".into()));
     }
 
@@ -386,8 +423,9 @@ pub async fn api_create_account(
         let from = resend.from.clone();
         let to = email.clone();
         let uname = username.clone();
+        let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
         tokio::spawn(async move {
-            if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, &confirm_url).await {
+            if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, &confirm_url, &locale_str).await {
                 tracing::error!(error = %e, "failed to send confirmation email");
             }
         });

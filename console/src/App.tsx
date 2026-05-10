@@ -3,6 +3,7 @@ import { ConsoleLayout } from './components/ConsoleLayout'
 import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
 import { Signup } from './pages/Signup'
+import { ConfirmAccount } from './pages/ConfirmAccount'
 import { Dashboard } from './pages/Dashboard'
 import { NewInstance } from './pages/NewInstance'
 import { InstanceDetail } from './pages/InstanceDetail'
@@ -20,6 +21,7 @@ export default function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/confirm-account" element={<ConfirmAccount />} />
       <Route
         path="/*"
         element={
