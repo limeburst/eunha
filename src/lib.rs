@@ -56,6 +56,7 @@ pub fn build_app(state: state::AppState) -> Router {
         .merge(compressed)
         // Streaming WebSocket must be outside CompressionLayer to avoid body wrapping.
         .merge(api::mastodon::streaming_router())
+        .layer(axum_middleware::from_fn(middleware::log_failures))
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::authenticate))
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::resolve_instance))
         .layer(CorsLayer::permissive())

@@ -105,6 +105,51 @@ pub async fn authenticate(
     next.run(req).await
 }
 
+/// Log failed requests (4xx/5xx) with method, path, and request body preview.
+/// Skips body buffering for multipart uploads to avoid memory pressure.
+pub async fn log_failures(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let content_type = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+
+    let is_text = content_type.contains("json") || content_type.contains("x-www-form-urlencoded");
+    let is_multipart = content_type.contains("multipart");
+
+    let (parts, body) = req.into_parts();
+    let (body_preview, rebuilt) = if is_text && !is_multipart {
+        match axum::body::to_bytes(body, 4096).await {
+            Ok(bytes) => {
+                let preview = String::from_utf8_lossy(&bytes).into_owned();
+                let new_body = axum::body::Body::from(bytes);
+                (Some(preview), Request::from_parts(parts, new_body))
+            }
+            Err(_) => (None, Request::from_parts(parts, axum::body::Body::empty())),
+        }
+    } else {
+        (None, Request::from_parts(parts, body))
+    };
+
+    let response = next.run(rebuilt).await;
+    let status = response.status();
+
+    if status.is_client_error() || status.is_server_error() {
+        tracing::warn!(
+            method = %method,
+            path = %path,
+            status = %status,
+            body = body_preview.as_deref().unwrap_or(""),
+            "request failed",
+        );
+    }
+
+    response
+}
+
 fn unknown_host_page(host: &str) -> impl IntoResponse {
     let html = templates::render("unknown_host.html", minijinja::context! { host });
     (StatusCode::NOT_FOUND, Html(html))
