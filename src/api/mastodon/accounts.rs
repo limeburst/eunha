@@ -124,6 +124,7 @@ pub async fn get_account_statuses(
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<impl IntoResponse> {
     let account = fetch_account(&state, id).await?;
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
     if q.pinned == Some(true) {
         let pinned_statuses = sqlx::query_as!(
@@ -136,11 +137,21 @@ pub async fn get_account_statuses(
         )
         .fetch_all(&state.db)
         .await?;
+        let pin_ids: Vec<i64> = pinned_statuses.iter()
+            .map(|s| s.reblog_of_id.unwrap_or(s.id))
+            .collect();
+        let pin_ctxs = if let Some(vid) = viewer_id {
+            super::statuses::batch_viewer_contexts(&state, vid, &pin_ids).await?
+        } else {
+            std::collections::HashMap::new()
+        };
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = fetch_status_media(&state, s.id).await?;
             let reblog = fetch_reblog_data(&state, s).await?;
-            let mut api_status = status_from_db(s, &account, media, reblog, None);
+            let effective_id = s.reblog_of_id.unwrap_or(s.id);
+            let ctx = pin_ctxs.get(&effective_id).cloned();
+            let mut api_status = status_from_db(s, &account, media, reblog, ctx);
             api_status.pinned = Some(true);
             result.push(api_status);
         }
@@ -151,7 +162,6 @@ pub async fn get_account_statuses(
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     let is_self = viewer_id == Some(account.id);
     let is_follower = if !is_self {
         if let Some(vid) = viewer_id {
@@ -202,11 +212,22 @@ pub async fn get_account_statuses(
     .fetch_all(&state.db)
     .await?;
 
+    let effective_ids: Vec<i64> = statuses.iter()
+        .map(|s| s.reblog_of_id.unwrap_or(s.id))
+        .collect();
+    let ctxs = if let Some(vid) = viewer_id {
+        super::statuses::batch_viewer_contexts(&state, vid, &effective_ids).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
         let media = fetch_status_media(&state, s.id).await?;
         let reblog = fetch_reblog_data(&state, s).await?;
-        result.push(status_from_db(s, &account, media, reblog, None));
+        let effective_id = s.reblog_of_id.unwrap_or(s.id);
+        let ctx = ctxs.get(&effective_id).cloned();
+        result.push(status_from_db(s, &account, media, reblog, ctx));
     }
 
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {

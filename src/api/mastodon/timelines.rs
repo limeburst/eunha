@@ -203,8 +203,19 @@ pub async fn tag_timeline(
 async fn build_status_list(
     state: &AppState,
     statuses: Vec<DbStatus>,
-    _viewer_id: Option<uuid::Uuid>,
+    viewer_id: Option<uuid::Uuid>,
 ) -> AppResult<Vec<Status>> {
+    // For reblogs, check viewer context against the original status.
+    let effective_ids: Vec<i64> = statuses.iter()
+        .map(|s| s.reblog_of_id.unwrap_or(s.id))
+        .collect();
+
+    let ctxs = if let Some(vid) = viewer_id {
+        super::statuses::batch_viewer_contexts(state, vid, &effective_ids).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
         let account = sqlx::query_as!(
@@ -216,7 +227,9 @@ async fn build_status_list(
         .await?;
         let media = fetch_status_media(state, s.id).await?;
         let reblog = fetch_reblog_data(state, s).await?;
-        result.push(status_from_db(s, &account, media, reblog, None));
+        let effective_id = s.reblog_of_id.unwrap_or(s.id);
+        let ctx = ctxs.get(&effective_id).cloned();
+        result.push(status_from_db(s, &account, media, reblog, ctx));
     }
     Ok(result)
 }

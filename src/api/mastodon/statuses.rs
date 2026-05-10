@@ -753,6 +753,79 @@ async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
         .ok_or(AppError::NotFound)
 }
 
+/// Batch-fetch viewer context for a list of status IDs in 5 queries.
+/// Returns a map from status_id → StatusViewerContext.
+pub(super) async fn batch_viewer_contexts(
+    state: &AppState,
+    viewer_id: Uuid,
+    status_ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, super::convert::StatusViewerContext>> {
+    use std::collections::{HashMap, HashSet};
+    use super::convert::StatusViewerContext;
+
+    if status_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let fav_set: HashSet<i64> = sqlx::query_scalar!(
+        "SELECT status_id FROM favourites WHERE account_id = $1 AND status_id = ANY($2::bigint[])",
+        viewer_id, status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let reb_set: HashSet<i64> = sqlx::query_scalar!(
+        r#"SELECT reblog_of_id as "reblog_of_id!: i64" FROM statuses
+           WHERE account_id = $1 AND reblog_of_id = ANY($2::bigint[]) AND deleted_at IS NULL"#,
+        viewer_id, status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let book_set: HashSet<i64> = sqlx::query_scalar!(
+        "SELECT status_id FROM bookmarks WHERE account_id = $1 AND status_id = ANY($2::bigint[])",
+        viewer_id, status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let mute_set: HashSet<i64> = sqlx::query_scalar!(
+        "SELECT status_id FROM conversation_mutes WHERE account_id = $1 AND status_id = ANY($2::bigint[])",
+        viewer_id, status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let pin_set: HashSet<i64> = sqlx::query_scalar!(
+        "SELECT status_id FROM status_pins WHERE account_id = $1 AND status_id = ANY($2::bigint[])",
+        viewer_id, status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let mut result = HashMap::with_capacity(status_ids.len());
+    for &id in status_ids {
+        result.insert(id, StatusViewerContext {
+            favourited: fav_set.contains(&id),
+            reblogged: reb_set.contains(&id),
+            bookmarked: book_set.contains(&id),
+            muted: mute_set.contains(&id),
+            pinned: pin_set.contains(&id),
+        });
+    }
+    Ok(result)
+}
+
 async fn build_viewer_context(
     state: &AppState,
     viewer_id: Uuid,
