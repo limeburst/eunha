@@ -111,12 +111,7 @@ pub async fn get_instance_v2(
             enabled: instance.registrations_open,
             approval_required: instance.approval_required,
             message: None,
-            url: if instance.registrations_open {
-                let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-                Some(format!("https://{}/auth/signup", domain))
-            } else {
-                None
-            },
+            url: None,
         },
         contact: InstanceContact {
             email: instance.contact_email.clone().unwrap_or_default(),
