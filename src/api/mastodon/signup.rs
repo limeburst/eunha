@@ -1,7 +1,7 @@
 use axum::{
     extract::{Extension, Form, Query, State},
     http::{header, HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Json, Response},
+    response::{Html, IntoResponse, Json, Redirect, Response},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -344,15 +344,23 @@ pub async fn api_create_account(
     let api_needs_approval = instance.approval_required && invite_id.is_none();
     let api_reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
 
+    let (confirmation_token, scopes) = if state.config.resend.is_some() {
+        (Some(api_generate_token()), "profile")
+    } else {
+        (None, "read write follow push")
+    };
+
     sqlx::query!(
         r#"INSERT INTO users
              (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id,
-              approved_at, reason)
-           VALUES ($1,$2,$3,$4,$5,now(),$6,
+              approved_at, reason, confirmation_token)
+           VALUES ($1,$2,$3,$4,$5,
+                   CASE WHEN $9::TEXT IS NULL THEN now() ELSE NULL END,
+                   $6,
                    CASE WHEN $7 THEN NULL ELSE now() END,
-                   $8)"#,
+                   $8, $9)"#,
         account_id, instance.id, email, email_normalized, password_hash, invite_id,
-        api_needs_approval, api_reason,
+        api_needs_approval, api_reason, confirmation_token,
     ).execute(&state.db).await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("user creation failed")))?;
 
@@ -364,12 +372,26 @@ pub async fn api_create_account(
     let app_id = extract_app_from_bearer(&state, &req_headers).await;
 
     let token_str = api_generate_token();
-    let scopes = "read write follow push";
     sqlx::query!(
         r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
            VALUES ($1, $2, $3, $4)"#,
         app_id, account_id, token_str, scopes,
     ).execute(&state.db).await?;
+
+    if let (Some(ref tok), Some(ref resend)) = (&confirmation_token, &state.config.resend) {
+        let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+        let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
+        let http = state.http.clone();
+        let api_key = resend.api_key.clone();
+        let from = resend.from.clone();
+        let to = email.clone();
+        let uname = username.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, &confirm_url).await {
+                tracing::error!(error = %e, "failed to send confirmation email");
+            }
+        });
+    }
 
     Ok(Json(super::types::Token {
         access_token: token_str,
@@ -378,6 +400,94 @@ pub async fn api_create_account(
         created_at: chrono::Utc::now().timestamp(),
     }))
 }
+
+// ── GET /auth/confirm ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmQuery {
+    pub token: String,
+}
+
+pub async fn confirm_email(
+    State(state): State<AppState>,
+    Query(q): Query<ConfirmQuery>,
+) -> Response {
+    let user = sqlx::query!(
+        r#"UPDATE users
+           SET confirmed_at = now(), confirmation_token = NULL
+           WHERE confirmation_token = $1 AND confirmed_at IS NULL
+           RETURNING account_id"#,
+        q.token,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(user) = user else {
+        return (StatusCode::NOT_FOUND, Html(
+            "<h1>Invalid confirmation link</h1><p>This link may have already been used or is invalid.</p>".to_string()
+        )).into_response();
+    };
+
+    // Find the profile-scope token to discover which app the user signed up with.
+    let tok = sqlx::query!(
+        r#"SELECT id, application_id FROM oauth_access_tokens
+           WHERE account_id = $1 AND scopes = 'profile' AND revoked_at IS NULL
+           ORDER BY created_at DESC LIMIT 1"#,
+        user.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(tok) = tok {
+        if let Some(app_id) = tok.application_id {
+            if let Ok(Some(app)) = sqlx::query!(
+                "SELECT redirect_uris, scopes FROM oauth_applications WHERE id = $1",
+                app_id,
+            )
+            .fetch_optional(&state.db)
+            .await
+            {
+                // Revoke the profile token — the app will get a full-scope one via the code below.
+                let _ = sqlx::query!(
+                    "UPDATE oauth_access_tokens SET revoked_at = now() WHERE id = $1",
+                    tok.id,
+                )
+                .execute(&state.db)
+                .await;
+
+                let redirect_uri = app.redirect_uris.lines().next().unwrap_or("").to_string();
+
+                if !redirect_uri.is_empty() && redirect_uri != "urn:ietf:wg:oauth:2.0:oob" {
+                    let code = api_generate_token();
+                    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
+
+                    if sqlx::query!(
+                        r#"INSERT INTO oauth_authorization_codes
+                             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+                           VALUES ($1, $2, $3, $4, $5, $6)"#,
+                        app_id, user.account_id, code, redirect_uri, app.scopes, expires_at,
+                    )
+                    .execute(&state.db)
+                    .await
+                    .is_ok()
+                    {
+                        let sep = if redirect_uri.contains('?') { '&' } else { '?' };
+                        return Redirect::to(&format!("{}{}code={}", redirect_uri, sep, code))
+                            .into_response();
+                    }
+                }
+            }
+        }
+    }
+
+    Html("<h1>Email confirmed!</h1><p>Your account is now active. You can sign in.</p>".to_string()).into_response()
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
 
 async fn extract_app_from_bearer(state: &AppState, headers: &HeaderMap) -> Option<Uuid> {
     let val = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;

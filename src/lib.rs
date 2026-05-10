@@ -4,6 +4,7 @@ pub mod console_frontend;
 pub mod crypto;
 pub mod db;
 pub mod elk;
+pub mod email;
 pub mod error;
 pub mod locale;
 pub mod media;

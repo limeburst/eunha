@@ -180,6 +180,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/accounts", post(signup::api_create_account))
         // Sign-up (server-rendered form)
         .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
+        // Email confirmation
+        .route("/auth/confirm", get(signup::confirm_email))
         // Trends — no analytics data; always empty
         .route("/api/v1/trends/statuses", get(empty_array))
         .route("/api/v1/trends/tags", get(empty_array))

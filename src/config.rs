@@ -7,6 +7,13 @@ pub struct Config {
     pub console_domain: String,
     pub media_storage: MediaStorageConfig,
     pub smtp: Option<SmtpConfig>,
+    pub resend: Option<ResendConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResendConfig {
+    pub api_key: String,
+    pub from: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
