@@ -300,11 +300,14 @@ pub async fn logout_post(
         .await;
     }
 
-    // Inline script clears all elk-* localStorage keys then redirects.
-    // Same origin guarantees access to Elk's localStorage.
+    // Clear Elk's client-side state (localStorage + IDB) then redirect to /.
+    // IDB: database "keyval-store", store "keyval", key "elk-users".
     let html = r#"<!doctype html><html><head><meta charset="utf-8"></head><body><script>
 Object.keys(localStorage).filter(k=>k.startsWith('elk-')).forEach(k=>localStorage.removeItem(k));
-location.replace('/account/login');
+var r=indexedDB.open('keyval-store');
+r.onsuccess=function(e){var t=e.target.result.transaction('keyval','readwrite');t.objectStore('keyval').delete('elk-users');t.oncomplete=go;t.onerror=go};
+r.onerror=go;
+function go(){location.replace('/')}
 </script></body></html>"#;
 
     (
