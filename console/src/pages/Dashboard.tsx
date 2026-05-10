@@ -29,6 +29,7 @@ export function Dashboard() {
   const passwordValid = (hasPassword ? current.length > 0 : true) && next.length >= 8 && next === confirm
 
   useEffect(() => {
+    getMe().then(setUser).catch(() => {})
     listInstances()
       .then(setInstances)
       .catch(() => setInstancesError('err'))

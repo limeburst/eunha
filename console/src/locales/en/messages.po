@@ -26,11 +26,11 @@ msgstr "← dashboard"
 msgid "+ Generate link"
 msgstr "+ Generate link"
 
-#: src/pages/Dashboard.tsx:84
+#: src/pages/Dashboard.tsx:85
 msgid "+ New"
 msgstr "+ New"
 
-#: src/pages/Dashboard.tsx:125
+#: src/pages/Dashboard.tsx:126
 msgid "Account"
 msgstr "Account"
 
@@ -62,13 +62,13 @@ msgstr "Applications"
 msgid "Approve"
 msgstr "Approve"
 
-#: src/pages/Dashboard.tsx:180
+#: src/pages/Dashboard.tsx:181
 #: src/pages/NewInstance.tsx:163
 msgid "At least 8 characters"
 msgstr "At least 8 characters"
 
-#: src/pages/Dashboard.tsx:151
-#: src/pages/Dashboard.tsx:204
+#: src/pages/Dashboard.tsx:152
+#: src/pages/Dashboard.tsx:205
 msgid "Change password"
 msgstr "Change password"
 
@@ -80,7 +80,7 @@ msgstr "Change password"
 msgid "Confirm account"
 msgstr "Confirm account"
 
-#: src/pages/Dashboard.tsx:183
+#: src/pages/Dashboard.tsx:184
 msgid "Confirm new password"
 msgstr "Confirm new password"
 
@@ -110,7 +110,7 @@ msgstr "Create instance"
 msgid "Create one"
 msgstr "Create one"
 
-#: src/pages/Dashboard.tsx:98
+#: src/pages/Dashboard.tsx:99
 msgid "Create your first instance"
 msgstr "Create your first instance"
 
@@ -122,11 +122,11 @@ msgstr "Creating account…"
 msgid "Creating…"
 msgstr "Creating…"
 
-#: src/pages/Dashboard.tsx:156
+#: src/pages/Dashboard.tsx:157
 msgid "Current password"
 msgstr "Current password"
 
-#: src/pages/Dashboard.tsx:56
+#: src/pages/Dashboard.tsx:57
 msgid "Current password is incorrect."
 msgstr "Current password is incorrect."
 
@@ -174,12 +174,12 @@ msgstr "error"
 msgid "Failed to create instance."
 msgstr "Failed to create instance."
 
-#: src/pages/Dashboard.tsx:89
+#: src/pages/Dashboard.tsx:90
 #: src/pages/InstanceDetail.tsx:147
 msgid "Failed to load instances."
 msgstr "Failed to load instances."
 
-#: src/pages/Dashboard.tsx:56
+#: src/pages/Dashboard.tsx:57
 msgid "Failed to save password."
 msgstr "Failed to save password."
 
@@ -211,7 +211,7 @@ msgstr "Instance"
 #~ msgid "Instance domain"
 #~ msgstr "Instance domain"
 
-#: src/pages/Dashboard.tsx:79
+#: src/pages/Dashboard.tsx:80
 msgid "Instances"
 msgstr "Instances"
 
@@ -231,11 +231,11 @@ msgstr "Invalid email or password."
 msgid "Invites"
 msgstr "Invites"
 
-#: src/pages/Dashboard.tsx:131
+#: src/pages/Dashboard.tsx:132
 msgid "Language"
 msgstr "Language"
 
-#: src/pages/Dashboard.tsx:88
+#: src/pages/Dashboard.tsx:89
 #: src/pages/InstanceDetail.tsx:140
 msgid "Loading…"
 msgstr "Loading…"
@@ -260,7 +260,7 @@ msgstr "my-instance"
 msgid "New instance"
 msgstr "New instance"
 
-#: src/pages/Dashboard.tsx:169
+#: src/pages/Dashboard.tsx:170
 msgid "New password"
 msgstr "New password"
 
@@ -272,7 +272,7 @@ msgstr "New sign-ups must be approved before they can log in"
 msgid "No account?"
 msgstr "No account?"
 
-#: src/pages/Dashboard.tsx:93
+#: src/pages/Dashboard.tsx:94
 msgid "No instances yet."
 msgstr "No instances yet."
 
@@ -292,7 +292,7 @@ msgstr "Not found."
 msgid "Open registrations"
 msgstr "Open registrations"
 
-#: src/pages/Dashboard.tsx:169
+#: src/pages/Dashboard.tsx:170
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
 msgid "Password"
@@ -302,11 +302,11 @@ msgstr "Password"
 #~ msgid "Password changed."
 #~ msgstr "Password changed."
 
-#: src/pages/Dashboard.tsx:45
+#: src/pages/Dashboard.tsx:46
 msgid "Password saved."
 msgstr "Password saved."
 
-#: src/pages/Dashboard.tsx:192
+#: src/pages/Dashboard.tsx:193
 msgid "Passwords do not match."
 msgstr "Passwords do not match."
 
@@ -338,18 +338,18 @@ msgstr "Save"
 msgid "Saved."
 msgstr "Saved."
 
-#: src/pages/Dashboard.tsx:203
+#: src/pages/Dashboard.tsx:204
 #: src/pages/InstanceDetail.tsx:209
 msgid "Saving…"
 msgstr "Saving…"
 
-#: src/pages/Dashboard.tsx:69
+#: src/pages/Dashboard.tsx:70
 msgid "Set a password to enable email + password login."
 msgstr "Set a password to enable email + password login."
 
-#: src/pages/Dashboard.tsx:71
-#: src/pages/Dashboard.tsx:151
-#: src/pages/Dashboard.tsx:204
+#: src/pages/Dashboard.tsx:72
+#: src/pages/Dashboard.tsx:152
+#: src/pages/Dashboard.tsx:205
 msgid "Set password"
 msgstr "Set password"
 
