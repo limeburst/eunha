@@ -18,6 +18,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/console/auth/signup", post(auth::signup))
         .route("/api/console/auth/login", post(auth::login))
+        .route("/api/console/auth/confirm", get(auth::confirm))
         .route("/api/console/auth/me", get(auth::me))
         .route("/api/console/auth/password", patch(auth::change_password))
         .route("/api/console/auth/locale", patch(auth::update_locale))

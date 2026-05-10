@@ -1,4 +1,9 @@
-use axum::{extract::State, Json};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -15,9 +20,10 @@ pub struct AuthRequest {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AuthResponse {
-    pub token: String,
-    pub user: UserResponse,
+#[serde(untagged)]
+pub enum AuthResponse {
+    Confirmed { token: String, user: UserResponse },
+    NeedsConfirmation { needs_confirmation: bool },
 }
 
 #[derive(Debug, Serialize)]
@@ -63,10 +69,46 @@ pub async fn signup(
 
     let password_hash = hash_password(&body.password)?;
 
+    if let Some(ref resend) = state.config.resend {
+        let confirmation_token = generate_token(64);
+        let user = sqlx::query_as!(
+            ConsoleUser,
+            r#"INSERT INTO console_users (email, email_normalized, password_hash, confirmation_token)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *"#,
+            email,
+            email_normalized,
+            password_hash,
+            confirmation_token,
+        )
+        .fetch_one(&state.db)
+        .await?;
+
+        let confirm_url = format!(
+            "https://{}/api/console/auth/confirm?token={}",
+            state.config.console_domain, confirmation_token
+        );
+        let http = state.http.clone();
+        let api_key = resend.api_key.clone();
+        let from = resend.from.clone();
+        let to = user.email.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::email::send_confirmation(
+                &http, &api_key, &from, &to, &to, &confirm_url,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "failed to send console confirmation email");
+            }
+        });
+
+        return Ok(Json(AuthResponse::NeedsConfirmation { needs_confirmation: true }));
+    }
+
     let user = sqlx::query_as!(
         ConsoleUser,
-        r#"INSERT INTO console_users (email, email_normalized, password_hash)
-           VALUES ($1, $2, $3)
+        r#"INSERT INTO console_users (email, email_normalized, password_hash, confirmed_at)
+           VALUES ($1, $2, $3, now())
            RETURNING *"#,
         email,
         email_normalized,
@@ -76,7 +118,7 @@ pub async fn signup(
     .await?;
 
     let token = issue_session(&state, user.id).await?;
-    Ok(Json(AuthResponse { token, user: UserResponse::from(&user) }))
+    Ok(Json(AuthResponse::Confirmed { token, user: UserResponse::from(&user) }))
 }
 
 pub async fn login(
@@ -87,7 +129,7 @@ pub async fn login(
 
     let user = sqlx::query_as!(
         ConsoleUser,
-        "SELECT * FROM console_users WHERE email_normalized = $1",
+        "SELECT * FROM console_users WHERE email_normalized = $1 AND confirmed_at IS NOT NULL",
         email_normalized,
     )
     .fetch_optional(&state.db)
@@ -97,7 +139,66 @@ pub async fn login(
     verify_password(&body.password, &user.password_hash)?;
 
     let token = issue_session(&state, user.id).await?;
-    Ok(Json(AuthResponse { token, user: UserResponse::from(&user) }))
+    Ok(Json(AuthResponse::Confirmed { token, user: UserResponse::from(&user) }))
+}
+
+// ── GET /api/console/auth/confirm ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmQuery {
+    pub token: String,
+}
+
+pub async fn confirm(
+    State(state): State<AppState>,
+    Query(q): Query<ConfirmQuery>,
+) -> Response {
+    let user = sqlx::query_as!(
+        ConsoleUser,
+        r#"UPDATE console_users
+           SET confirmed_at = now(), confirmation_token = NULL
+           WHERE confirmation_token = $1 AND confirmed_at IS NULL
+           RETURNING *"#,
+        q.token,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(user) = user else {
+        return (
+            StatusCode::NOT_FOUND,
+            Html("<h1>Invalid confirmation link</h1><p>This link may have already been used or is invalid.</p>".to_string()),
+        )
+            .into_response();
+    };
+
+    let token = match issue_session(&state, user.id).await {
+        Ok(t) => t,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Session creation failed").into_response();
+        }
+    };
+
+    let user_json = serde_json::to_string(&UserResponse::from(&user)).unwrap_or_default();
+    let escaped_user = user_json.replace('\\', "\\\\").replace('\'', "\\'");
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><title>Email confirmed</title></head>
+<body>
+<p>Confirming your account…</p>
+<script>
+  localStorage.setItem('console_token', '{token}');
+  localStorage.setItem('console_user', '{escaped_user}');
+  window.location.replace('/');
+</script>
+</body>
+</html>"#
+    );
+    Html(html).into_response()
 }
 
 pub async fn me(ConsoleAuth(user): ConsoleAuth) -> AppResult<Json<UserResponse>> {

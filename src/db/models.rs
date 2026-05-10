@@ -27,6 +27,8 @@ pub struct ConsoleUser {
     pub email_normalized: String,
     pub password_hash: String,
     pub locale: String,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub confirmation_token: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -46,11 +46,11 @@ msgstr "새 사용자 가입 허용"
 #~ msgid "Already a member of an instance?"
 #~ msgstr "이미 인스턴스 멤버이신가요?"
 
-#: src/pages/Signup.tsx:76
+#: src/pages/Signup.tsx:93
 msgid "Already have an account?"
 msgstr "이미 계정이 있으신가요?"
 
-#: src/pages/Signup.tsx:32
+#: src/pages/Signup.tsx:37
 msgid "An account with that email already exists."
 msgstr "이미 등록된 이메일입니다."
 
@@ -64,7 +64,7 @@ msgstr "승인"
 
 #: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
-#: src/pages/Signup.tsx:68
+#: src/pages/Signup.tsx:85
 msgid "At least 8 characters"
 msgstr "8자 이상"
 
@@ -78,8 +78,9 @@ msgid "Confirm new password"
 msgstr "새 비밀번호 확인"
 
 #: src/pages/Landing.tsx:20
-#: src/pages/Signup.tsx:43
-#: src/pages/Signup.tsx:72
+#: src/pages/Signup.tsx:49
+#: src/pages/Signup.tsx:60
+#: src/pages/Signup.tsx:89
 msgid "Create account"
 msgstr "계정 만들기"
 
@@ -95,7 +96,7 @@ msgstr "만들기"
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
 
-#: src/pages/Signup.tsx:72
+#: src/pages/Signup.tsx:89
 msgid "Creating account…"
 msgstr "계정 생성 중…"
 
@@ -139,7 +140,7 @@ msgstr "도메인"
 
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
-#: src/pages/Signup.tsx:46
+#: src/pages/Signup.tsx:63
 msgid "Email"
 msgstr "이메일"
 
@@ -267,7 +268,7 @@ msgstr "공개 가입"
 
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
-#: src/pages/Signup.tsx:58
+#: src/pages/Signup.tsx:75
 msgid "Password"
 msgstr "비밀번호"
 
@@ -319,7 +320,7 @@ msgstr "설정"
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
-#: src/pages/Signup.tsx:77
+#: src/pages/Signup.tsx:94
 msgid "Sign in"
 msgstr "로그인"
 
@@ -335,7 +336,7 @@ msgstr "로그인"
 msgid "Sign out"
 msgstr "로그아웃"
 
-#: src/pages/Signup.tsx:33
+#: src/pages/Signup.tsx:38
 msgid "Sign up failed. Please try again."
 msgstr "가입에 실패했습니다. 다시 시도해 주세요."
 
@@ -375,6 +376,6 @@ msgid "Username"
 msgstr "사용자 이름"
 
 #: src/pages/Login.tsx:48
-#: src/pages/Signup.tsx:51
+#: src/pages/Signup.tsx:68
 msgid "you@example.com"
-msgstr "이메일@예시.com"
+msgstr "you@example.com"

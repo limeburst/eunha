@@ -46,11 +46,11 @@ msgstr "Allow new users to sign up"
 #~ msgid "Already a member of an instance?"
 #~ msgstr "Already a member of an instance?"
 
-#: src/pages/Signup.tsx:76
+#: src/pages/Signup.tsx:93
 msgid "Already have an account?"
 msgstr "Already have an account?"
 
-#: src/pages/Signup.tsx:32
+#: src/pages/Signup.tsx:37
 msgid "An account with that email already exists."
 msgstr "An account with that email already exists."
 
@@ -64,7 +64,7 @@ msgstr "Approve"
 
 #: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
-#: src/pages/Signup.tsx:68
+#: src/pages/Signup.tsx:85
 msgid "At least 8 characters"
 msgstr "At least 8 characters"
 
@@ -78,8 +78,9 @@ msgid "Confirm new password"
 msgstr "Confirm new password"
 
 #: src/pages/Landing.tsx:20
-#: src/pages/Signup.tsx:43
-#: src/pages/Signup.tsx:72
+#: src/pages/Signup.tsx:49
+#: src/pages/Signup.tsx:60
+#: src/pages/Signup.tsx:89
 msgid "Create account"
 msgstr "Create account"
 
@@ -95,7 +96,7 @@ msgstr "Create one"
 msgid "Create your first instance"
 msgstr "Create your first instance"
 
-#: src/pages/Signup.tsx:72
+#: src/pages/Signup.tsx:89
 msgid "Creating account…"
 msgstr "Creating account…"
 
@@ -139,7 +140,7 @@ msgstr "Domain"
 
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
-#: src/pages/Signup.tsx:46
+#: src/pages/Signup.tsx:63
 msgid "Email"
 msgstr "Email"
 
@@ -267,7 +268,7 @@ msgstr "Open registrations"
 
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
-#: src/pages/Signup.tsx:58
+#: src/pages/Signup.tsx:75
 msgid "Password"
 msgstr "Password"
 
@@ -319,7 +320,7 @@ msgstr "Settings"
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
-#: src/pages/Signup.tsx:77
+#: src/pages/Signup.tsx:94
 msgid "Sign in"
 msgstr "Sign in"
 
@@ -335,7 +336,7 @@ msgstr "Sign in"
 msgid "Sign out"
 msgstr "Sign out"
 
-#: src/pages/Signup.tsx:33
+#: src/pages/Signup.tsx:38
 msgid "Sign up failed. Please try again."
 msgstr "Sign up failed. Please try again."
 
@@ -372,6 +373,6 @@ msgid "Username"
 msgstr "Username"
 
 #: src/pages/Login.tsx:48
-#: src/pages/Signup.tsx:51
+#: src/pages/Signup.tsx:68
 msgid "you@example.com"
 msgstr "you@example.com"

@@ -12,6 +12,7 @@ export function Signup() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [needsConfirmation, setNeedsConfirmation] = useState(false)
   const { setAuth } = useAuthStore()
   const { locale, setLocale } = useLocaleStore()
   const navigate = useNavigate()
@@ -22,10 +23,14 @@ export function Signup() {
     setLoading(true)
     setError(null)
     try {
-      const { token, user } = await signup(email, password)
-      setAuth(token, user)
-      setLocale(locale)  // persist browser-detected locale to server
-      navigate('/dashboard')
+      const result = await signup(email, password)
+      if ('needs_confirmation' in result && result.needs_confirmation) {
+        setNeedsConfirmation(true)
+      } else if ('token' in result && 'user' in result) {
+        setAuth(result.token, result.user)
+        setLocale(locale)
+        navigate('/dashboard')
+      }
     } catch (err) {
       setError(
         err instanceof Error && err.message.includes('409')
@@ -35,6 +40,18 @@ export function Signup() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (needsConfirmation) {
+    return (
+      <div className="min-h-screen bg-bg text-text">
+        <main className="max-w-md mx-auto px-4 flex flex-col justify-center min-h-screen py-12">
+          <h1 className="text-xs uppercase tracking-widest text-muted mb-4"><Trans>Create account</Trans></h1>
+          <p className="text-sm text-text mb-2">Check your email to confirm your account.</p>
+          <p className="text-xs text-muted">We sent a confirmation link to <strong>{email}</strong>. Click the link in the email to activate your account.</p>
+        </main>
+      </div>
+    )
   }
 
   return (
