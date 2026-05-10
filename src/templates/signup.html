@@ -60,7 +60,7 @@ button:hover{background:#fff}
     <label for="reason">{{ t_reason }}</label>
     <textarea id="reason" name="reason" required placeholder="{{ t_reason_hint }}"></textarea>
     {% endif %}
-    <button type="submit">{{ t_create_account }}</button>
+    <button type="submit">{% if approval_required and not invite %}{{ t_apply_for_account }}{% else %}{{ t_create_account }}{% endif %}</button>
   </form>
   <p class="footer">{{ t_already_account }} <a href="/auth/sign_in">{{ t_sign_in }}</a></p>
   {% else %}

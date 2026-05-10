@@ -129,6 +129,8 @@ impl Locale {
             (Self::Ko, "reason_hint")        => "간단히 소개해 주세요.",
             (Self::En, "pending_approval")   => "Your account is pending approval. You will be notified once approved.",
             (Self::Ko, "pending_approval")   => "계정 승인 대기 중입니다. 승인되면 알려드리겠습니다.",
+            (Self::En, "apply_for_account")  => "Apply for an account",
+            (Self::Ko, "apply_for_account")  => "계정 신청하기",
             // fallback
             _ => "",
         }
