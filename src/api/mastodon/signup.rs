@@ -332,7 +332,7 @@ pub async fn api_create_account(
             let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
             tokio::spawn(async move {
                 if let Err(e) = crate::email::send_confirmation(
-                    &http, &api_key, &from, &to_addr, &uname, &confirm_url, &locale_str,
+                    &http, &api_key, &from, &to_addr, &uname, "", &confirm_url, &locale_str,
                 ).await {
                     tracing::error!(error = %e, "failed to resend confirmation email");
                 }
@@ -425,7 +425,7 @@ pub async fn api_create_account(
         let uname = username.clone();
         let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
         tokio::spawn(async move {
-            if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, &confirm_url, &locale_str).await {
+            if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, "", &confirm_url, &locale_str).await {
                 tracing::error!(error = %e, "failed to send confirmation email");
             }
         });

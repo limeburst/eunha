@@ -34,7 +34,7 @@ export function Signup() {
         <main className="max-w-md mx-auto px-4 flex flex-col justify-center min-h-screen py-12">
           <h1 className="text-xs uppercase tracking-widest text-muted mb-4"><Trans>Create account</Trans></h1>
           <p className="text-sm text-text mb-2"><Trans>Check your email to confirm your account.</Trans></p>
-          <p className="text-xs text-muted"><Trans>We sent a confirmation link to <strong>{email}</strong>. Click the link in the email to activate your account.</Trans></p>
+          <p className="text-xs text-muted"><Trans>We sent a 6-digit code and a confirmation link to <strong>{email}</strong>. Enter the code at <a href="/confirm-account" className="underline">/confirm-account</a> or click the link in the email.</Trans></p>
         </main>
       </div>
     )

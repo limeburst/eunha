@@ -9,7 +9,7 @@ import { confirmAccount } from '../api/endpoints'
 export function ConfirmAccount() {
   useLingui()
   const [searchParams] = useSearchParams()
-  const token = searchParams.get('token') ?? ''
+  const [code, setCode] = useState(searchParams.get('token') ?? '')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
@@ -17,14 +17,6 @@ export function ConfirmAccount() {
   const { setAuth } = useAuthStore()
   const { locale, setLocale } = useLocaleStore()
   const navigate = useNavigate()
-
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-bg text-text flex items-center justify-center">
-        <p className="text-xs text-muted"><Trans>Invalid confirmation link.</Trans></p>
-      </div>
-    )
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -36,14 +28,14 @@ export function ConfirmAccount() {
     setLoading(true)
     setError(null)
     try {
-      const { token: sessionToken, user } = await confirmAccount(token, password)
+      const { token: sessionToken, user } = await confirmAccount(code.trim(), password)
       setAuth(sessionToken, user)
       setLocale(locale)
       navigate('/dashboard')
     } catch (err) {
       setError(
         err instanceof Error && err.message.includes('404')
-          ? t`This confirmation link is invalid or has already been used.`
+          ? t`This confirmation code is invalid or has already been used.`
           : t`Sign up failed. Please try again.`
       )
     } finally {
@@ -56,6 +48,19 @@ export function ConfirmAccount() {
       <main className="max-w-md mx-auto px-4 flex flex-col justify-center min-h-screen py-12">
         <h1 className="text-xs uppercase tracking-widest text-muted mb-8"><Trans>Set your password</Trans></h1>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs text-muted mb-1"><Trans>Confirmation code</Trans></label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="000000"
+              required
+              maxLength={6}
+              className={`${inputCls} tracking-widest text-center text-base`}
+            />
+          </div>
           <div>
             <label className="block text-xs text-muted mb-1"><Trans>Password</Trans></label>
             <input

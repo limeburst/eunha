@@ -59,7 +59,7 @@ pub async fn signup(
     let email = body.email.trim().to_string();
     let email_normalized = email.to_lowercase();
     let locale_str = body.locale.clone().unwrap_or_else(|| "en".into());
-    let confirmation_token = generate_token(64);
+    let confirmation_token = generate_confirmation_code();
 
     let existing = sqlx::query_as!(
         ConsoleUser,
@@ -107,9 +107,10 @@ pub async fn signup(
         let api_key = resend.api_key.clone();
         let from = resend.from.clone();
         let to = user.email.clone();
+        let code = confirmation_token.clone();
         tokio::spawn(async move {
             if let Err(e) = crate::email::send_confirmation(
-                &http, &api_key, &from, &to, &to, &confirm_url, &locale_str,
+                &http, &api_key, &from, &to, &to, &code, &confirm_url, &locale_str,
             )
             .await
             {
@@ -286,6 +287,11 @@ fn verify_password(password: &str, hash: &str) -> AppResult<()> {
     argon2::Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
         .map_err(|_| AppError::Unauthorized)
+}
+
+fn generate_confirmation_code() -> String {
+    use rand::Rng;
+    format!("{:06}", rand::rng().random_range(0..1_000_000u32))
 }
 
 fn generate_token(len: usize) -> String {

@@ -1,18 +1,32 @@
+/// Send an account confirmation email.
+///
+/// `code` — when non-empty, displayed prominently for manual entry (console flow).
+///          Leave empty for the Mastodon API flow where only the link is needed.
 pub async fn send_confirmation(
     http: &reqwest::Client,
     api_key: &str,
     from: &str,
     to: &str,
     name: &str,
+    code: &str,
     confirm_url: &str,
     locale: &str,
 ) -> anyhow::Result<()> {
+    let code_block = if code.is_empty() {
+        String::new()
+    } else if locale == "ko" {
+        format!("<p>인증 코드: <strong style=\"font-size:1.5em;letter-spacing:0.15em\">{code}</strong></p>")
+    } else {
+        format!("<p>Your confirmation code: <strong style=\"font-size:1.5em;letter-spacing:0.15em\">{code}</strong></p>")
+    };
+
     let (subject, body) = if locale == "ko" {
         (
             "이메일 주소를 인증해 주세요",
             format!(
                 "<p>안녕하세요 {name},</p>\
-                 <p>아래 링크를 클릭하여 이메일 주소를 인증하고 계정을 활성화해 주세요.</p>\
+                 {code_block}\
+                 <p>또는 아래 링크를 클릭하여 자동으로 인증하세요.</p>\
                  <p><a href=\"{confirm_url}\">{confirm_url}</a></p>"
             ),
         )
@@ -21,7 +35,8 @@ pub async fn send_confirmation(
             "Confirm your email address",
             format!(
                 "<p>Hi {name},</p>\
-                 <p>Click the link below to confirm your email address and activate your account.</p>\
+                 {code_block}\
+                 <p>Or click the link below to confirm automatically.</p>\
                  <p><a href=\"{confirm_url}\">{confirm_url}</a></p>"
             ),
         )
