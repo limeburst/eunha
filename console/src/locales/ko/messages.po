@@ -26,11 +26,11 @@ msgstr "← 대시보드"
 msgid "+ Generate link"
 msgstr "+ 링크 생성"
 
-#: src/pages/Dashboard.tsx:70
+#: src/pages/Dashboard.tsx:84
 msgid "+ New"
 msgstr "+ 새로 만들기"
 
-#: src/pages/Dashboard.tsx:111
+#: src/pages/Dashboard.tsx:125
 msgid "Account"
 msgstr "계정"
 
@@ -62,14 +62,13 @@ msgstr "가입 신청"
 msgid "Approve"
 msgstr "승인"
 
-#: src/pages/ConfirmAccount.tsx:80
-#: src/pages/Dashboard.tsx:162
+#: src/pages/Dashboard.tsx:180
 #: src/pages/NewInstance.tsx:163
 msgid "At least 8 characters"
 msgstr "8자 이상"
 
-#: src/pages/Dashboard.tsx:137
-#: src/pages/Dashboard.tsx:184
+#: src/pages/Dashboard.tsx:151
+#: src/pages/Dashboard.tsx:204
 msgid "Change password"
 msgstr "비밀번호 변경"
 
@@ -77,16 +76,26 @@ msgstr "비밀번호 변경"
 #~ msgid "Check your email to confirm your account."
 #~ msgstr "이메일을 확인하여 계정을 인증하세요."
 
-#: src/pages/ConfirmAccount.tsx:83
-#: src/pages/Dashboard.tsx:165
+#: src/pages/ConfirmAccount.tsx:65
+msgid "Confirm account"
+msgstr "계정 인증"
+
+#: src/pages/Dashboard.tsx:183
 msgid "Confirm new password"
 msgstr "새 비밀번호 확인"
 
-#: src/pages/ConfirmAccount.tsx:57
+#: src/pages/ConfirmAccount.tsx:48
+msgid "Confirm your account"
+msgstr "계정 인증"
+
+#: src/pages/ConfirmAccount.tsx:51
 msgid "Confirmation code"
 msgstr "인증 코드"
 
-#: src/pages/ConfirmAccount.tsx:96
+#: src/pages/ConfirmAccount.tsx:65
+msgid "Confirming…"
+msgstr "인증 중…"
+
 #: src/pages/Landing.tsx:20
 #: src/pages/Signup.tsx:34
 #: src/pages/Signup.tsx:50
@@ -101,11 +110,10 @@ msgstr "인스턴스 만들기"
 msgid "Create one"
 msgstr "만들기"
 
-#: src/pages/Dashboard.tsx:84
+#: src/pages/Dashboard.tsx:98
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
 
-#: src/pages/ConfirmAccount.tsx:96
 #: src/pages/Signup.tsx:50
 msgid "Creating account…"
 msgstr "계정 생성 중…"
@@ -114,11 +122,11 @@ msgstr "계정 생성 중…"
 msgid "Creating…"
 msgstr "생성 중…"
 
-#: src/pages/Dashboard.tsx:141
+#: src/pages/Dashboard.tsx:156
 msgid "Current password"
 msgstr "현재 비밀번호"
 
-#: src/pages/Dashboard.tsx:52
+#: src/pages/Dashboard.tsx:56
 msgid "Current password is incorrect."
 msgstr "현재 비밀번호가 올바르지 않습니다."
 
@@ -159,17 +167,21 @@ msgid "error"
 msgstr "오류"
 
 #: src/pages/Dashboard.tsx:52
-msgid "Failed to change password."
-msgstr "비밀번호 변경에 실패했습니다."
+#~ msgid "Failed to change password."
+#~ msgstr "비밀번호 변경에 실패했습니다."
 
 #: src/pages/NewInstance.tsx:53
 msgid "Failed to create instance."
 msgstr "인스턴스 생성에 실패했습니다."
 
-#: src/pages/Dashboard.tsx:75
+#: src/pages/Dashboard.tsx:89
 #: src/pages/InstanceDetail.tsx:147
 msgid "Failed to load instances."
 msgstr "인스턴스를 불러오지 못했습니다."
+
+#: src/pages/Dashboard.tsx:56
+msgid "Failed to save password."
+msgstr "비밀번호 저장에 실패했습니다."
 
 #: src/pages/InstanceDetail.tsx:62
 msgid "Failed to save."
@@ -199,7 +211,7 @@ msgstr "인스턴스"
 #~ msgid "Instance domain"
 #~ msgstr "인스턴스 도메인"
 
-#: src/pages/Dashboard.tsx:65
+#: src/pages/Dashboard.tsx:79
 msgid "Instances"
 msgstr "인스턴스"
 
@@ -219,11 +231,11 @@ msgstr "이메일 또는 비밀번호가 올바르지 않습니다."
 msgid "Invites"
 msgstr "초대"
 
-#: src/pages/Dashboard.tsx:117
+#: src/pages/Dashboard.tsx:131
 msgid "Language"
 msgstr "언어"
 
-#: src/pages/Dashboard.tsx:74
+#: src/pages/Dashboard.tsx:88
 #: src/pages/InstanceDetail.tsx:140
 msgid "Loading…"
 msgstr "불러오는 중…"
@@ -248,7 +260,7 @@ msgstr "my-instance"
 msgid "New instance"
 msgstr "새 인스턴스"
 
-#: src/pages/Dashboard.tsx:152
+#: src/pages/Dashboard.tsx:169
 msgid "New password"
 msgstr "새 비밀번호"
 
@@ -260,7 +272,7 @@ msgstr "새 가입자는 로그인 전 승인이 필요합니다"
 msgid "No account?"
 msgstr "계정이 없으신가요?"
 
-#: src/pages/Dashboard.tsx:79
+#: src/pages/Dashboard.tsx:93
 msgid "No instances yet."
 msgstr "인스턴스가 없습니다."
 
@@ -280,18 +292,21 @@ msgstr "찾을 수 없습니다."
 msgid "Open registrations"
 msgstr "공개 가입"
 
-#: src/pages/ConfirmAccount.tsx:70
+#: src/pages/Dashboard.tsx:169
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
 msgid "Password"
 msgstr "비밀번호"
 
 #: src/pages/Dashboard.tsx:44
-msgid "Password changed."
-msgstr "비밀번호가 변경되었습니다."
+#~ msgid "Password changed."
+#~ msgstr "비밀번호가 변경되었습니다."
 
-#: src/pages/ConfirmAccount.tsx:30
-#: src/pages/Dashboard.tsx:174
+#: src/pages/Dashboard.tsx:45
+msgid "Password saved."
+msgstr "비밀번호가 저장되었습니다."
+
+#: src/pages/Dashboard.tsx:192
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
 
@@ -323,14 +338,24 @@ msgstr "저장"
 msgid "Saved."
 msgstr "저장되었습니다."
 
-#: src/pages/Dashboard.tsx:184
+#: src/pages/Dashboard.tsx:203
 #: src/pages/InstanceDetail.tsx:209
 msgid "Saving…"
 msgstr "저장 중…"
 
-#: src/pages/ConfirmAccount.tsx:54
-msgid "Set your password"
+#: src/pages/Dashboard.tsx:69
+msgid "Set a password to enable email + password login."
+msgstr "이메일 + 비밀번호 로그인을 사용하려면 비밀번호를 설정하세요."
+
+#: src/pages/Dashboard.tsx:71
+#: src/pages/Dashboard.tsx:151
+#: src/pages/Dashboard.tsx:204
+msgid "Set password"
 msgstr "비밀번호 설정"
+
+#: src/pages/ConfirmAccount.tsx:54
+#~ msgid "Set your password"
+#~ msgstr "비밀번호 설정"
 
 #: src/pages/InstanceDetail.tsx:182
 msgid "Settings"
@@ -355,7 +380,7 @@ msgstr "로그인"
 msgid "Sign out"
 msgstr "로그아웃"
 
-#: src/pages/ConfirmAccount.tsx:44
+#: src/pages/ConfirmAccount.tsx:38
 #: src/pages/Signup.tsx:25
 msgid "Sign up failed. Please try again."
 msgstr "가입에 실패했습니다. 다시 시도해 주세요."
@@ -375,8 +400,8 @@ msgstr "중지됨"
 msgid "That domain is already taken."
 msgstr "이미 사용 중인 도메인입니다."
 
-#: src/pages/ConfirmAccount.tsx:26
-#: src/pages/ConfirmAccount.tsx:43
+#: src/pages/ConfirmAccount.tsx:24
+#: src/pages/ConfirmAccount.tsx:37
 msgid "This confirmation code is invalid or has already been used."
 msgstr "유효하지 않거나 이미 사용된 인증 코드입니다."
 

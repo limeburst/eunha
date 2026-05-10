@@ -30,6 +30,7 @@ pub struct UserResponse {
     pub id: String,
     pub email: String,
     pub locale: String,
+    pub has_password: bool,
     pub created_at: String,
 }
 
@@ -39,6 +40,7 @@ impl From<&ConsoleUser> for UserResponse {
             id: u.id.to_string(),
             email: u.email.clone(),
             locale: u.locale.clone(),
+            has_password: u.password_hash.is_some(),
             created_at: u.created_at.to_rfc3339(),
         }
     }
@@ -130,28 +132,20 @@ pub async fn signup(
 pub struct ConfirmRequest {
     pub token: String,
     pub request_token: uuid::Uuid,
-    pub password: String,
 }
 
 pub async fn confirm(
     State(state): State<AppState>,
     Json(body): Json<ConfirmRequest>,
 ) -> AppResult<Json<AuthResponse>> {
-    if body.password.len() < 8 {
-        return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));
-    }
-
-    let password_hash = hash_password(&body.password)?;
-
     let user = sqlx::query_as!(
         ConsoleUser,
         r#"UPDATE console_users
-           SET confirmed_at = now(), confirmation_token = NULL, password_hash = $3
+           SET confirmed_at = now(), confirmation_token = NULL
            WHERE confirmation_token = $1 AND request_token = $2 AND confirmed_at IS NULL
            RETURNING *"#,
         body.token,
         body.request_token,
-        password_hash,
     )
     .fetch_optional(&state.db)
     .await?
@@ -201,7 +195,7 @@ pub async fn me(ConsoleAuth(user): ConsoleAuth) -> AppResult<Json<UserResponse>>
 
 #[derive(Debug, Deserialize)]
 pub struct ChangePasswordRequest {
-    pub current_password: String,
+    pub current_password: Option<String>,
     pub new_password: String,
 }
 
@@ -210,8 +204,13 @@ pub async fn change_password(
     ConsoleAuth(user): ConsoleAuth,
     Json(body): Json<ChangePasswordRequest>,
 ) -> AppResult<axum::http::StatusCode> {
-    let hash = user.password_hash.as_deref().ok_or(AppError::Unauthorized)?;
-    verify_password(&body.current_password, hash)?;
+    match user.password_hash.as_deref() {
+        Some(hash) => {
+            let current = body.current_password.as_deref().ok_or(AppError::Unauthorized)?;
+            verify_password(current, hash)?;
+        }
+        None => {} // no password yet — skip verification
+    }
 
     if body.new_password.len() < 8 {
         return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));

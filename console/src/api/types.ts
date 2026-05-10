@@ -2,6 +2,7 @@ export interface User {
   id: string
   email: string
   locale: string
+  has_password: boolean
   created_at: string
 }
 

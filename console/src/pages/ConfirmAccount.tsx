@@ -11,8 +11,6 @@ export function ConfirmAccount() {
   const [searchParams] = useSearchParams()
   const [code, setCode] = useState(searchParams.get('token') ?? '')
   const requestToken = searchParams.get('request_token') ?? ''
-  const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { setAuth } = useAuthStore()
@@ -26,14 +24,10 @@ export function ConfirmAccount() {
       setError(t`This confirmation code is invalid or has already been used.`)
       return
     }
-    if (password !== confirm) {
-      setError(t`Passwords do not match.`)
-      return
-    }
     setLoading(true)
     setError(null)
     try {
-      const { token: sessionToken, user } = await confirmAccount(code.trim(), requestToken, password)
+      const { token: sessionToken, user } = await confirmAccount(code.trim(), requestToken)
       setAuth(sessionToken, user)
       setLocale(locale)
       navigate('/dashboard')
@@ -51,7 +45,7 @@ export function ConfirmAccount() {
   return (
     <div className="min-h-screen bg-bg text-text">
       <main className="max-w-md mx-auto px-4 flex flex-col justify-center min-h-screen py-12">
-        <h1 className="text-xs uppercase tracking-widest text-muted mb-8"><Trans>Set your password</Trans></h1>
+        <h1 className="text-xs uppercase tracking-widest text-muted mb-8"><Trans>Confirm your account</Trans></h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs text-muted mb-1"><Trans>Confirmation code</Trans></label>
@@ -66,34 +60,9 @@ export function ConfirmAccount() {
               className={`${inputCls} tracking-widest text-center text-base`}
             />
           </div>
-          <div>
-            <label className="block text-xs text-muted mb-1"><Trans>Password</Trans></label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-              required
-              minLength={8}
-              className={inputCls}
-            />
-            <p className="text-xs text-muted mt-1"><Trans>At least 8 characters</Trans></p>
-          </div>
-          <div>
-            <label className="block text-xs text-muted mb-1"><Trans>Confirm new password</Trans></label>
-            <input
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              autoComplete="new-password"
-              required
-              minLength={8}
-              className={inputCls}
-            />
-          </div>
           {error && <p className="text-danger text-xs">{error}</p>}
-          <button type="submit" disabled={loading} className={btnPrimary}>
-            {loading ? <Trans>Creating account…</Trans> : <Trans>Create account</Trans>}
+          <button type="submit" disabled={loading || code.length < 6} className={btnPrimary}>
+            {loading ? <Trans>Confirming…</Trans> : <Trans>Confirm account</Trans>}
           </button>
         </form>
       </main>

@@ -5,13 +5,13 @@ import { useLingui } from '@lingui/react'
 import { useAuthStore } from '../store/auth'
 import { useLocaleStore } from '../store/locale'
 import { locales, type Locale } from '../i18n'
-import { listInstances, changePassword } from '../api/endpoints'
+import { listInstances, changePassword, getMe } from '../api/endpoints'
 import type { Instance } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 
 export function Dashboard() {
   useLingui()
-  const { user } = useAuthStore()
+  const { user, setUser } = useAuthStore()
   const { locale, setLocale } = useLocaleStore()
 
   const [instances, setInstances] = useState<Instance[]>([])
@@ -24,8 +24,9 @@ export function Dashboard() {
   const [savingPassword, setSavingPassword] = useState(false)
   const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
+  const hasPassword = user?.has_password ?? true
   const mismatch = next.length > 0 && confirm.length > 0 && next !== confirm
-  const passwordValid = current.length > 0 && next.length >= 8 && next === confirm
+  const passwordValid = (hasPassword ? current.length > 0 : true) && next.length >= 8 && next === confirm
 
   useEffect(() => {
     listInstances()
@@ -40,16 +41,19 @@ export function Dashboard() {
     setSavingPassword(true)
     setPasswordMsg(null)
     try {
-      await changePassword(current, next)
-      setPasswordMsg({ ok: true, text: t`Password changed.` })
+      await changePassword(hasPassword ? current : null, next)
+      setPasswordMsg({ ok: true, text: t`Password saved.` })
       setCurrent('')
       setNext('')
       setConfirm('')
+      // Refresh user so has_password updates
+      const updated = await getMe()
+      setUser(updated)
     } catch (err) {
       const is401 = err instanceof Error && err.message.includes('401')
       setPasswordMsg({
         ok: false,
-        text: is401 ? t`Current password is incorrect.` : t`Failed to change password.`,
+        text: is401 ? t`Current password is incorrect.` : t`Failed to save password.`,
       })
     } finally {
       setSavingPassword(false)
@@ -58,6 +62,16 @@ export function Dashboard() {
 
   return (
     <div className="space-y-10">
+
+      {/* ── No-password banner ── */}
+      {!hasPassword && (
+        <div className="border border-border px-4 py-3 text-xs text-muted flex items-center justify-between gap-4">
+          <span><Trans>Set a password to enable email + password login.</Trans></span>
+          <a href="#set-password" className="text-text underline underline-offset-2 whitespace-nowrap">
+            <Trans>Set password</Trans>
+          </a>
+        </div>
+      )}
 
       {/* ── Instances ── */}
       <section className="space-y-4">
@@ -132,24 +146,28 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div id="set-password" className="space-y-4">
           <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
-            <Trans>Change password</Trans>
+            {hasPassword ? <Trans>Change password</Trans> : <Trans>Set password</Trans>}
           </p>
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
+            {hasPassword && (
+              <div>
+                <label className="block text-xs text-muted mb-1"><Trans>Current password</Trans></label>
+                <input
+                  type="password"
+                  value={current}
+                  onChange={(e) => setCurrent(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                  className={inputCls}
+                />
+              </div>
+            )}
             <div>
-              <label className="block text-xs text-muted mb-1"><Trans>Current password</Trans></label>
-              <input
-                type="password"
-                value={current}
-                onChange={(e) => setCurrent(e.target.value)}
-                autoComplete="current-password"
-                required
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-muted mb-1"><Trans>New password</Trans></label>
+              <label className="block text-xs text-muted mb-1">
+                {hasPassword ? <Trans>New password</Trans> : <Trans>Password</Trans>}
+              </label>
               <input
                 type="password"
                 value={next}
@@ -181,7 +199,9 @@ export function Dashboard() {
               disabled={!passwordValid || savingPassword}
               className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {savingPassword ? <Trans>Saving…</Trans> : <Trans>Change password</Trans>}
+              {savingPassword
+                ? <Trans>Saving…</Trans>
+                : hasPassword ? <Trans>Change password</Trans> : <Trans>Set password</Trans>}
             </button>
           </form>
         </div>

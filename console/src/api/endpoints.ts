@@ -6,8 +6,8 @@ import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite, 
 export const signup = (email: string, locale: string) =>
   api.post<{ needs_confirmation: boolean; request_token: string }>('/api/console/auth/signup', { email, locale })
 
-export const confirmAccount = (token: string, requestToken: string, password: string) =>
-  api.post<{ token: string; user: User }>('/api/console/auth/confirm', { token, request_token: requestToken, password })
+export const confirmAccount = (token: string, requestToken: string) =>
+  api.post<{ token: string; user: User }>('/api/console/auth/confirm', { token, request_token: requestToken })
 
 export const login = (email: string, password: string) =>
   api.post<{ token: string; user: User }>('/api/console/auth/login', { email, password })
@@ -15,7 +15,7 @@ export const login = (email: string, password: string) =>
 export const getMe = () =>
   api.get<User>('/api/console/auth/me')
 
-export const changePassword = (currentPassword: string, newPassword: string) =>
+export const changePassword = (currentPassword: string | null, newPassword: string) =>
   api.patch<void>('/api/console/auth/password', {
     current_password: currentPassword,
     new_password: newPassword,
