@@ -18,7 +18,7 @@ pub async fn get_instance_v1(
         short_description: instance.short_description.clone(),
         description: instance.description.clone(),
         email: instance.contact_email.clone().unwrap_or_default(),
-        version: "4.3.0+eunha".to_string(),
+        version: "0.0.1".to_string(),
         urls: InstanceV1Urls { streaming_api: streaming_url },
         stats: InstanceV1Stats {
             user_count: 0,
@@ -39,7 +39,7 @@ pub async fn get_instance_v2(
     Ok(Json(InstanceV2 {
         domain: instance.domain.clone(),
         title: instance.title.clone(),
-        version: "4.3.0+eunha".to_string(),
+        version: "0.0.1".to_string(),
         source_url: "https://github.com/limeburst/eunha".to_string(),
         description: instance.description.clone(),
         usage: InstanceUsage {
