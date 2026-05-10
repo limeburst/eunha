@@ -44,7 +44,7 @@ pub async fn signup_get(
     let accept_lang = headers.get("accept-language").and_then(|v| v.to_str().ok());
     let locale = crate::locale::Locale::detect(q.lang.as_deref(), accept_lang);
 
-    if !instance.registrations_open && !instance.approval_required {
+    if !instance.registrations_open {
         if invite.is_empty() {
             return render(&instance, &invite, false, false, None, locale);
         }
@@ -74,7 +74,7 @@ pub async fn signup_post(
                 return render(&instance, &invite, show_form, false, Some(locale.t(key)), locale);
             }
         }
-    } else if !instance.registrations_open && !instance.approval_required {
+    } else if !instance.registrations_open {
         return render(&instance, &invite, false, false, Some(locale.t("err_invite_required")), locale);
     } else {
         None
