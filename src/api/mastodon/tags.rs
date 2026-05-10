@@ -1,0 +1,112 @@
+use axum::{
+    extract::{Path, State},
+    response::Json,
+    Extension,
+};
+use crate::{
+    error::{AppError, AppResult},
+    middleware::{AuthenticatedUser, ResolvedInstance},
+    state::AppState,
+};
+use super::types::Tag;
+
+fn tag_url(domain: &str, name: &str) -> String {
+    format!("https://{domain}/tags/{name}")
+}
+
+pub async fn list_followed_tags(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<Tag>>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+
+    let rows = sqlx::query!(
+        r#"SELECT t.name
+           FROM tag_follows tf
+           JOIN tags t ON t.id = tf.tag_id
+           WHERE tf.account_id = $1
+           ORDER BY t.name"#,
+        auth.account_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let tags = rows
+        .into_iter()
+        .map(|r| Tag {
+            url: tag_url(domain, &r.name),
+            name: r.name,
+            history: vec![],
+            following: Some(true),
+        })
+        .collect();
+
+    Ok(Json(tags))
+}
+
+pub async fn follow_tag(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(name): Path<String>,
+) -> AppResult<Json<Tag>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let name = name.to_lowercase();
+
+    let tag_id = sqlx::query_scalar!(
+        "SELECT id FROM tags WHERE name = $1",
+        name,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound)?;
+
+    sqlx::query!(
+        "INSERT INTO tag_follows (account_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auth.account_id,
+        tag_id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(Tag {
+        url: tag_url(domain, &name),
+        name,
+        history: vec![],
+        following: Some(true),
+    }))
+}
+
+pub async fn unfollow_tag(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(name): Path<String>,
+) -> AppResult<Json<Tag>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let name = name.to_lowercase();
+
+    let tag_id = sqlx::query_scalar!(
+        "SELECT id FROM tags WHERE name = $1",
+        name,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound)?;
+
+    sqlx::query!(
+        "DELETE FROM tag_follows WHERE account_id = $1 AND tag_id = $2",
+        auth.account_id,
+        tag_id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(Tag {
+        url: tag_url(domain, &name),
+        name,
+        history: vec![],
+        following: Some(false),
+    }))
+}

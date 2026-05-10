@@ -896,3 +896,46 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
         note: String::new(),
     })
 }
+
+// ── GET /api/v1/suggestions ────────────────────────────────────────────────
+
+pub async fn get_suggestions(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(params): Query<PaginationParams>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    let limit = params.limit_clamped(40, 80);
+
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN follows f ON f.account_id = a.id
+           WHERE f.target_account_id = $1
+             AND f.state = 'accepted'
+             AND a.instance_id = $2
+             AND a.domain IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM follows f2
+               WHERE f2.account_id = $1 AND f2.target_account_id = a.id
+             )
+           ORDER BY f.created_at DESC
+           LIMIT $3"#,
+        auth.account_id,
+        instance.id,
+        limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
+// ── DELETE /api/v1/suggestions/:account_id ────────────────────────────────
+
+pub async fn dismiss_suggestion(
+    Extension(_auth): Extension<AuthenticatedUser>,
+    Path(_account_id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    Ok(Json(serde_json::json!({})))
+}

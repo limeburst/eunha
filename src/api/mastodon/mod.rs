@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod bookmarks;
 pub mod convert;
+pub mod emojis;
 pub mod favourites;
 pub mod instance;
 pub mod invites;
@@ -10,10 +11,12 @@ pub mod media;
 pub mod notifications;
 pub mod oauth;
 pub mod polls;
+pub mod scheduled_statuses;
 pub mod search;
 pub mod signup;
 pub mod statuses;
 pub mod streaming;
+pub mod tags;
 pub mod timelines;
 pub mod types;
 
@@ -129,6 +132,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Invites
         .route("/api/v1/invites", get(invites::list_invites).post(invites::create_invite))
         .route("/api/v1/invites/{id}", delete(invites::delete_invite))
+        // Suggestions
+        .route("/api/v1/suggestions", get(accounts::get_suggestions))
+        .route("/api/v1/suggestions/{id}", delete(accounts::dismiss_suggestion))
+        // Followed tags
+        .route("/api/v1/followed_tags", get(tags::list_followed_tags))
+        .route("/api/v1/tags/{name}/follow", post(tags::follow_tag))
+        .route("/api/v1/tags/{name}/unfollow", post(tags::unfollow_tag))
+        // Scheduled statuses
+        .route("/api/v1/scheduled_statuses", get(scheduled_statuses::list_scheduled_statuses))
         // Media — 25 MB limit matching Mastodon's default
         .route("/api/v1/media", post(media::upload_media))
         .route("/api/v2/media", post(media::upload_media))
@@ -164,16 +176,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/timelines/tag/{hashtag}", get(timelines::tag_timeline))
         // Sign-up (server-rendered form)
         .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
-        // Trends / suggestions / announcements / emojis — not yet implemented; return empty lists
+        // Trends — no analytics data; always empty
         .route("/api/v1/trends/statuses", get(empty_array))
         .route("/api/v1/trends/tags", get(empty_array))
         .route("/api/v1/trends/links", get(empty_array))
-        .route("/api/v1/custom_emojis", get(empty_array))
+        // Custom emojis (public)
+        .route("/api/v1/custom_emojis", get(emojis::list_custom_emojis))
+        // Announcements / conversations — not yet implemented
         .route("/api/v1/announcements", get(empty_array))
-        .route("/api/v1/suggestions", get(empty_array))
         .route("/api/v1/conversations", get(empty_array))
-        .route("/api/v1/followed_tags", get(empty_array))
-        .route("/api/v1/scheduled_statuses", get(empty_array))
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
         .route("/api/{server}/login", post(oauth::elk_login))
