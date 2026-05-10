@@ -226,6 +226,8 @@ pub struct InstanceRegistrations {
     pub enabled: bool,
     pub approval_required: bool,
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -98,6 +98,8 @@ pub struct User {
     pub password_hash: String,
     pub confirmed_at: Option<DateTime<Utc>>,
     pub invite_id: Option<Uuid>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -13,7 +13,7 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/InstanceDetail.tsx:227
+#: src/pages/InstanceDetail.tsx:325
 #: src/pages/NewInstance.tsx:63
 msgid "← dashboard"
 msgstr "← 대시보드"
@@ -22,7 +22,7 @@ msgstr "← 대시보드"
 #~ msgid "← instances"
 #~ msgstr "← 인스턴스"
 
-#: src/pages/InstanceDetail.tsx:179
+#: src/pages/InstanceDetail.tsx:277
 msgid "+ Generate link"
 msgstr "+ 링크 생성"
 
@@ -38,6 +38,10 @@ msgstr "계정"
 msgid "Admin account"
 msgstr "관리자 계정"
 
+#: src/pages/InstanceDetail.tsx:209
+msgid "Allow new users to sign up"
+msgstr "새 사용자 가입 허용"
+
 #: src/pages/Landing.tsx:26
 #~ msgid "Already a member of an instance?"
 #~ msgstr "이미 인스턴스 멤버이신가요?"
@@ -49,6 +53,14 @@ msgstr "이미 계정이 있으신가요?"
 #: src/pages/Signup.tsx:32
 msgid "An account with that email already exists."
 msgstr "이미 등록된 이메일입니다."
+
+#: src/pages/InstanceDetail.tsx:225
+msgid "Applications"
+msgstr "가입 신청"
+
+#: src/pages/InstanceDetail.tsx:247
+msgid "Approve"
+msgstr "승인"
 
 #: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
@@ -99,24 +111,24 @@ msgstr "현재 비밀번호"
 msgid "Current password is incorrect."
 msgstr "현재 비밀번호가 올바르지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:146
+#: src/pages/InstanceDetail.tsx:182
 #: src/pages/NewInstance.tsx:96
 msgid "Custom domain"
 msgstr "커스텀 도메인"
 
-#: src/pages/InstanceDetail.tsx:196
+#: src/pages/InstanceDetail.tsx:294
 msgid "Danger zone"
 msgstr "위험 구역"
 
-#: src/pages/InstanceDetail.tsx:216
+#: src/pages/InstanceDetail.tsx:314
 msgid "Delete instance"
 msgstr "인스턴스 삭제"
 
-#: src/pages/InstanceDetail.tsx:216
+#: src/pages/InstanceDetail.tsx:314
 msgid "Deleting…"
 msgstr "삭제 중…"
 
-#: src/pages/InstanceDetail.tsx:137
+#: src/pages/InstanceDetail.tsx:173
 #: src/pages/NewInstance.tsx:114
 msgid "Display name"
 msgstr "표시 이름"
@@ -144,11 +156,11 @@ msgid "Failed to create instance."
 msgstr "인스턴스 생성에 실패했습니다."
 
 #: src/pages/Dashboard.tsx:75
-#: src/pages/InstanceDetail.tsx:98
+#: src/pages/InstanceDetail.tsx:134
 msgid "Failed to load instances."
 msgstr "인스턴스를 불러오지 못했습니다."
 
-#: src/pages/InstanceDetail.tsx:57
+#: src/pages/InstanceDetail.tsx:61
 msgid "Failed to save."
 msgstr "저장에 실패했습니다."
 
@@ -160,7 +172,7 @@ msgstr "저장에 실패했습니다."
 msgid "fediverse instance hosting"
 msgstr "페디버스 인스턴스 호스팅"
 
-#: src/pages/InstanceDetail.tsx:179
+#: src/pages/InstanceDetail.tsx:277
 msgid "Generating…"
 msgstr "생성 중…"
 
@@ -188,7 +200,7 @@ msgstr "인스턴스"
 msgid "Invalid email or password."
 msgstr "이메일 또는 비밀번호가 올바르지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:173
+#: src/pages/InstanceDetail.tsx:271
 msgid "Invites"
 msgstr "초대"
 
@@ -197,7 +209,7 @@ msgid "Language"
 msgstr "언어"
 
 #: src/pages/Dashboard.tsx:74
-#: src/pages/InstanceDetail.tsx:91
+#: src/pages/InstanceDetail.tsx:127
 msgid "Loading…"
 msgstr "불러오는 중…"
 
@@ -225,6 +237,10 @@ msgstr "새 인스턴스"
 msgid "New password"
 msgstr "새 비밀번호"
 
+#: src/pages/InstanceDetail.tsx:215
+msgid "New sign-ups must be approved before they can log in"
+msgstr "새 가입자는 로그인 전 승인이 필요합니다"
+
 #: src/pages/Login.tsx:71
 msgid "No account?"
 msgstr "계정이 없으신가요?"
@@ -237,9 +253,17 @@ msgstr "인스턴스가 없습니다."
 msgid "No members yet."
 msgstr "아직 멤버가 없습니다."
 
-#: src/pages/InstanceDetail.tsx:98
+#: src/pages/InstanceDetail.tsx:231
+msgid "No pending applications."
+msgstr "대기 중인 신청이 없습니다."
+
+#: src/pages/InstanceDetail.tsx:134
 msgid "Not found."
 msgstr "찾을 수 없습니다."
+
+#: src/pages/InstanceDetail.tsx:208
+msgid "Open registrations"
+msgstr "공개 가입"
 
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
@@ -255,7 +279,7 @@ msgstr "비밀번호가 변경되었습니다."
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:199
+#: src/pages/InstanceDetail.tsx:297
 msgid "Permanently delete this instance and all its data."
 msgstr "이 인스턴스와 모든 데이터를 영구적으로 삭제합니다."
 
@@ -263,24 +287,32 @@ msgstr "이 인스턴스와 모든 데이터를 영구적으로 삭제합니다.
 msgid "provisioning"
 msgstr "준비 중"
 
+#: src/pages/InstanceDetail.tsx:254
+msgid "Reject"
+msgstr "거절"
+
+#: src/pages/InstanceDetail.tsx:214
+msgid "Require approval"
+msgstr "승인 필요"
+
 #: src/components/StatusBadge.tsx:9
 msgid "running"
 msgstr "실행 중"
 
-#: src/pages/InstanceDetail.tsx:160
+#: src/pages/InstanceDetail.tsx:196
 msgid "Save"
 msgstr "저장"
 
-#: src/pages/InstanceDetail.tsx:54
+#: src/pages/InstanceDetail.tsx:58
 msgid "Saved."
 msgstr "저장되었습니다."
 
 #: src/pages/Dashboard.tsx:184
-#: src/pages/InstanceDetail.tsx:160
+#: src/pages/InstanceDetail.tsx:196
 msgid "Saving…"
 msgstr "저장 중…"
 
-#: src/pages/InstanceDetail.tsx:133
+#: src/pages/InstanceDetail.tsx:169
 msgid "Settings"
 msgstr "설정"
 
@@ -322,7 +354,7 @@ msgstr "중지됨"
 msgid "That domain is already taken."
 msgstr "이미 사용 중인 도메인입니다."
 
-#: src/pages/InstanceDetail.tsx:203
+#: src/pages/InstanceDetail.tsx:301
 msgid "Type <0>{0}</0> to confirm"
 msgstr "<0>{0}</0>을(를) 입력하여 확인"
 

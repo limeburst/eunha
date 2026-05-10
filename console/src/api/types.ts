@@ -15,8 +15,18 @@ export interface Instance {
   status: InstanceStatus
   plan: string
   region: string
+  registrations_open: boolean
+  approval_required: boolean
   created_at: string
   admin_account?: string
+}
+
+export interface Application {
+  account_id: string
+  username: string
+  email: string
+  reason: string | null
+  applied_at: string
 }
 
 export interface ConsoleInvite {

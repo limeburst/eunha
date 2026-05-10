@@ -35,6 +35,18 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/console/instances/{domain}/invites",
             get(instances::invite_tree).post(instances::create_console_invite),
         )
+        .route(
+            "/api/console/instances/{domain}/applications",
+            get(instances::list_applications),
+        )
+        .route(
+            "/api/console/instances/{domain}/applications/{account_id}/approve",
+            post(instances::approve_application),
+        )
+        .route(
+            "/api/console/instances/{domain}/applications/{account_id}/reject",
+            post(instances::reject_application),
+        )
         .with_state(state)
 }
 

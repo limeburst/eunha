@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite } from './types'
+import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite, Application } from './types'
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export const getInstance = (domain: string) =>
 export const createInstance = (req: CreateInstanceRequest) =>
   api.post<Instance>('/api/console/instances', req)
 
-export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'title' | 'custom_domain'>>) =>
+export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'title' | 'custom_domain' | 'registrations_open' | 'approval_required'>>) =>
   api.patch<Instance>(`/api/console/instances/${domain}`, patch)
 
 export const deleteInstance = (domain: string) =>
@@ -43,3 +43,12 @@ export const getInviteTree = (domain: string) =>
 
 export const createConsoleInvite = (domain: string) =>
   api.post<ConsoleInvite>(`/api/console/instances/${domain}/invites`, {})
+
+export const listApplications = (domain: string) =>
+  api.get<Application[]>(`/api/console/instances/${domain}/applications`)
+
+export const approveApplication = (domain: string, accountId: string) =>
+  api.post<void>(`/api/console/instances/${domain}/applications/${accountId}/approve`, {})
+
+export const rejectApplication = (domain: string, accountId: string) =>
+  api.post<void>(`/api/console/instances/${domain}/applications/${accountId}/reject`, {})

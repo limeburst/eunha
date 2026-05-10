@@ -31,6 +31,7 @@ pub struct SignUpForm {
     password_confirmation: Option<String>,
     invite: Option<String>,
     lang: Option<String>,
+    reason: Option<String>,
 }
 
 pub async fn signup_get(
@@ -45,14 +46,14 @@ pub async fn signup_get(
 
     if !instance.registrations_open {
         if invite.is_empty() {
-            return render(&instance, &invite, false, None, locale);
+            return render(&instance, &invite, false, false, None, locale);
         }
         if let Err(msg) = validate_invite(&state, &instance, &invite).await {
-            return render(&instance, &invite, false, Some(locale.t(msg)), locale);
+            return render(&instance, &invite, false, false, Some(locale.t(msg)), locale);
         }
     }
 
-    render(&instance, &invite, true, None, locale)
+    render(&instance, &invite, true, false, None, locale)
 }
 
 pub async fn signup_post(
@@ -70,11 +71,11 @@ pub async fn signup_post(
             Ok(id) => Some(id),
             Err(key) => {
                 let show_form = instance.registrations_open;
-                return render(&instance, &invite, show_form, Some(locale.t(key)), locale);
+                return render(&instance, &invite, show_form, false, Some(locale.t(key)), locale);
             }
         }
     } else if !instance.registrations_open {
-        return render(&instance, &invite, false, Some(locale.t("err_invite_required")), locale);
+        return render(&instance, &invite, false, false, Some(locale.t("err_invite_required")), locale);
     } else {
         None
     };
@@ -92,16 +93,16 @@ pub async fn signup_post(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
-        return render(&instance, &invite, true, Some(locale.t("err_username_chars")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_username_chars")), locale);
     }
     if email.is_empty() || !email.contains('@') {
-        return render(&instance, &invite, true, Some(locale.t("err_invalid_email")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_invalid_email")), locale);
     }
     if password.len() < 8 {
-        return render(&instance, &invite, true, Some(locale.t("err_password_short")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_password_short")), locale);
     }
     if password != confirm {
-        return render(&instance, &invite, true, Some(locale.t("err_password_mismatch")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_password_mismatch")), locale);
     }
 
     let email_normalised = email.to_lowercase();
@@ -119,7 +120,7 @@ pub async fn signup_post(
     .is_some();
 
     if username_taken {
-        return render(&instance, &invite, true, Some(locale.t("err_username_taken")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_username_taken")), locale);
     }
 
     let email_taken = sqlx::query_scalar!(
@@ -134,13 +135,13 @@ pub async fn signup_post(
     .is_some();
 
     if email_taken {
-        return render(&instance, &invite, true, Some(locale.t("err_email_taken")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_email_taken")), locale);
     }
 
     // Create account
     let (private_key, public_key) = match crypto::generate_rsa_keypair() {
         Ok(kp) => kp,
-        Err(_) => return render(&instance, &invite, true, Some(locale.t("err_server")), locale),
+        Err(_) => return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale),
     };
 
     let base_url = format!("https://{}", instance.domain);
@@ -171,30 +172,39 @@ pub async fn signup_post(
 
     let account_id = match account_id {
         Ok(id) => id,
-        Err(_) => return render(&instance, &invite, true, Some(locale.t("err_server")), locale),
+        Err(_) => return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale),
     };
 
     let password_hash = match crypto::hash_password(password) {
         Ok(h) => h,
-        Err(_) => return render(&instance, &invite, true, Some(locale.t("err_server")), locale),
+        Err(_) => return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale),
     };
+
+    // Pending when approval_required and no invite was used (invites bypass approval)
+    let needs_approval = instance.approval_required && invite_id.is_none();
+    let reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
 
     let user_result = sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id)
-           VALUES ($1,$2,$3,$4,$5,now(),$6)"#,
+             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id,
+              approved_at, reason)
+           VALUES ($1,$2,$3,$4,$5,now(),$6,
+                   CASE WHEN $7 THEN NULL ELSE now() END,
+                   $8)"#,
         account_id,
         instance.id,
         email,
         email_normalised,
         password_hash,
         invite_id,
+        needs_approval,
+        reason,
     )
     .execute(&state.db)
     .await;
 
     if user_result.is_err() {
-        return render(&instance, &invite, true, Some(locale.t("err_server")), locale);
+        return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale);
     }
 
     // Increment invite uses (always, so the tree is accurate even with open registrations)
@@ -205,6 +215,10 @@ pub async fn signup_post(
         )
         .execute(&state.db)
         .await;
+    }
+
+    if needs_approval {
+        return render(&instance, &invite, false, true, None, locale);
     }
 
     // Redirect to Elk's sign-in page
@@ -327,11 +341,18 @@ pub async fn api_create_account(
     let password_hash = crypto::hash_password(password)
         .map_err(|_| AppError::Internal(anyhow::anyhow!("password hashing failed")))?;
 
+    let api_needs_approval = instance.approval_required && invite_id.is_none();
+    let api_reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+
     sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id)
-           VALUES ($1,$2,$3,$4,$5,now(),$6)"#,
+             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id,
+              approved_at, reason)
+           VALUES ($1,$2,$3,$4,$5,now(),$6,
+                   CASE WHEN $7 THEN NULL ELSE now() END,
+                   $8)"#,
         account_id, instance.id, email, email_normalized, password_hash, invite_id,
+        api_needs_approval, api_reason,
     ).execute(&state.db).await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("user creation failed")))?;
 
@@ -379,6 +400,7 @@ fn render(
     instance: &Instance,
     invite: &str,
     show_form: bool,
+    pending: bool,
     error: Option<&'static str>,
     locale: crate::locale::Locale,
 ) -> Response {
@@ -399,6 +421,8 @@ fn render(
             instance_title => &instance.title,
             instance_domain => &instance.domain,
             show_form,
+            pending,
+            approval_required => instance.approval_required,
             invite,
             error,
             lang => locale.as_str(),
@@ -414,6 +438,9 @@ fn render(
             t_registrations_closed => locale.t("registrations_closed"),
             t_invite_code => locale.t("invite_code"),
             t_continue_btn => locale.t("continue_btn"),
+            t_reason => locale.t("reason"),
+            t_reason_hint => locale.t("reason_hint"),
+            t_pending_approval => locale.t("pending_approval"),
         },
     );
     Html(html).into_response()

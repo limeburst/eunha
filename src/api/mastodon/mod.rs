@@ -132,6 +132,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Invites
         .route("/api/v1/invites", get(invites::list_invites).post(invites::create_invite))
         .route("/api/v1/invites/{id}", delete(invites::delete_invite))
+        // Email confirmation resend stub (accounts are confirmed immediately; this is a no-op)
+        .route("/api/v1/emails/confirmations", post(empty_object))
         // Suggestions
         .route("/api/v1/suggestions", get(accounts::get_suggestions))
         .route("/api/v1/suggestions/{id}", delete(accounts::dismiss_suggestion))
@@ -205,6 +207,10 @@ pub fn streaming_router() -> Router<AppState> {
 
 async fn empty_array() -> Json<[(); 0]> {
     Json([])
+}
+
+async fn empty_object() -> Json<serde_json::Value> {
+    Json(serde_json::json!({}))
 }
 
 async fn require_auth(

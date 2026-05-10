@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Trans, t } from '@lingui/macro'
 import { useLingui } from '@lingui/react'
-import { getInstance, updateInstance, deleteInstance, getInviteTree, createConsoleInvite } from '../api/endpoints'
-import type { Instance, InviteTree, ConsoleInvite } from '../api/types'
+import { getInstance, updateInstance, deleteInstance, getInviteTree, createConsoleInvite, listApplications, approveApplication, rejectApplication } from '../api/endpoints'
+import type { Instance, InviteTree, ConsoleInvite, Application } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 import { InviteListView } from '../components/InviteListView'
 
@@ -28,6 +28,9 @@ export function InstanceDetail() {
   const [creatingInvite, setCreatingInvite] = useState(false)
   const [newInvite, setNewInvite] = useState<ConsoleInvite | null>(null)
 
+  const [applications, setApplications] = useState<Application[]>([])
+  const [appActing, setAppActing] = useState<string | null>(null)
+
   useEffect(() => {
     if (!domain) return
     getInstance(domain)
@@ -35,6 +38,7 @@ export function InstanceDetail() {
       .catch(() => setError('err'))
       .finally(() => setLoading(false))
     getInviteTree(domain).then(setInviteTree).catch(() => {})
+    listApplications(domain).then(setApplications).catch(() => {})
   }, [domain])
 
   const handleSave = async (e: React.FormEvent) => {
@@ -58,6 +62,38 @@ export function InstanceDetail() {
       setSaveMsgOk(false)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleToggle = async (field: 'registrations_open' | 'approval_required', value: boolean) => {
+    if (!domain || !instance) return
+    try {
+      const updated = await updateInstance(domain, { [field]: value })
+      setInstance(updated)
+    } catch {
+      // silently ignore — the toggle will snap back on next render
+    }
+  }
+
+  const handleApprove = async (accountId: string) => {
+    if (!domain || appActing) return
+    setAppActing(accountId)
+    try {
+      await approveApplication(domain, accountId)
+      setApplications((prev) => prev.filter((a) => a.account_id !== accountId))
+    } finally {
+      setAppActing(null)
+    }
+  }
+
+  const handleReject = async (accountId: string) => {
+    if (!domain || appActing) return
+    setAppActing(accountId)
+    try {
+      await rejectApplication(domain, accountId)
+      setApplications((prev) => prev.filter((a) => a.account_id !== accountId))
+    } finally {
+      setAppActing(null)
     }
   }
 
@@ -166,7 +202,69 @@ export function InstanceDetail() {
             )}
           </div>
         </form>
+
+        <div className="space-y-2 pt-1">
+          <Toggle
+            label={t`Open registrations`}
+            description={t`Allow new users to sign up`}
+            checked={instance.registrations_open}
+            onChange={(v) => handleToggle('registrations_open', v)}
+          />
+          <Toggle
+            label={t`Require approval`}
+            description={t`New sign-ups must be approved before they can log in`}
+            checked={instance.approval_required}
+            onChange={(v) => handleToggle('approval_required', v)}
+          />
+        </div>
       </section>
+
+      {instance.approval_required && (
+        <section className="space-y-4">
+          <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
+            <Trans>Applications</Trans>
+            {applications.length > 0 && (
+              <span className="ml-2 text-text">{applications.length}</span>
+            )}
+          </p>
+          {applications.length === 0 ? (
+            <p className="text-xs text-muted"><Trans>No pending applications.</Trans></p>
+          ) : (
+            <ul className="space-y-3">
+              {applications.map((app) => (
+                <li key={app.account_id} className="border border-border p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs text-text font-mono">@{app.username}</span>
+                      <span className="text-xs text-muted ml-2">{app.email}</span>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={() => handleApprove(app.account_id)}
+                        disabled={appActing === app.account_id}
+                        className="px-2 py-1 text-xs border border-success text-success hover:bg-success/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Trans>Approve</Trans>
+                      </button>
+                      <button
+                        onClick={() => handleReject(app.account_id)}
+                        disabled={appActing === app.account_id}
+                        className="px-2 py-1 text-xs border border-danger text-danger hover:bg-danger/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Trans>Reject</Trans>
+                      </button>
+                    </div>
+                  </div>
+                  {app.reason && (
+                    <p className="text-xs text-muted border-t border-border pt-2">{app.reason}</p>
+                  )}
+                  <p className="text-xs text-muted/60">{new Date(app.applied_at).toLocaleString()}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-border pb-2">
@@ -226,6 +324,33 @@ function Back() {
     <Link to="/dashboard" className="text-xs text-muted hover:text-text transition-colors">
       <Trans>← dashboard</Trans>
     </Link>
+  )
+}
+
+function Toggle({ label, description, checked, onChange }: {
+  label: string
+  description: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 cursor-pointer py-1">
+      <div>
+        <span className="text-xs text-text">{label}</span>
+        <p className="text-xs text-muted">{description}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${checked ? 'bg-text' : 'bg-border'}`}
+      >
+        <span
+          className={`inline-block h-3.5 w-3.5 rounded-full bg-surface transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
+        />
+      </button>
+    </label>
   )
 }
 

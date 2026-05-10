@@ -22,6 +22,8 @@ pub struct InstanceResponse {
     pub status: String,
     pub plan: String,
     pub region: String,
+    pub registrations_open: bool,
+    pub approval_required: bool,
     pub created_at: String,
     pub admin_account: Option<String>,
 }
@@ -36,6 +38,8 @@ impl InstanceResponse {
             status: "running".to_string(),
             plan: "free".to_string(),
             region: "default".to_string(),
+            registrations_open: instance.registrations_open,
+            approval_required: instance.approval_required,
             created_at: instance.created_at.to_rfc3339(),
             admin_account: admin,
         }
@@ -207,6 +211,8 @@ pub struct UpdateInstanceRequest {
     /// We use a double-Option to distinguish "not provided" from "set to null".
     #[serde(default, deserialize_with = "deserialize_optional_field")]
     pub custom_domain: MaybeAbsent<Option<String>>,
+    pub registrations_open: Option<bool>,
+    pub approval_required: Option<bool>,
 }
 
 /// Represents a JSON field that may be absent vs explicitly null/present.
@@ -237,6 +243,26 @@ pub async fn update(
         sqlx::query!(
             "UPDATE instances SET title = $1, updated_at = now() WHERE id = $2",
             title.trim(),
+            instance.id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    if let Some(registrations_open) = body.registrations_open {
+        sqlx::query!(
+            "UPDATE instances SET registrations_open = $1, updated_at = now() WHERE id = $2",
+            registrations_open,
+            instance.id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    if let Some(approval_required) = body.approval_required {
+        sqlx::query!(
+            "UPDATE instances SET approval_required = $1, updated_at = now() WHERE id = $2",
+            approval_required,
             instance.id,
         )
         .execute(&state.db)
@@ -444,6 +470,105 @@ pub async fn create_console_invite(
         expires_at: row.expires_at,
         created_at: row.created_at,
     }))
+}
+
+// ── Applications ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ApplicationResponse {
+    pub account_id: String,
+    pub username: String,
+    pub email: String,
+    pub reason: Option<String>,
+    pub applied_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn list_applications(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path(domain): Path<String>,
+) -> AppResult<Json<Vec<ApplicationResponse>>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let rows = sqlx::query!(
+        r#"SELECT a.id AS account_id, a.username, u.email, u.reason, u.created_at
+           FROM users u
+           JOIN accounts a ON a.id = u.account_id
+           WHERE u.instance_id = $1
+             AND a.domain IS NULL
+             AND u.approved_at IS NULL
+           ORDER BY u.created_at ASC"#,
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let apps = rows.into_iter().map(|r| ApplicationResponse {
+        account_id: r.account_id.to_string(),
+        username: r.username,
+        email: r.email,
+        reason: r.reason,
+        applied_at: r.created_at,
+    }).collect();
+
+    Ok(Json(apps))
+}
+
+pub async fn approve_application(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path((domain, account_id)): Path<(String, Uuid)>,
+) -> AppResult<StatusCode> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let rows_affected = sqlx::query!(
+        r#"UPDATE users SET approved_at = now(), updated_at = now()
+           WHERE account_id = $1 AND instance_id = $2 AND approved_at IS NULL"#,
+        account_id,
+        instance.id,
+    )
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if rows_affected == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn reject_application(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path((domain, account_id)): Path<(String, Uuid)>,
+) -> AppResult<StatusCode> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    // Verify the account exists and is pending for this instance
+    let exists = sqlx::query_scalar!(
+        r#"SELECT 1 FROM users
+           WHERE account_id = $1 AND instance_id = $2 AND approved_at IS NULL"#,
+        account_id,
+        instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    // Delete the account (cascades to users via FK)
+    sqlx::query!(
+        "DELETE FROM accounts WHERE id = $1 AND instance_id = $2",
+        account_id,
+        instance.id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────

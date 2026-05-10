@@ -11,7 +11,9 @@ body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-heigh
 h1{font-size:1.1rem;font-weight:600;margin-bottom:.25rem}
 .sub{font-size:.8rem;color:#888;margin-bottom:1.5rem}
 label{display:block;font-size:.8rem;color:#aaa;margin-bottom:.25rem;margin-top:1rem}
-input[type=text],input[type=email],input[type=password]{width:100%;padding:.6rem .75rem;background:#111;border:1px solid #333;border-radius:4px;color:#e8e8e8;font-size:.9rem}
+input[type=text],input[type=email],input[type=password],textarea{width:100%;padding:.6rem .75rem;background:#111;border:1px solid #333;border-radius:4px;color:#e8e8e8;font-size:.9rem}
+textarea{resize:vertical;min-height:80px}
+.pending-msg{background:#1a2a1a;border:1px solid #2a5a2a;color:#8f8;padding:.75rem;border-radius:4px;font-size:.85rem;line-height:1.5}
 input:focus{outline:none;border-color:#555}
 button{margin-top:1.5rem;width:100%;padding:.7rem;background:#e8e8e8;color:#111;border:none;border-radius:4px;font-size:.9rem;font-weight:600;cursor:pointer}
 button:hover{background:#fff}
@@ -37,7 +39,9 @@ button:hover{background:#fff}
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  {% if show_form %}
+  {% if pending %}
+  <div class="pending-msg">{{ t_pending_approval }}</div>
+  {% elif show_form %}
   <form method="POST" action="/auth/signup">
     {% if invite %}<input type="hidden" name="invite" value="{{ invite }}">{% endif %}
     <input type="hidden" name="lang" value="{{ lang }}">
@@ -52,6 +56,10 @@ button:hover{background:#fff}
     <label for="password_confirmation">{{ t_confirm_password }}</label>
     <input type="password" id="password_confirmation" name="password_confirmation"
            required minlength="8" autocomplete="new-password">
+    {% if approval_required and not invite %}
+    <label for="reason">{{ t_reason }}</label>
+    <textarea id="reason" name="reason" required placeholder="{{ t_reason_hint }}"></textarea>
+    {% endif %}
     <button type="submit">{{ t_create_account }}</button>
   </form>
   <p class="footer">{{ t_already_account }} <a href="/auth/sign_in">{{ t_sign_in }}</a></p>

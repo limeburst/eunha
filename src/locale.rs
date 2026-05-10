@@ -122,6 +122,13 @@ impl Locale {
             (Self::Ko, "uninvited_members")  => "초대 없이 가입한 멤버",
             (Self::En, "expired")            => "expired",
             (Self::Ko, "expired")            => "만료됨",
+            // ── signup approval ──────────────────────────────────────────────
+            (Self::En, "reason")             => "Why do you want to join?",
+            (Self::Ko, "reason")             => "가입 이유를 알려주세요",
+            (Self::En, "reason_hint")        => "Tell us a bit about yourself.",
+            (Self::Ko, "reason_hint")        => "간단히 소개해 주세요.",
+            (Self::En, "pending_approval")   => "Your account is pending approval. You will be notified once approved.",
+            (Self::Ko, "pending_approval")   => "계정 승인 대기 중입니다. 승인되면 알려드리겠습니다.",
             // fallback
             _ => "",
         }
