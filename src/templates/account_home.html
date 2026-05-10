@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ t_account }} · {{ domain }}</title>
+<script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+<script>
+function clearElkAndGo(){
+  Object.keys(localStorage).filter(k=>k.startsWith('elk-')).forEach(k=>localStorage.removeItem(k));
+  var r=indexedDB.open('keyval-store');
+  r.onsuccess=function(e){var t=e.target.result.transaction('keyval','readwrite');t.objectStore('keyval').delete('elk-users');t.oncomplete=go;t.onerror=go};
+  r.onerror=go;
+  function go(){location.replace('/')}
+}
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh}
@@ -21,9 +31,10 @@ h1{font-size:1.4rem;font-weight:600;margin-bottom:2rem;color:#e8e8e8}
 <body>
 <div class="topbar">
   <span class="topbar-domain">{{ domain }}</span>
-  <form method="POST" action="/account/logout">
-    <button class="signout-btn" type="submit">{{ t_sign_out }}</button>
-  </form>
+  <button class="signout-btn"
+          hx-post="/account/logout"
+          hx-swap="none"
+          hx-on::after-request="clearElkAndGo()">{{ t_sign_out }}</button>
 </div>
 <div class="content">
   <h1>@{{ username }}</h1>

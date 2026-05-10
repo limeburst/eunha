@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
     Form, Router,
@@ -95,6 +95,10 @@ fn accept_language(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
 }
 
+fn is_htmx(headers: &HeaderMap) -> bool {
+    headers.get("HX-Request").and_then(|v| v.to_str().ok()) == Some("true")
+}
+
 // ── GET /account ───────────────────────────────────────────────────────────────
 
 pub async fn account_home(
@@ -166,10 +170,14 @@ pub async fn login_post(
 ) -> Response {
     let locale = Locale::detect(None, accept_language(&headers));
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let htmx = is_htmx(&headers);
 
     let email_normalized = form.email.trim().to_lowercase();
 
-    let render_error = |error: &'static str| {
+    let render_error = |error: &'static str| -> Response {
+        if htmx {
+            return Html(format!("<div class=\"error\">{error}</div>")).into_response();
+        }
         let html = templates::render(
             "account_login.html",
             minijinja::context! {
@@ -237,6 +245,15 @@ pub async fn login_post(
         }
     };
 
+    if htmx {
+        let mut h = HeaderMap::new();
+        h.insert(header::SET_COOKIE, set_cookie(&token).parse().unwrap());
+        h.insert(
+            HeaderName::from_static("hx-redirect"),
+            HeaderValue::from_static("/account"),
+        );
+        return (h, "").into_response();
+    }
     (
         [(header::SET_COOKIE, set_cookie(&token))],
         Redirect::to("/account"),
@@ -301,8 +318,12 @@ pub async fn logout_post(
         .await;
     }
 
-    // Clear Elk's client-side state (localStorage + IDB) then redirect to /.
-    // IDB: database "keyval-store", store "keyval", key "elk-users".
+    if is_htmx(&headers) {
+        // Client JS (hx-on::after-request) clears Elk IDB/localStorage and redirects.
+        return ([(header::SET_COOKIE, clear_cookie())], "").into_response();
+    }
+
+    // Non-HTMX fallback: inline JS page.
     let html = r#"<!doctype html><html><head><meta charset="utf-8"></head><body><script>
 Object.keys(localStorage).filter(k=>k.startsWith('elk-')).forEach(k=>localStorage.removeItem(k));
 var r=indexedDB.open('keyval-store');
@@ -356,7 +377,7 @@ pub async fn password_page(
             t_change_password => locale.t("change_password"),
             t_current_password => locale.t("current_password"),
             t_new_password => locale.t("new_password"),
-            t_confirm_password => locale.t("confirm_password"),
+            t_confirm_password => locale.t("confirm_new_password"),
             t_sign_out => locale.t("sign_out"),
             t_back_to_account => locale.t("back_to_account"),
             t_password_changed => locale.t("password_changed"),
@@ -382,16 +403,28 @@ pub async fn password_post(
     headers: HeaderMap,
     Form(form): Form<PasswordForm>,
 ) -> Response {
+    let locale = Locale::detect(None, accept_language(&headers));
+    let htmx = is_htmx(&headers);
+
+    macro_rules! err {
+        ($msg:expr, $url:expr) => {{
+            if htmx {
+                return Html(format!("<div class=\"error\">{}</div>", $msg)).into_response();
+            }
+            return Redirect::to($url).into_response();
+        }};
+    }
+
     let Some(session) = get_session(&headers, &state, &instance).await else {
         return Redirect::to("/account/login").into_response();
     };
 
     if form.new_password != form.new_password_confirm {
-        return Redirect::to("/account/password?mismatch=1").into_response();
+        err!(locale.t("password_mismatch"), "/account/password?mismatch=1");
     }
 
     if form.new_password.len() < 8 {
-        return Redirect::to("/account/password?err=1").into_response();
+        err!(locale.t("password_error"), "/account/password?err=1");
     }
 
     let row = match sqlx::query!(
@@ -402,16 +435,16 @@ pub async fn password_post(
     .await
     {
         Ok(r) => r,
-        Err(_) => return Redirect::to("/account/password?err=1").into_response(),
+        Err(_) => err!(locale.t("password_error"), "/account/password?err=1"),
     };
 
     if verify_password(&form.current_password, &row.password_hash).is_err() {
-        return Redirect::to("/account/password?err=1").into_response();
+        err!(locale.t("password_error"), "/account/password?err=1");
     }
 
     let new_hash = match hash_password(&form.new_password) {
         Ok(h) => h,
-        Err(_) => return Redirect::to("/account/password?err=1").into_response(),
+        Err(_) => err!(locale.t("password_error"), "/account/password?err=1"),
     };
 
     match sqlx::query!(
@@ -422,8 +455,13 @@ pub async fn password_post(
     .execute(&state.db)
     .await
     {
-        Ok(_) => Redirect::to("/account/password?ok=1").into_response(),
-        Err(_) => Redirect::to("/account/password?err=1").into_response(),
+        Ok(_) => {
+            if htmx {
+                return Html(format!("<div class=\"success\">{}</div>", locale.t("password_changed"))).into_response();
+            }
+            Redirect::to("/account/password?ok=1").into_response()
+        }
+        Err(_) => err!(locale.t("password_error"), "/account/password?err=1"),
     }
 }
 

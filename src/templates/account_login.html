@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ t_account }} · {{ domain }}</title>
+<script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center}
@@ -22,9 +23,8 @@ button:hover{background:#fff}
 <div class="card">
   <h1>{{ t_account }}</h1>
   <p class="sub">{{ domain }}</p>
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
-  <form method="POST" action="/account/login">
-    <input type="hidden" name="lang" value="{{ lang }}">
+  <div id="msg">{% if error %}<div class="error">{{ error }}</div>{% endif %}</div>
+  <form hx-post="/account/login" hx-target="#msg" hx-swap="innerHTML">
     <label for="email">{{ t_email }}</label>
     <input type="email" id="email" name="email" required autocomplete="email">
     <label for="password">{{ t_password }}</label>
