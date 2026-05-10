@@ -8,9 +8,9 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-bg text-text">
-      <main className="max-w-2xl mx-auto px-6 py-8 space-y-8">
-        <div className="flex items-center justify-between">
-          <Link to="/dashboard" className="text-xs tracking-widest uppercase text-muted hover:text-text transition-colors">
+      <header className="border-b border-border">
+        <div className="max-w-2xl mx-auto px-6 h-12 flex items-center justify-between">
+          <Link to="/dashboard" className="text-sm font-medium tracking-wide text-text hover:text-muted transition-colors">
             eunha.social
           </Link>
           {user && (
@@ -22,7 +22,8 @@ export function ConsoleLayout({ children }: { children: React.ReactNode }) {
             </button>
           )}
         </div>
-
+      </header>
+      <main className="max-w-2xl mx-auto px-6 py-8 space-y-8">
         {children}
       </main>
     </div>
