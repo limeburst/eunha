@@ -120,6 +120,7 @@ pub async fn account_home(
             t_invite_tree => locale.t("invite_tree"),
             t_change_password => locale.t("change_password"),
             t_sign_out => locale.t("sign_out"),
+            t_go_to_timeline => locale.t("go_to_timeline"),
         },
     );
     Html(html).into_response()

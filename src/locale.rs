@@ -104,6 +104,8 @@ impl Locale {
             (Self::Ko, "new_password")       => "새 비밀번호",
             (Self::En, "sign_out")           => "Sign out",
             (Self::Ko, "sign_out")           => "로그아웃",
+            (Self::En, "go_to_timeline")     => "Go to timeline",
+            (Self::Ko, "go_to_timeline")     => "타임라인으로 돌아가기",
             (Self::En, "back_to_account")    => "← Account",
             (Self::Ko, "back_to_account")    => "← 계정",
             (Self::En, "password_changed")   => "Password changed.",
