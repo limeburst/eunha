@@ -324,6 +324,7 @@ function go(){location.replace('/')}
 pub struct PasswordQuery {
     pub ok: Option<String>,
     pub err: Option<String>,
+    pub mismatch: Option<String>,
 }
 
 pub async fn password_page(
@@ -341,6 +342,7 @@ pub async fn password_page(
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
     let ok = query.ok.as_deref() == Some("1");
     let err = query.err.as_deref() == Some("1");
+    let mismatch = query.mismatch.as_deref() == Some("1");
 
     let html = templates::render(
         "account_password.html",
@@ -349,14 +351,17 @@ pub async fn password_page(
             domain,
             ok,
             err,
+            mismatch,
             t_account => locale.t("account"),
             t_change_password => locale.t("change_password"),
             t_current_password => locale.t("current_password"),
             t_new_password => locale.t("new_password"),
+            t_confirm_password => locale.t("confirm_password"),
             t_sign_out => locale.t("sign_out"),
             t_back_to_account => locale.t("back_to_account"),
             t_password_changed => locale.t("password_changed"),
             t_password_error => locale.t("password_error"),
+            t_password_mismatch => locale.t("password_mismatch"),
         },
     );
     Html(html).into_response()
@@ -368,6 +373,7 @@ pub async fn password_page(
 pub struct PasswordForm {
     pub current_password: String,
     pub new_password: String,
+    pub new_password_confirm: String,
 }
 
 pub async fn password_post(
@@ -379,6 +385,10 @@ pub async fn password_post(
     let Some(session) = get_session(&headers, &state, &instance).await else {
         return Redirect::to("/account/login").into_response();
     };
+
+    if form.new_password != form.new_password_confirm {
+        return Redirect::to("/account/password?mismatch=1").into_response();
+    }
 
     if form.new_password.len() < 8 {
         return Redirect::to("/account/password?err=1").into_response();

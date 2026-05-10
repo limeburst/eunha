@@ -1,12 +1,18 @@
 use crate::error::{AppError, AppResult};
 
 pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
-    use argon2::PasswordVerifier;
-    let parsed = argon2::PasswordHash::new(hash)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid password hash")))?;
-    argon2::Argon2::default()
-        .verify_password(password.as_bytes(), &parsed)
-        .map_err(|_| AppError::Unauthorized)
+    if hash.starts_with("$2a$") || hash.starts_with("$2b$") || hash.starts_with("$2y$") {
+        let ok = bcrypt::verify(password, hash)
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bcrypt error")))?;
+        if ok { Ok(()) } else { Err(AppError::Unauthorized) }
+    } else {
+        use argon2::PasswordVerifier;
+        let parsed = argon2::PasswordHash::new(hash)
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid password hash")))?;
+        argon2::Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .map_err(|_| AppError::Unauthorized)
+    }
 }
 
 pub fn generate_token(len: usize) -> String {
