@@ -1,13 +1,15 @@
 use axum::{
     extract::{Extension, Form, Query, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Json, Response},
 };
 use serde::Deserialize;
+use uuid::Uuid;
 
 use crate::{
     crypto,
     db::models::Instance,
+    error::{AppError, AppResult},
     middleware::ResolvedInstance,
     state::AppState,
     templates,
@@ -239,6 +241,139 @@ async fn validate_invite(
     }
     Ok(inv.id)
 }
+
+// ── POST /api/v1/accounts ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ApiCreateAccountForm {
+    pub username: String,
+    pub email: String,
+    pub password: String,
+    pub agreement: Option<bool>,
+    pub locale: Option<String>,
+    pub reason: Option<String>,
+    pub invite_code: Option<String>,
+}
+
+pub async fn api_create_account(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    req_headers: HeaderMap,
+    super::oauth::FormOrJson(form): super::oauth::FormOrJson<ApiCreateAccountForm>,
+) -> AppResult<Json<super::types::Token>> {
+    let invite_code = form.invite_code.as_deref().unwrap_or("").trim().to_string();
+    let invite_id: Option<Uuid> = if !invite_code.is_empty() {
+        Some(validate_invite(&state, &instance, &invite_code).await
+            .map_err(|_| AppError::Unprocessable("Invalid or expired invite code".into()))?)
+    } else if !instance.registrations_open {
+        return Err(AppError::Unprocessable("This instance is not open for registration".into()));
+    } else {
+        None
+    };
+
+    let username = form.username.trim().to_lowercase();
+    let email = form.email.trim().to_string();
+    let password = &form.password;
+
+    if username.is_empty() || !username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(AppError::Unprocessable("Username can only contain letters, numbers, and underscores".into()));
+    }
+    if !email.contains('@') {
+        return Err(AppError::Unprocessable("Invalid email address".into()));
+    }
+    if password.len() < 8 {
+        return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));
+    }
+
+    let email_normalized = email.to_lowercase();
+
+    let username_taken = sqlx::query_scalar!(
+        "SELECT 1 FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL",
+        username, instance.id,
+    ).fetch_optional(&state.db).await?.is_some();
+    if username_taken {
+        return Err(AppError::Unprocessable("Username is already taken".into()));
+    }
+
+    let email_taken = sqlx::query_scalar!(
+        "SELECT 1 FROM users WHERE email_normalized = $1 AND instance_id = $2",
+        email_normalized, instance.id,
+    ).fetch_optional(&state.db).await?.is_some();
+    if email_taken {
+        return Err(AppError::Unprocessable("Email is already taken".into()));
+    }
+
+    let (private_key, public_key) = crypto::generate_rsa_keypair()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("key generation failed")))?;
+
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let base_url = format!("https://{}", domain);
+    let uri = format!("https://{}/users/{}", instance.domain, username);
+    let url = format!("{}/{}", base_url, username);
+
+    let account_id = sqlx::query_scalar!(
+        r#"INSERT INTO accounts
+             (instance_id, username, url, uri, private_key, public_key,
+              inbox_url, outbox_url, shared_inbox_url)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           RETURNING id"#,
+        instance.id, username, url, uri, private_key, public_key,
+        format!("{}/inbox", uri),
+        format!("{}/outbox", uri),
+        format!("https://{}/inbox", instance.domain),
+    ).fetch_one(&state.db).await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("account creation failed")))?;
+
+    let password_hash = crypto::hash_password(password)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("password hashing failed")))?;
+
+    sqlx::query!(
+        r#"INSERT INTO users
+             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id)
+           VALUES ($1,$2,$3,$4,$5,now(),$6)"#,
+        account_id, instance.id, email, email_normalized, password_hash, invite_id,
+    ).execute(&state.db).await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("user creation failed")))?;
+
+    if let Some(id) = invite_id {
+        let _ = sqlx::query!("UPDATE invites SET uses = uses + 1 WHERE id = $1", id)
+            .execute(&state.db).await;
+    }
+
+    let app_id = extract_app_from_bearer(&state, &req_headers).await;
+
+    let token_str = api_generate_token();
+    let scopes = "read write follow push";
+    sqlx::query!(
+        r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
+           VALUES ($1, $2, $3, $4)"#,
+        app_id, account_id, token_str, scopes,
+    ).execute(&state.db).await?;
+
+    Ok(Json(super::types::Token {
+        access_token: token_str,
+        token_type: "Bearer".to_string(),
+        scope: scopes.to_string(),
+        created_at: chrono::Utc::now().timestamp(),
+    }))
+}
+
+async fn extract_app_from_bearer(state: &AppState, headers: &HeaderMap) -> Option<Uuid> {
+    let val = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    let token = val.strip_prefix("Bearer ")?.trim();
+    sqlx::query_scalar!(
+        "SELECT application_id FROM oauth_access_tokens WHERE token = $1 AND account_id IS NULL",
+        token
+    ).fetch_optional(&state.db).await.ok().flatten().flatten()
+}
+
+fn api_generate_token() -> String {
+    use rand::RngCore;
+    let mut rng = rand::rng();
+    (0..64).map(|_| format!("{:02x}", rng.next_u32() as u8)).collect()
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
 
 fn render(
     instance: &Instance,

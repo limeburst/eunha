@@ -174,6 +174,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Timelines
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
         .route("/api/v1/timelines/tag/{hashtag}", get(timelines::tag_timeline))
+        // Account registration (Mastodon C2S API)
+        .route("/api/v1/accounts", post(signup::api_create_account))
         // Sign-up (server-rendered form)
         .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
         // Trends — no analytics data; always empty

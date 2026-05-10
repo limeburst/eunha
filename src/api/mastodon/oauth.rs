@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 
 /// Extractor that accepts both JSON and form-encoded bodies.
-pub(super) struct FormOrJson<T>(T);
+pub struct FormOrJson<T>(pub T);
 
 impl<T, S> FromRequest<S> for FormOrJson<T>
 where
