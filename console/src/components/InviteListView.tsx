@@ -32,7 +32,7 @@ export function InviteListView({ members, invites }: { members: InviteTreeMember
         return (
           <div key={inv.id} className="border border-border p-2 space-y-1.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-muted flex-1 truncate">{inv.url}</span>
+              <span className="text-xs text-muted flex-1 truncate">{inv.url}</span>
               <button
                 onClick={() => copyUrl(inv.url, inv.id)}
                 className="text-xs text-muted hover:text-text transition-colors shrink-0"
@@ -42,7 +42,7 @@ export function InviteListView({ members, invites }: { members: InviteTreeMember
             </div>
             <div className="flex items-center gap-3 text-xs text-muted/60">
               {inv.created_by_username && (
-                <span>by <span className="font-mono text-muted">{inv.created_by_username}</span></span>
+                <span>by <span className="text-muted">{inv.created_by_username}</span></span>
               )}
               <span>
                 {inv.uses}{inv.max_uses != null ? `/${inv.max_uses}` : ''} used
@@ -53,7 +53,7 @@ export function InviteListView({ members, invites }: { members: InviteTreeMember
             {redeemers.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-0.5">
                 {redeemers.map((m) => (
-                  <span key={m.account_id} className="text-xs font-mono text-text bg-elevated px-1.5 py-0.5 border border-border">
+                  <span key={m.account_id} className="text-xs text-text bg-elevated px-1.5 py-0.5 border border-border">
                     {m.username}
                   </span>
                 ))}
@@ -65,7 +65,7 @@ export function InviteListView({ members, invites }: { members: InviteTreeMember
       {members.some((m) => !m.invite_id) && (
         <div className="space-y-0.5">
           {members.filter((m) => !m.invite_id).map((m) => (
-            <div key={m.account_id} className="text-xs font-mono text-muted">{m.username}</div>
+            <div key={m.account_id} className="text-xs text-muted">{m.username}</div>
           ))}
         </div>
       )}

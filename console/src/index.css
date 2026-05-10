@@ -3,15 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --color-bg:       #000000;
-  --color-surface:  #0D0D0D;
-  --color-elevated: #1A1A1A;
-  --color-border:   #2A2A2A;
-  --color-text:     #FFFFFF;
-  --color-muted:    #666666;
-  --color-accent:   #FFFFFF;
-  --color-danger:   #FF4444;
-  --color-success:  #44AA44;
+  --color-bg:       #0C0C0F;
+  --color-surface:  #141418;
+  --color-elevated: #1E1E24;
+  --color-border:   #303038;
+  --color-text:     #F0F0F2;
+  --color-muted:    #9090A8;
+  --color-accent:   #F0F0F2;
+  --color-danger:   #FF4D5E;
+  --color-success:  #3DBB6A;
 }
 
 * { box-sizing: border-box; border-radius: 0 !important; }
@@ -21,8 +21,8 @@ html, body, #root { height: 100%; }
 body {
   background-color: var(--color-bg);
   color: var(--color-text);
-  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 14px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }

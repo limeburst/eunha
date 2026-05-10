@@ -248,7 +248,7 @@ export function InstanceDetail() {
                 <li key={app.account_id} className="border border-border p-3 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <span className="text-xs text-text font-mono">@{app.username}</span>
+                      <span className="text-xs text-text font-medium">@{app.username}</span>
                       <span className="text-xs text-muted ml-2">{app.email}</span>
                     </div>
                     <div className="flex gap-2 shrink-0">
@@ -302,7 +302,7 @@ export function InstanceDetail() {
         </div>
 
         {newInvite && (
-          <div className="text-xs font-mono bg-surface border border-border px-3 py-2 text-text break-all">
+          <div className="text-xs bg-surface border border-border px-3 py-2 text-text break-all">
             {newInvite.url}
             {newInvite.max_uses != null && (
               <span className="ml-2 text-muted">({newInvite.max_uses} use{newInvite.max_uses !== 1 ? 's' : ''})</span>
@@ -324,7 +324,7 @@ export function InstanceDetail() {
         </p>
         <div className="space-y-2">
           <label className="block text-xs text-muted">
-            <Trans>Type <span className="text-text font-mono">{instance.domain}</span> to confirm</Trans>
+            <Trans>Type <span className="text-text font-semibold">{instance.domain}</span> to confirm</Trans>
           </label>
           <input
             value={deleteConfirm}
