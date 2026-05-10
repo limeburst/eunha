@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Trans, t } from '@lingui/macro'
 import { useLingui } from '@lingui/react'
 import { useLocaleStore } from '../store/locale'
@@ -10,8 +10,8 @@ export function Signup() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [sent, setSent] = useState(false)
   const { locale } = useLocaleStore()
+  const navigate = useNavigate()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -19,25 +19,13 @@ export function Signup() {
     setLoading(true)
     setError(null)
     try {
-      await signup(email, locale)
-      setSent(true)
+      const { request_token } = await signup(email, locale)
+      navigate(`/confirm-account?request_token=${request_token}`, { state: { email } })
     } catch (err) {
       setError(t`Sign up failed. Please try again.`)
     } finally {
       setLoading(false)
     }
-  }
-
-  if (sent) {
-    return (
-      <div className="min-h-screen bg-bg text-text">
-        <main className="max-w-md mx-auto px-4 flex flex-col justify-center min-h-screen py-12">
-          <h1 className="text-xs uppercase tracking-widest text-muted mb-4"><Trans>Create account</Trans></h1>
-          <p className="text-sm text-text mb-2"><Trans>Check your email to confirm your account.</Trans></p>
-          <p className="text-xs text-muted"><Trans>We sent a 6-digit code and a confirmation link to <strong>{email}</strong>. Enter the code at <a href="/confirm-account" className="underline">/confirm-account</a> or click the link in the email.</Trans></p>
-        </main>
-      </div>
-    )
   }
 
   return (

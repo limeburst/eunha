@@ -10,6 +10,7 @@ export function ConfirmAccount() {
   useLingui()
   const [searchParams] = useSearchParams()
   const [code, setCode] = useState(searchParams.get('token') ?? '')
+  const requestToken = searchParams.get('request_token') ?? ''
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
@@ -21,6 +22,10 @@ export function ConfirmAccount() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (loading) return
+    if (!requestToken) {
+      setError(t`This confirmation code is invalid or has already been used.`)
+      return
+    }
     if (password !== confirm) {
       setError(t`Passwords do not match.`)
       return
@@ -28,7 +33,7 @@ export function ConfirmAccount() {
     setLoading(true)
     setError(null)
     try {
-      const { token: sessionToken, user } = await confirmAccount(code.trim(), password)
+      const { token: sessionToken, user } = await confirmAccount(code.trim(), requestToken, password)
       setAuth(sessionToken, user)
       setLocale(locale)
       navigate('/dashboard')

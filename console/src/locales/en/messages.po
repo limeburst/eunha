@@ -46,7 +46,7 @@ msgstr "Allow new users to sign up"
 #~ msgid "Already a member of an instance?"
 #~ msgstr "Already a member of an instance?"
 
-#: src/pages/Signup.tsx:66
+#: src/pages/Signup.tsx:54
 msgid "Already have an account?"
 msgstr "Already have an account?"
 
@@ -62,7 +62,7 @@ msgstr "Applications"
 msgid "Approve"
 msgstr "Approve"
 
-#: src/pages/ConfirmAccount.tsx:75
+#: src/pages/ConfirmAccount.tsx:80
 #: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
 msgid "At least 8 characters"
@@ -74,23 +74,22 @@ msgid "Change password"
 msgstr "Change password"
 
 #: src/pages/Signup.tsx:36
-msgid "Check your email to confirm your account."
-msgstr "Check your email to confirm your account."
+#~ msgid "Check your email to confirm your account."
+#~ msgstr "Check your email to confirm your account."
 
-#: src/pages/ConfirmAccount.tsx:78
+#: src/pages/ConfirmAccount.tsx:83
 #: src/pages/Dashboard.tsx:165
 msgid "Confirm new password"
 msgstr "Confirm new password"
 
-#: src/pages/ConfirmAccount.tsx:52
+#: src/pages/ConfirmAccount.tsx:57
 msgid "Confirmation code"
 msgstr "Confirmation code"
 
-#: src/pages/ConfirmAccount.tsx:91
+#: src/pages/ConfirmAccount.tsx:96
 #: src/pages/Landing.tsx:20
-#: src/pages/Signup.tsx:35
-#: src/pages/Signup.tsx:46
-#: src/pages/Signup.tsx:62
+#: src/pages/Signup.tsx:34
+#: src/pages/Signup.tsx:50
 msgid "Create account"
 msgstr "Create account"
 
@@ -106,8 +105,8 @@ msgstr "Create one"
 msgid "Create your first instance"
 msgstr "Create your first instance"
 
-#: src/pages/ConfirmAccount.tsx:91
-#: src/pages/Signup.tsx:62
+#: src/pages/ConfirmAccount.tsx:96
+#: src/pages/Signup.tsx:50
 msgid "Creating account…"
 msgstr "Creating account…"
 
@@ -151,7 +150,7 @@ msgstr "Domain"
 
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
-#: src/pages/Signup.tsx:49
+#: src/pages/Signup.tsx:37
 msgid "Email"
 msgstr "Email"
 
@@ -281,7 +280,7 @@ msgstr "Not found."
 msgid "Open registrations"
 msgstr "Open registrations"
 
-#: src/pages/ConfirmAccount.tsx:65
+#: src/pages/ConfirmAccount.tsx:70
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
 msgid "Password"
@@ -291,7 +290,7 @@ msgstr "Password"
 msgid "Password changed."
 msgstr "Password changed."
 
-#: src/pages/ConfirmAccount.tsx:25
+#: src/pages/ConfirmAccount.tsx:30
 #: src/pages/Dashboard.tsx:174
 msgid "Passwords do not match."
 msgstr "Passwords do not match."
@@ -329,7 +328,7 @@ msgstr "Saved."
 msgid "Saving…"
 msgstr "Saving…"
 
-#: src/pages/ConfirmAccount.tsx:49
+#: src/pages/ConfirmAccount.tsx:54
 msgid "Set your password"
 msgstr "Set your password"
 
@@ -340,7 +339,7 @@ msgstr "Settings"
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
-#: src/pages/Signup.tsx:67
+#: src/pages/Signup.tsx:55
 msgid "Sign in"
 msgstr "Sign in"
 
@@ -356,7 +355,7 @@ msgstr "Sign in"
 msgid "Sign out"
 msgstr "Sign out"
 
-#: src/pages/ConfirmAccount.tsx:39
+#: src/pages/ConfirmAccount.tsx:44
 #: src/pages/Signup.tsx:25
 msgid "Sign up failed. Please try again."
 msgstr "Sign up failed. Please try again."
@@ -373,7 +372,8 @@ msgstr "stopped"
 msgid "That domain is already taken."
 msgstr "That domain is already taken."
 
-#: src/pages/ConfirmAccount.tsx:38
+#: src/pages/ConfirmAccount.tsx:26
+#: src/pages/ConfirmAccount.tsx:43
 msgid "This confirmation code is invalid or has already been used."
 msgstr "This confirmation code is invalid or has already been used."
 
@@ -402,14 +402,14 @@ msgid "Username"
 msgstr "Username"
 
 #: src/pages/Signup.tsx:37
-msgid "We sent a 6-digit code and a confirmation link to <0>{email}</0>. Enter the code at <1>/confirm-account</1> or click the link in the email."
-msgstr "We sent a 6-digit code and a confirmation link to <0>{email}</0>. Enter the code at <1>/confirm-account</1> or click the link in the email."
+#~ msgid "We sent a 6-digit code and a confirmation link to <0>{email}</0>. Enter the code at <1>/confirm-account</1> or click the link in the email."
+#~ msgstr "We sent a 6-digit code and a confirmation link to <0>{email}</0>. Enter the code at <1>/confirm-account</1> or click the link in the email."
 
 #: src/pages/Signup.tsx:37
 #~ msgid "We sent a confirmation link to <0>{email}</0>. Click the link in the email to activate your account."
 #~ msgstr "We sent a confirmation link to <0>{email}</0>. Click the link in the email to activate your account."
 
 #: src/pages/Login.tsx:48
-#: src/pages/Signup.tsx:54
+#: src/pages/Signup.tsx:42
 msgid "you@example.com"
 msgstr "you@example.com"

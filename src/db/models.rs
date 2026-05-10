@@ -29,6 +29,7 @@ pub struct ConsoleUser {
     pub locale: String,
     pub confirmed_at: Option<DateTime<Utc>>,
     pub confirmation_token: Option<String>,
+    pub request_token: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

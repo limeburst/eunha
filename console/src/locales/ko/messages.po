@@ -46,7 +46,7 @@ msgstr "새 사용자 가입 허용"
 #~ msgid "Already a member of an instance?"
 #~ msgstr "이미 인스턴스 멤버이신가요?"
 
-#: src/pages/Signup.tsx:66
+#: src/pages/Signup.tsx:54
 msgid "Already have an account?"
 msgstr "이미 계정이 있으신가요?"
 
@@ -62,7 +62,7 @@ msgstr "가입 신청"
 msgid "Approve"
 msgstr "승인"
 
-#: src/pages/ConfirmAccount.tsx:75
+#: src/pages/ConfirmAccount.tsx:80
 #: src/pages/Dashboard.tsx:162
 #: src/pages/NewInstance.tsx:163
 msgid "At least 8 characters"
@@ -74,23 +74,22 @@ msgid "Change password"
 msgstr "비밀번호 변경"
 
 #: src/pages/Signup.tsx:36
-msgid "Check your email to confirm your account."
-msgstr "이메일을 확인하여 계정을 인증하세요."
+#~ msgid "Check your email to confirm your account."
+#~ msgstr "이메일을 확인하여 계정을 인증하세요."
 
-#: src/pages/ConfirmAccount.tsx:78
+#: src/pages/ConfirmAccount.tsx:83
 #: src/pages/Dashboard.tsx:165
 msgid "Confirm new password"
 msgstr "새 비밀번호 확인"
 
-#: src/pages/ConfirmAccount.tsx:52
+#: src/pages/ConfirmAccount.tsx:57
 msgid "Confirmation code"
 msgstr "인증 코드"
 
-#: src/pages/ConfirmAccount.tsx:91
+#: src/pages/ConfirmAccount.tsx:96
 #: src/pages/Landing.tsx:20
-#: src/pages/Signup.tsx:35
-#: src/pages/Signup.tsx:46
-#: src/pages/Signup.tsx:62
+#: src/pages/Signup.tsx:34
+#: src/pages/Signup.tsx:50
 msgid "Create account"
 msgstr "계정 만들기"
 
@@ -106,8 +105,8 @@ msgstr "만들기"
 msgid "Create your first instance"
 msgstr "첫 인스턴스 만들기"
 
-#: src/pages/ConfirmAccount.tsx:91
-#: src/pages/Signup.tsx:62
+#: src/pages/ConfirmAccount.tsx:96
+#: src/pages/Signup.tsx:50
 msgid "Creating account…"
 msgstr "계정 생성 중…"
 
@@ -151,7 +150,7 @@ msgstr "도메인"
 
 #: src/pages/Login.tsx:43
 #: src/pages/NewInstance.tsx:142
-#: src/pages/Signup.tsx:49
+#: src/pages/Signup.tsx:37
 msgid "Email"
 msgstr "이메일"
 
@@ -281,7 +280,7 @@ msgstr "찾을 수 없습니다."
 msgid "Open registrations"
 msgstr "공개 가입"
 
-#: src/pages/ConfirmAccount.tsx:65
+#: src/pages/ConfirmAccount.tsx:70
 #: src/pages/Login.tsx:55
 #: src/pages/NewInstance.tsx:153
 msgid "Password"
@@ -291,7 +290,7 @@ msgstr "비밀번호"
 msgid "Password changed."
 msgstr "비밀번호가 변경되었습니다."
 
-#: src/pages/ConfirmAccount.tsx:25
+#: src/pages/ConfirmAccount.tsx:30
 #: src/pages/Dashboard.tsx:174
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
@@ -329,7 +328,7 @@ msgstr "저장되었습니다."
 msgid "Saving…"
 msgstr "저장 중…"
 
-#: src/pages/ConfirmAccount.tsx:49
+#: src/pages/ConfirmAccount.tsx:54
 msgid "Set your password"
 msgstr "비밀번호 설정"
 
@@ -340,7 +339,7 @@ msgstr "설정"
 #: src/pages/Landing.tsx:21
 #: src/pages/Login.tsx:40
 #: src/pages/Login.tsx:67
-#: src/pages/Signup.tsx:67
+#: src/pages/Signup.tsx:55
 msgid "Sign in"
 msgstr "로그인"
 
@@ -356,7 +355,7 @@ msgstr "로그인"
 msgid "Sign out"
 msgstr "로그아웃"
 
-#: src/pages/ConfirmAccount.tsx:39
+#: src/pages/ConfirmAccount.tsx:44
 #: src/pages/Signup.tsx:25
 msgid "Sign up failed. Please try again."
 msgstr "가입에 실패했습니다. 다시 시도해 주세요."
@@ -376,7 +375,8 @@ msgstr "중지됨"
 msgid "That domain is already taken."
 msgstr "이미 사용 중인 도메인입니다."
 
-#: src/pages/ConfirmAccount.tsx:38
+#: src/pages/ConfirmAccount.tsx:26
+#: src/pages/ConfirmAccount.tsx:43
 msgid "This confirmation code is invalid or has already been used."
 msgstr "유효하지 않거나 이미 사용된 인증 코드입니다."
 
@@ -405,14 +405,14 @@ msgid "Username"
 msgstr "사용자 이름"
 
 #: src/pages/Signup.tsx:37
-msgid "We sent a 6-digit code and a confirmation link to <0>{email}</0>. Enter the code at <1>/confirm-account</1> or click the link in the email."
-msgstr "<0>{email}</0>로 6자리 인증 코드와 인증 링크를 보냈습니다. <1>/confirm-account</1>에서 코드를 입력하거나 이메일의 링크를 클릭하세요."
+#~ msgid "We sent a 6-digit code and a confirmation link to <0>{email}</0>. Enter the code at <1>/confirm-account</1> or click the link in the email."
+#~ msgstr "<0>{email}</0>로 6자리 인증 코드와 인증 링크를 보냈습니다. <1>/confirm-account</1>에서 코드를 입력하거나 이메일의 링크를 클릭하세요."
 
 #: src/pages/Signup.tsx:37
 #~ msgid "We sent a confirmation link to <0>{email}</0>. Click the link in the email to activate your account."
 #~ msgstr "<0>{email}</0>로 인증 링크를 보냈습니다. 이메일의 링크를 클릭하여 계정을 활성화하세요."
 
 #: src/pages/Login.tsx:48
-#: src/pages/Signup.tsx:54
+#: src/pages/Signup.tsx:42
 msgid "you@example.com"
 msgstr "you@example.com"

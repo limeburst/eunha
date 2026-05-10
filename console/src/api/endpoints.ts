@@ -4,10 +4,10 @@ import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite, 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
 export const signup = (email: string, locale: string) =>
-  api.post<{ needs_confirmation: boolean }>('/api/console/auth/signup', { email, locale })
+  api.post<{ needs_confirmation: boolean; request_token: string }>('/api/console/auth/signup', { email, locale })
 
-export const confirmAccount = (token: string, password: string) =>
-  api.post<{ token: string; user: User }>('/api/console/auth/confirm', { token, password })
+export const confirmAccount = (token: string, requestToken: string, password: string) =>
+  api.post<{ token: string; user: User }>('/api/console/auth/confirm', { token, request_token: requestToken, password })
 
 export const login = (email: string, password: string) =>
   api.post<{ token: string; user: User }>('/api/console/auth/login', { email, password })

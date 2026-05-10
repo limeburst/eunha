@@ -14,9 +14,9 @@ use super::ConsoleAuth;
 // ── Response types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-#[serde(untagged)]
-pub enum SignupResponse {
-    NeedsConfirmation { needs_confirmation: bool },
+pub struct SignupResponse {
+    pub needs_confirmation: bool,
+    pub request_token: uuid::Uuid,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,6 +60,7 @@ pub async fn signup(
     let email_normalized = email.to_lowercase();
     let locale_str = body.locale.clone().unwrap_or_else(|| "en".into());
     let confirmation_token = generate_confirmation_code();
+    let request_token = uuid::Uuid::new_v4();
 
     let existing = sqlx::query_as!(
         ConsoleUser,
@@ -71,15 +72,15 @@ pub async fn signup(
 
     let user = if let Some(u) = existing {
         if u.confirmed_at.is_some() {
-            // Confirmed account — don't reveal it exists; just no-op and return needs_confirmation
-            // so the form shows the same message regardless (prevents enumeration).
-            return Ok(Json(SignupResponse::NeedsConfirmation { needs_confirmation: true }));
+            // Confirmed account — don't reveal it exists; return a dummy response to prevent enumeration.
+            return Ok(Json(SignupResponse { needs_confirmation: true, request_token: uuid::Uuid::new_v4() }));
         }
-        // Unconfirmed: regenerate token and resend
+        // Unconfirmed: regenerate both tokens and resend
         sqlx::query_as!(
             ConsoleUser,
-            "UPDATE console_users SET confirmation_token = $1 WHERE id = $2 RETURNING *",
+            "UPDATE console_users SET confirmation_token = $1, request_token = $2 WHERE id = $3 RETURNING *",
             confirmation_token,
+            request_token,
             u.id,
         )
         .fetch_one(&state.db)
@@ -87,12 +88,13 @@ pub async fn signup(
     } else {
         sqlx::query_as!(
             ConsoleUser,
-            r#"INSERT INTO console_users (email, email_normalized, confirmation_token)
-               VALUES ($1, $2, $3)
+            r#"INSERT INTO console_users (email, email_normalized, confirmation_token, request_token)
+               VALUES ($1, $2, $3, $4)
                RETURNING *"#,
             email,
             email_normalized,
             confirmation_token,
+            request_token,
         )
         .fetch_one(&state.db)
         .await?
@@ -100,8 +102,8 @@ pub async fn signup(
 
     if let Some(ref resend) = state.config.resend {
         let confirm_url = format!(
-            "https://{}/confirm-account?token={}",
-            state.config.console_domain, confirmation_token
+            "https://{}/confirm-account?token={}&request_token={}",
+            state.config.console_domain, confirmation_token, request_token
         );
         let http = state.http.clone();
         let api_key = resend.api_key.clone();
@@ -119,7 +121,7 @@ pub async fn signup(
         });
     }
 
-    Ok(Json(SignupResponse::NeedsConfirmation { needs_confirmation: true }))
+    Ok(Json(SignupResponse { needs_confirmation: true, request_token: user.request_token }))
 }
 
 // ── POST /api/console/auth/confirm ─────────────────────────────────────────
@@ -127,6 +129,7 @@ pub async fn signup(
 #[derive(Debug, Deserialize)]
 pub struct ConfirmRequest {
     pub token: String,
+    pub request_token: uuid::Uuid,
     pub password: String,
 }
 
@@ -143,10 +146,11 @@ pub async fn confirm(
     let user = sqlx::query_as!(
         ConsoleUser,
         r#"UPDATE console_users
-           SET confirmed_at = now(), confirmation_token = NULL, password_hash = $2
-           WHERE confirmation_token = $1 AND confirmed_at IS NULL
+           SET confirmed_at = now(), confirmation_token = NULL, password_hash = $3
+           WHERE confirmation_token = $1 AND request_token = $2 AND confirmed_at IS NULL
            RETURNING *"#,
         body.token,
+        body.request_token,
         password_hash,
     )
     .fetch_optional(&state.db)
