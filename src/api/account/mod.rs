@@ -416,15 +416,10 @@ pub async fn password_post(
 // ── GET /account/invites ───────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct InviteView {
-    id: String,
-    code: String,
-    url: String,
-    created_by_username: Option<String>,
-    max_uses: Option<i32>,
-    uses: i32,
-    is_expired: bool,
-    redeemers: Vec<String>,
+struct MemberView {
+    username: String,
+    invited_by: Option<String>,
+    depth: usize,
 }
 
 pub async fn invites_page(
@@ -440,10 +435,8 @@ pub async fn invites_page(
 
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
 
-    // Fetch all members with their invite info
-    let members = match sqlx::query!(
-        r#"SELECT a.id AS account_id, a.username, u.invite_id AS "invite_id?: Uuid",
-                  inv_a.username AS "invited_by_username?: String", u.created_at
+    let rows = match sqlx::query!(
+        r#"SELECT a.username, inv_a.username AS "invited_by?: String"
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            LEFT JOIN invites i ON i.id = u.invite_id
@@ -459,75 +452,52 @@ pub async fn invites_page(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
-    // Build redeemers_by_invite: HashMap<Uuid, Vec<String>>
-    let mut redeemers_by_invite: HashMap<Uuid, Vec<String>> = HashMap::new();
-    let mut uninvited: Vec<String> = Vec::new();
-
-    for member in &members {
-        if let Some(invite_id) = member.invite_id {
-            redeemers_by_invite
-                .entry(invite_id)
-                .or_default()
-                .push(member.username.clone());
-        } else {
-            uninvited.push(member.username.clone());
-        }
+    // Build children map: parent (None = root) → sorted list of children.
+    let mut children: HashMap<Option<String>, Vec<String>> = HashMap::new();
+    let mut invited_by_map: HashMap<String, Option<String>> = HashMap::new();
+    for row in &rows {
+        children
+            .entry(row.invited_by.clone())
+            .or_default()
+            .push(row.username.clone());
+        invited_by_map.insert(row.username.clone(), row.invited_by.clone());
+    }
+    for kids in children.values_mut() {
+        kids.sort();
     }
 
-    // Fetch all invites
-    let invites_rows = match sqlx::query!(
-        r#"SELECT i.id, i.code, i.max_uses, i.uses, i.expires_at, i.created_at,
-                  a.username AS "created_by_username?: String"
-           FROM invites i
-           LEFT JOIN accounts a ON a.id = i.created_by
-           WHERE i.instance_id = $1
-           ORDER BY i.created_at DESC"#,
-        instance.id,
-    )
-    .fetch_all(&state.db)
-    .await
-    {
-        Ok(r) => r,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-
-    let now = chrono::Utc::now();
-    let invites: Vec<InviteView> = invites_rows
+    // Pre-order DFS to produce a depth-annotated list.
+    let mut members: Vec<MemberView> = Vec::with_capacity(rows.len());
+    let mut stack: Vec<(String, usize)> = children
+        .get(&None)
+        .cloned()
+        .unwrap_or_default()
         .into_iter()
-        .map(|r| {
-            let is_expired = r.expires_at.map_or(false, |e| e < now);
-            let redeemers = redeemers_by_invite
-                .get(&r.id)
-                .cloned()
-                .unwrap_or_default();
-            let url = crate::api::mastodon::invites::invite_url(&domain, &r.code);
-            InviteView {
-                id: r.id.to_string(),
-                code: r.code,
-                url,
-                created_by_username: r.created_by_username,
-                max_uses: r.max_uses,
-                uses: r.uses,
-                is_expired,
-                redeemers,
-            }
-        })
+        .rev()
+        .map(|u| (u, 0))
         .collect();
+
+    while let Some((username, depth)) = stack.pop() {
+        let invited_by = invited_by_map.get(&username).cloned().flatten();
+        members.push(MemberView { username: username.clone(), invited_by, depth });
+        if let Some(kids) = children.get(&Some(username)) {
+            for kid in kids.iter().rev() {
+                stack.push((kid.clone(), depth + 1));
+            }
+        }
+    }
 
     let html = templates::render(
         "account_invites.html",
         minijinja::context! {
             lang => locale.as_str(),
             domain,
-            invites,
-            uninvited,
+            members,
             t_account => locale.t("account"),
             t_invite_tree => locale.t("invite_tree"),
             t_sign_out => locale.t("sign_out"),
             t_back_to_account => locale.t("back_to_account"),
             t_no_members => locale.t("no_members"),
-            t_uninvited_members => locale.t("uninvited_members"),
-            t_expired => locale.t("expired"),
         },
     );
     Html(html).into_response()
