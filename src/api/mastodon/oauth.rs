@@ -59,7 +59,7 @@ pub struct RegisterAppForm {
 pub async fn register_app(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Form(form): Form<RegisterAppForm>,
+    FormOrJson(form): FormOrJson<RegisterAppForm>,
 ) -> AppResult<Json<CredentialApplication>> {
     let client_id = generate_token(32);
     let client_secret = generate_token(64);
@@ -87,12 +87,15 @@ pub async fn register_app(
 }
 
 fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
+    let uris: Vec<String> = app.redirect_uris.lines().map(str::to_owned).collect();
+    let redirect_uri = uris.first().cloned().unwrap_or_else(|| app.redirect_uris.clone());
     CredentialApplication {
         id: app.id.to_string(),
         name: app.name.clone(),
         website: app.website.clone(),
         scopes: app.scopes.split_whitespace().map(str::to_owned).collect(),
-        redirect_uris: app.redirect_uris.lines().map(str::to_owned).collect(),
+        redirect_uri,
+        redirect_uris: uris,
         client_id: app.client_id.clone(),
         client_secret: app.client_secret.clone(),
         vapid_key: None,

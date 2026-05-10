@@ -263,6 +263,7 @@ pub struct CredentialApplication {
     pub name: String,
     pub website: Option<String>,
     pub scopes: Vec<String>,
+    pub redirect_uri: String,
     pub redirect_uris: Vec<String>,
     pub client_id: String,
     pub client_secret: String,
