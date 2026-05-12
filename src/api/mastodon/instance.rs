@@ -5,6 +5,13 @@ use crate::{
 };
 use super::types::*;
 
+// ── GET /api/v1/instance/translation_languages ───────────────────────────
+// Returns empty object — translation is not supported.
+
+pub async fn get_translation_languages() -> Json<serde_json::Value> {
+    Json(serde_json::json!({}))
+}
+
 // ── GET /api/v1/instance/extended_description ────────────────────────────
 
 pub async fn get_extended_description(

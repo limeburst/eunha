@@ -615,6 +615,18 @@ pub struct WebPushSubscription {
 }
 
 /// Query parameters used by timeline/list endpoints.
+#[derive(Debug, Serialize)]
+pub struct FamiliarFollowers {
+    pub id: String,
+    pub accounts: Vec<Account>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FamiliarFollowersQuery {
+    #[serde(default, rename = "id[]")]
+    pub ids: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PaginationParams {
     pub max_id: Option<String>,

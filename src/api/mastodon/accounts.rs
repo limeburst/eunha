@@ -1155,6 +1155,90 @@ pub async fn get_endorsements(
     Json(vec![])
 }
 
+// ── GET /api/v1/accounts/:id/featured_tags ───────────────────────────────
+
+pub async fn get_account_featured_tags(
+    Path(_id): Path<Uuid>,
+) -> Json<Vec<super::types::FeaturedTag>> {
+    Json(vec![])
+}
+
+// ── PUT /api/v1/profile (tab display settings) ───────────────────────────
+// show_featured / show_media / show_media_replies stored in DB; for now stub.
+
+pub async fn update_profile_settings(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> AppResult<Json<super::types::Account>> {
+    let account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(account_from_db(&account)))
+}
+
+// ── GET /api/v1/accounts/familiar_followers ──────────────────────────────
+
+pub async fn get_familiar_followers(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(q): Query<super::types::FamiliarFollowersQuery>,
+) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
+    let mut result = Vec::with_capacity(q.ids.len());
+    for raw_id in &q.ids {
+        let Ok(target_id) = raw_id.parse::<Uuid>() else { continue };
+
+        // Find followers of target_id that also follow the viewer (auth.account_id)
+        let accounts = sqlx::query_as!(
+            crate::db::models::Account,
+            r#"SELECT a.* FROM accounts a
+               JOIN follows f1 ON f1.account_id = a.id AND f1.target_account_id = $1 AND f1.state = 'accepted'
+               JOIN follows f2 ON f2.account_id = a.id AND f2.target_account_id = $2 AND f2.state = 'accepted'
+               LIMIT 10"#,
+            target_id,
+            auth.account_id,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        result.push(super::types::FamiliarFollowers {
+            id: raw_id.clone(),
+            accounts: accounts.iter().map(account_from_db).collect(),
+        });
+    }
+    Ok(Json(result))
+}
+
+// ── GET /api/v1/accounts (batch lookup) ──────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BatchAccountsQuery {
+    #[serde(default, rename = "id[]")]
+    pub ids: Vec<Uuid>,
+}
+
+pub async fn get_accounts_batch(
+    State(state): State<AppState>,
+    Query(q): Query<BatchAccountsQuery>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    if q.ids.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let accounts = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY created_at DESC",
+        &q.ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
 // ── GET /api/v1/accounts/:id/lists ───────────────────────────────────────
 
 pub async fn get_account_lists(

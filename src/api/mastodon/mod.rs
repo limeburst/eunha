@@ -29,7 +29,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::HeaderMap,
     middleware,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use crate::{middleware as mw, state::AppState};
@@ -152,6 +152,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/suggestions", get(accounts::get_suggestions))
         .route("/api/v1/suggestions/{id}", delete(accounts::dismiss_suggestion))
         .route("/api/v2/suggestions", get(accounts::get_suggestions_v2))
+        // Familiar followers
+        .route("/api/v1/accounts/familiar_followers", get(accounts::get_familiar_followers))
+        // Profile tab display settings
+        .route("/api/v1/profile", put(accounts::update_profile_settings))
         // Followed tags
         .route("/api/v1/followed_tags", get(tags::list_followed_tags))
         .route("/api/v1/tags/{name}/follow", post(tags::follow_tag))
@@ -190,12 +194,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Instance info
         .route("/api/v1/instance", get(instance::get_instance_v1))
         .route("/api/v1/instance/extended_description", get(instance::get_extended_description))
+        .route("/api/v1/instance/translation_languages", get(instance::get_translation_languages))
         .route("/api/v2/instance", get(instance::get_instance_v2))
         // App credentials
         .route("/api/v1/apps/verify_credentials", get(oauth::verify_app_credentials))
         // Accounts (public)
+        .route("/api/v1/accounts", get(accounts::get_accounts_batch))
         .route("/api/v1/accounts/lookup", get(accounts::lookup_account))
         .route("/api/v1/accounts/{id}", get(accounts::get_account))
+        .route("/api/v1/accounts/{id}/featured_tags", get(accounts::get_account_featured_tags))
         .route("/api/v1/accounts/{id}/statuses", get(accounts::get_account_statuses))
         .route("/api/v1/accounts/{id}/followers", get(accounts::get_account_followers))
         .route("/api/v1/accounts/{id}/following", get(accounts::get_account_following))
