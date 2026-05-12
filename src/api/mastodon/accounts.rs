@@ -248,7 +248,33 @@ pub async fn get_account_statuses(
 
 #[derive(Debug, Deserialize)]
 pub struct RelationshipsQuery {
+    // Mastodon clients send id[]=uuid1&id[]=uuid2; serde_urlencoded can't coerce
+    // a single string into Vec, so use a custom visitor that handles both cases.
+    #[serde(default, rename = "id[]", deserialize_with = "deserialize_uuid_list")]
     id: Vec<Uuid>,
+}
+
+fn deserialize_uuid_list<'de, D>(de: D) -> Result<Vec<Uuid>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+    struct UuidListVisitor;
+    impl<'de> Visitor<'de> for UuidListVisitor {
+        type Value = Vec<Uuid>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a UUID string or sequence of UUID strings")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            v.parse::<Uuid>().map(|u| vec![u]).map_err(serde::de::Error::custom)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(v) = seq.next_element::<Uuid>()? { out.push(v); }
+            Ok(out)
+        }
+    }
+    de.deserialize_any(UuidListVisitor)
 }
 
 pub async fn get_relationships(

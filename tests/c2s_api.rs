@@ -104,6 +104,40 @@ impl ApiClient {
             .unwrap()
     }
 
+    async fn put_json(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        body: &Value,
+    ) -> reqwest::Response {
+        let mut req = self
+            .http
+            .put(self.url(path))
+            .header("host", &self.host)
+            .json(body);
+        if let Some(t) = token {
+            req = req.bearer_auth(t);
+        }
+        req.send().await.unwrap()
+    }
+
+    async fn patch_json(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        body: &Value,
+    ) -> reqwest::Response {
+        let mut req = self
+            .http
+            .patch(self.url(path))
+            .header("host", &self.host)
+            .json(body);
+        if let Some(t) = token {
+            req = req.bearer_auth(t);
+        }
+        req.send().await.unwrap()
+    }
+
     // ── convenience helpers ──────────────────────────────────────────────
 
     /// POST /api/v1/statuses with JSON body, returns the status JSON.
@@ -201,14 +235,16 @@ impl TestContext {
             database_url: db_url,
             bind_address: "127.0.0.1:0".into(),
             console_domain: "console.c2s-test.invalid".into(),
-            media_storage: eunha::config::MediaStorageConfig::Local {
-                base_path: std::env::temp_dir()
-                    .join("eunha-c2s-test-media")
-                    .to_string_lossy()
-                    .into_owned(),
+            media_storage: eunha::config::MediaStorageConfig {
+                bucket: "test-bucket".into(),
+                region: "us-east-1".into(),
+                endpoint: None,
+                access_key_id: "test-key".into(),
+                secret_access_key: "test-secret".into(),
                 base_url: "http://localhost/media".into(),
             },
             smtp: None,
+            resend: None,
         };
         let state = eunha::state::AppState::new(db, config).await;
         let app = eunha::build_app(state);
@@ -920,4 +956,925 @@ async fn test_reblog_increments_count() {
         .await
         .unwrap();
     assert_eq!(updated["reblogs_count"].as_i64().unwrap_or(0), before + 1);
+}
+
+// ── tests: account endpoints ─────────────────────────────────────────────────
+
+/// GET /api/v1/accounts/verify_credentials returns the current user's account.
+#[tokio::test]
+async fn test_verify_credentials() {
+    let ctx = TestContext::new("verify-creds").await;
+
+    let resp = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert_eq!(body["username"].as_str(), Some("alice"));
+    assert!(body["id"].as_str().is_some(), "id field missing");
+    assert!(body["acct"].as_str().is_some(), "acct field missing");
+    assert!(body["source"].is_object(), "source field missing from verify_credentials");
+}
+
+/// GET /api/v1/accounts/verify_credentials without token → 401.
+#[tokio::test]
+async fn test_verify_credentials_requires_auth() {
+    let ctx = TestContext::new("verify-unauth").await;
+
+    let resp = ctx.api.get("/api/v1/accounts/verify_credentials", None).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// GET /api/v1/accounts/:id returns account data.
+#[tokio::test]
+async fn test_get_account() {
+    let ctx = TestContext::new("get-acct").await;
+
+    let resp = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert_eq!(body["id"].as_str(), Some(ctx.alice_id.as_str()));
+    assert_eq!(body["username"].as_str(), Some("alice"));
+}
+
+/// GET /api/v1/accounts/:id for unknown id → 404.
+#[tokio::test]
+async fn test_get_account_not_found() {
+    let ctx = TestContext::new("get-acct-404").await;
+
+    let resp = ctx.api.get("/api/v1/accounts/00000000-0000-0000-0000-000000000000", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/accounts/lookup?acct=alice returns Alice's account.
+#[tokio::test]
+async fn test_lookup_account() {
+    let ctx = TestContext::new("lookup").await;
+
+    let resp = ctx.api.get("/api/v1/accounts/lookup?acct=alice", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert_eq!(body["username"].as_str(), Some("alice"));
+}
+
+/// GET /api/v1/accounts/:id/followers returns a list after a follow.
+#[tokio::test]
+async fn test_get_account_followers() {
+    let ctx = TestContext::new("acct-followers").await;
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+}
+
+/// GET /api/v1/accounts/:id/following returns a list after a follow.
+#[tokio::test]
+async fn test_get_account_following() {
+    let ctx = TestContext::new("acct-following").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/following", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+}
+
+// ── tests: relationships ─────────────────────────────────────────────────────
+
+/// GET /api/v1/accounts/relationships reflects follow state.
+#[tokio::test]
+async fn test_get_relationships() {
+    let ctx = TestContext::new("rel-basic").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["following"].as_bool(), Some(true));
+    assert_eq!(list[0]["id"].as_str(), Some(ctx.bob_id.as_str()));
+}
+
+/// Unfollowing sets following=false in the relationship.
+#[tokio::test]
+async fn test_unfollow_updates_relationship() {
+    let ctx = TestContext::new("rel-unfollow").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/unfollow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["following"].as_bool(), Some(false));
+}
+
+/// Blocking sets blocking=true; unblocking sets it back to false.
+#[tokio::test]
+async fn test_block_and_unblock() {
+    let ctx = TestContext::new("block").await;
+
+    let block_resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(block_resp.status(), StatusCode::OK);
+    let rel: Value = block_resp.json().await.unwrap();
+    assert_eq!(rel["blocking"].as_bool(), Some(true));
+
+    let unblock_resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/unblock", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(unblock_resp.status(), StatusCode::OK);
+    let rel2: Value = unblock_resp.json().await.unwrap();
+    assert_eq!(rel2["blocking"].as_bool(), Some(false));
+}
+
+/// Muting sets muting=true; unmuting sets it back to false.
+#[tokio::test]
+async fn test_mute_and_unmute() {
+    let ctx = TestContext::new("mute").await;
+
+    let mute_resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(mute_resp.status(), StatusCode::OK);
+    let rel: Value = mute_resp.json().await.unwrap();
+    assert_eq!(rel["muting"].as_bool(), Some(true));
+
+    let unmute_resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/unmute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(unmute_resp.status(), StatusCode::OK);
+    let rel2: Value = unmute_resp.json().await.unwrap();
+    assert_eq!(rel2["muting"].as_bool(), Some(false));
+}
+
+// ── tests: follow requests ───────────────────────────────────────────────────
+
+/// Accepting a pending follow request changes the relationship to following=true.
+#[tokio::test]
+async fn test_authorize_follow_request() {
+    let ctx = TestContext::new("follow-req-accept").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", bob_uuid)
+        .execute(&db).await.unwrap();
+
+    // Alice follows locked Bob → pending.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Bob authorises Alice's follow request.
+    let requests_resp = ctx.api.get("/api/v1/follow_requests", Some(&ctx.bob_token)).await;
+    let requests: Vec<Value> = requests_resp.json().await.unwrap();
+    assert!(!requests.is_empty(), "no pending follow requests");
+    let requester_id = requests[0]["id"].as_str().unwrap().to_string();
+
+    let accept_resp = ctx.api.post_json(
+        &format!("/api/v1/follow_requests/{requester_id}/authorize"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(accept_resp.status(), StatusCode::OK);
+
+    // Alice is now following Bob.
+    let rels: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(rels[0]["following"].as_bool(), Some(true));
+    assert_eq!(rels[0]["requested"].as_bool(), Some(false));
+}
+
+/// Rejecting a pending follow request leaves following=false, requested=false.
+#[tokio::test]
+async fn test_reject_follow_request() {
+    let ctx = TestContext::new("follow-req-reject").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", bob_uuid)
+        .execute(&db).await.unwrap();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let requests: Vec<Value> = ctx.api.get("/api/v1/follow_requests", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    let requester_id = requests[0]["id"].as_str().unwrap().to_string();
+
+    let reject_resp = ctx.api.post_json(
+        &format!("/api/v1/follow_requests/{requester_id}/reject"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(reject_resp.status(), StatusCode::OK);
+
+    let rels: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(rels[0]["following"].as_bool(), Some(false));
+    assert_eq!(rels[0]["requested"].as_bool(), Some(false));
+}
+
+// ── tests: status thread & context ──────────────────────────────────────────
+
+/// A reply has in_reply_to_id set to the parent status id.
+#[tokio::test]
+async fn test_reply_sets_in_reply_to_id() {
+    let ctx = TestContext::new("reply-id").await;
+
+    let parent = ctx.api.post_status(&ctx.alice_token, "parent post", "public").await;
+    let parent_id = parent["id"].as_str().unwrap();
+
+    let reply_resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply text", "in_reply_to_id": parent_id, "visibility": "public"}),
+    ).await;
+    assert_eq!(reply_resp.status(), StatusCode::OK);
+    let reply: Value = reply_resp.json().await.unwrap();
+    assert_eq!(reply["in_reply_to_id"].as_str(), Some(parent_id));
+}
+
+/// GET /api/v1/statuses/:id/context returns ancestors and descendants.
+#[tokio::test]
+async fn test_status_context_ancestors_and_descendants() {
+    let ctx = TestContext::new("ctx-thread").await;
+
+    let grandparent = ctx.api.post_status(&ctx.alice_token, "grandparent", "public").await;
+    let gp_id = grandparent["id"].as_str().unwrap();
+
+    let parent: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "parent", "in_reply_to_id": gp_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let p_id = parent["id"].as_str().unwrap();
+
+    let child: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "child", "in_reply_to_id": p_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let c_id = child["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{p_id}/context"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ctx_body: Value = resp.json().await.unwrap();
+
+    let ancestor_ids: Vec<&str> = ctx_body["ancestors"]
+        .as_array().unwrap().iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    let descendant_ids: Vec<&str> = ctx_body["descendants"]
+        .as_array().unwrap().iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+
+    assert!(ancestor_ids.contains(&gp_id), "grandparent not in ancestors");
+    assert!(descendant_ids.contains(&c_id), "child not in descendants");
+}
+
+// ── tests: status edit & history ────────────────────────────────────────────
+
+/// Editing a status changes its content.
+#[tokio::test]
+async fn test_edit_status_changes_content() {
+    let ctx = TestContext::new("edit-content").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "original text", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let edit_resp = ctx.api.put_json(
+        &format!("/api/v1/statuses/{id}"),
+        Some(&ctx.alice_token),
+        &json!({"status": "edited text", "visibility": "public"}),
+    ).await;
+    assert_eq!(edit_resp.status(), StatusCode::OK);
+    let edited: Value = edit_resp.json().await.unwrap();
+    // content is HTML — spaces may be encoded as &#32;
+    let content = edited["content"].as_str().unwrap_or("");
+    assert!(
+        content.contains("edited"),
+        "edited content not found: {content:?}"
+    );
+}
+
+/// GET /api/v1/statuses/:id/history returns at least two entries after an edit.
+#[tokio::test]
+async fn test_status_history_after_edit() {
+    let ctx = TestContext::new("edit-history").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "v1 text", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.put_json(
+        &format!("/api/v1/statuses/{id}"),
+        Some(&ctx.alice_token),
+        &json!({"status": "v2 text", "visibility": "public"}),
+    ).await;
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/history"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let history: Vec<Value> = resp.json().await.unwrap();
+    assert!(history.len() >= 2, "expected at least 2 history entries, got {}", history.len());
+}
+
+/// GET /api/v1/statuses/:id/source returns the original plaintext.
+#[tokio::test]
+async fn test_status_source_returns_text() {
+    let ctx = TestContext::new("status-src").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "source text here", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/source"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body["text"].as_str().unwrap_or("").contains("source text here"),
+        "source text not returned"
+    );
+}
+
+/// Only the author can fetch status source; stranger gets 403.
+#[tokio::test]
+async fn test_status_source_forbidden_for_non_author() {
+    let ctx = TestContext::new("status-src-403").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice's text", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/source"), Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// Status content warning (spoiler_text) round-trips correctly.
+#[tokio::test]
+async fn test_spoiler_text_preserved() {
+    let ctx = TestContext::new("cw").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "body text", "spoiler_text": "content warning", "visibility": "public"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let status: Value = resp.json().await.unwrap();
+    assert_eq!(status["spoiler_text"].as_str(), Some("content warning"));
+}
+
+// ── tests: bookmarks ────────────────────────────────────────────────────────
+
+/// Bookmarking and unbookmarking a status.
+#[tokio::test]
+async fn test_bookmark_and_unbookmark() {
+    let ctx = TestContext::new("bookmark").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "bookmarkable", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let bk_resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/bookmark"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(bk_resp.status(), StatusCode::OK);
+    let bk: Value = bk_resp.json().await.unwrap();
+    assert_eq!(bk["bookmarked"].as_bool(), Some(true));
+
+    let ubk_resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unbookmark"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(ubk_resp.status(), StatusCode::OK);
+    let ubk: Value = ubk_resp.json().await.unwrap();
+    assert_eq!(ubk["bookmarked"].as_bool(), Some(false));
+}
+
+/// GET /api/v1/bookmarks returns the bookmarked status.
+#[tokio::test]
+async fn test_bookmarks_list() {
+    let ctx = TestContext::new("bk-list").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "to bookmark", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/bookmark"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get("/api/v1/bookmarks", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.iter().any(|s| s["id"].as_str() == Some(id)), "bookmarked status not in list");
+}
+
+// ── tests: pin / unpin ───────────────────────────────────────────────────────
+
+/// Pinning and unpinning a status updates pinned field.
+#[tokio::test]
+async fn test_pin_and_unpin() {
+    let ctx = TestContext::new("pin").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "pinnable", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let pin_resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/pin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(pin_resp.status(), StatusCode::OK);
+    let pinned: Value = pin_resp.json().await.unwrap();
+    assert_eq!(pinned["pinned"].as_bool(), Some(true));
+
+    let unpin_resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unpin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(unpin_resp.status(), StatusCode::OK);
+    let unpinned: Value = unpin_resp.json().await.unwrap();
+    assert_eq!(unpinned["pinned"].as_bool(), Some(false));
+}
+
+// ── tests: favourited_by / reblogged_by ──────────────────────────────────────
+
+/// GET /api/v1/statuses/:id/favourited_by includes the account that favourited.
+#[tokio::test]
+async fn test_favourited_by_list() {
+    let ctx = TestContext::new("fav-by").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "fav me", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/favourited_by"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+}
+
+/// GET /api/v1/statuses/:id/reblogged_by includes the account that reblogged.
+#[tokio::test]
+async fn test_reblogged_by_list() {
+    let ctx = TestContext::new("rb-by").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "reblog me", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/reblogged_by"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+}
+
+/// Unreblogging decrements reblogs_count to zero.
+#[tokio::test]
+async fn test_unreblog() {
+    let ctx = TestContext::new("unreblog").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "unreblog me", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let unrb_resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unreblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(unrb_resp.status(), StatusCode::OK);
+
+    let updated: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), None)
+        .await.json().await.unwrap();
+    assert_eq!(updated["reblogs_count"].as_i64().unwrap_or(-1), 0);
+}
+
+// ── tests: notifications ────────────────────────────────────────────────────
+
+/// Following an account creates a notification for the target.
+#[tokio::test]
+async fn test_follow_creates_notification() {
+    let ctx = TestContext::new("notif-follow").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let resp = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let notifs: Vec<Value> = resp.json().await.unwrap();
+
+    let follow_notif = notifs.iter().find(|n| n["type"].as_str() == Some("follow"));
+    assert!(follow_notif.is_some(), "no follow notification found");
+    assert_eq!(
+        follow_notif.unwrap()["account"]["id"].as_str(),
+        Some(ctx.alice_id.as_str()),
+        "follow notification has wrong source account"
+    );
+}
+
+/// Favouriting a status creates a notification for the status author.
+#[tokio::test]
+async fn test_favourite_creates_notification() {
+    let ctx = TestContext::new("notif-fav").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "notify on fav", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let fav_notif = notifs.iter().find(|n| n["type"].as_str() == Some("favourite"));
+    assert!(fav_notif.is_some(), "no favourite notification found");
+}
+
+/// Replying to a status creates a mention notification for the parent's author.
+#[tokio::test]
+async fn test_reply_creates_mention_notification() {
+    let ctx = TestContext::new("notif-mention").await;
+
+    let parent = ctx.api.post_status(&ctx.alice_token, "parent status", "public").await;
+    let parent_id = parent["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply here", "in_reply_to_id": parent_id, "visibility": "public"}),
+    ).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let mention = notifs.iter().find(|n| n["type"].as_str() == Some("mention"));
+    assert!(mention.is_some(), "no mention notification found");
+}
+
+/// Dismissed notification no longer appears in the list.
+#[tokio::test]
+async fn test_dismiss_notification() {
+    let ctx = TestContext::new("notif-dismiss").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    let notif_id = notifs[0]["id"].as_str().unwrap().to_string();
+
+    let dismiss_resp = ctx.api.post_json(
+        &format!("/api/v1/notifications/{notif_id}/dismiss"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(dismiss_resp.status(), StatusCode::OK);
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!after.iter().any(|n| n["id"].as_str() == Some(notif_id.as_str())));
+}
+
+/// Clearing notifications empties the list.
+#[tokio::test]
+async fn test_clear_notifications() {
+    let ctx = TestContext::new("notif-clear").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let clear_resp = ctx.api.post_json(
+        "/api/v1/notifications/clear",
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(clear_resp.status(), StatusCode::OK);
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(after.is_empty(), "notifications not cleared");
+}
+
+// ── tests: lists ────────────────────────────────────────────────────────────
+
+/// Full list CRUD: create → get → update → delete.
+#[tokio::test]
+async fn test_list_crud() {
+    let ctx = TestContext::new("list-crud").await;
+
+    // Create
+    let create_resp = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "My List"}),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let list: Value = create_resp.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap().to_string();
+    assert_eq!(list["title"].as_str(), Some("My List"));
+
+    // Get
+    let get_resp = ctx.api.get(&format!("/api/v1/lists/{list_id}"), Some(&ctx.alice_token)).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+
+    // Update
+    let update_resp = ctx.api.put_json(
+        &format!("/api/v1/lists/{list_id}"),
+        Some(&ctx.alice_token),
+        &json!({"title": "Renamed List"}),
+    ).await;
+    assert_eq!(update_resp.status(), StatusCode::OK);
+    let updated: Value = update_resp.json().await.unwrap();
+    assert_eq!(updated["title"].as_str(), Some("Renamed List"));
+
+    // Delete
+    let del_resp = ctx.api.delete(&format!("/api/v1/lists/{list_id}"), &ctx.alice_token).await;
+    assert_eq!(del_resp.status(), StatusCode::OK);
+
+    // Confirm deleted
+    let gone_resp = ctx.api.get(&format!("/api/v1/lists/{list_id}"), Some(&ctx.alice_token)).await;
+    assert_eq!(gone_resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Adding and removing accounts from a list.
+#[tokio::test]
+async fn test_list_add_and_remove_accounts() {
+    let ctx = TestContext::new("list-accts").await;
+
+    // Alice must follow Bob to add him to a list.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Friends"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    // Add Bob
+    let add_resp = ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+    assert_eq!(add_resp.status(), StatusCode::OK);
+
+    let members: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(members.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+
+    // Remove Bob
+    let remove_resp = ctx.api.http
+        .delete(ctx.api.url(&format!("/api/v1/lists/{list_id}/accounts")))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"account_ids": [ctx.bob_id]}))
+        .send().await.unwrap();
+    assert_eq!(remove_resp.status(), StatusCode::OK);
+
+    let after: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(!after.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+}
+
+/// List timeline includes posts from accounts added to the list.
+#[tokio::test]
+async fn test_list_timeline() {
+    let ctx = TestContext::new("list-timeline").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Watch"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let bob_status = ctx.api.post_status(&ctx.bob_token, "list-only post", "public").await;
+    let bob_id = bob_status["id"].as_str().unwrap();
+
+    let timeline: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(timeline.iter().any(|s| s["id"].as_str() == Some(bob_id)));
+}
+
+// ── tests: favourites list ───────────────────────────────────────────────────
+
+/// GET /api/v1/favourites returns statuses the user has favourited.
+#[tokio::test]
+async fn test_favourites_list() {
+    let ctx = TestContext::new("fav-list").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "fav-list post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get("/api/v1/favourites", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.iter().any(|s| s["id"].as_str() == Some(id)));
+}
+
+// ── tests: pagination ────────────────────────────────────────────────────────
+
+/// max_id pagination returns only statuses older than the given id.
+#[tokio::test]
+async fn test_public_timeline_max_id_pagination() {
+    let ctx = TestContext::new("paginate-max").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "paginate-a", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "paginate-b", "public").await;
+    let s3 = ctx.api.post_status(&ctx.alice_token, "paginate-c", "public").await;
+
+    let s2_id = s2["id"].as_str().unwrap();
+    let s1_id = s1["id"].as_str().unwrap();
+    let s3_id = s3["id"].as_str().unwrap();
+
+    // max_id=s2 should return only s1 (older), not s2 or s3.
+    let timeline: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/public?local=true&max_id={s2_id}"),
+        None,
+    ).await.json().await.unwrap();
+
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&s1_id), "s1 missing from max_id page");
+    assert!(!ids.contains(&s2_id), "s2 should not appear with max_id=s2");
+    assert!(!ids.contains(&s3_id), "s3 should not appear with max_id=s2");
+}
+
+/// Paginated response includes a Link header with rel="next" and rel="prev".
+#[tokio::test]
+async fn test_public_timeline_link_header() {
+    let ctx = TestContext::new("paginate-link").await;
+
+    // Post enough statuses to trigger pagination.
+    for i in 0..5 {
+        ctx.api.post_status(&ctx.alice_token, &format!("link-header-test {i}"), "public").await;
+    }
+
+    let resp = ctx.api.get("/api/v1/timelines/public?local=true&limit=2", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let link = resp.headers().get("link").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(link.contains("rel=\"next\""), "Link header missing rel=next: {link}");
+    assert!(link.contains("rel=\"prev\""), "Link header missing rel=prev: {link}");
+}
+
+// ── tests: search ────────────────────────────────────────────────────────────
+
+/// Search by username finds the matching account.
+#[tokio::test]
+async fn test_search_accounts() {
+    let ctx = TestContext::new("search-acct").await;
+
+    let resp = ctx.api.get("/api/v2/search?q=alice&type=accounts", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let accounts = body["accounts"].as_array().unwrap();
+    assert!(accounts.iter().any(|a| a["username"].as_str() == Some("alice")));
+}
+
+/// Search for a status by its text returns the matching status.
+#[tokio::test]
+async fn test_search_statuses() {
+    let ctx = TestContext::new("search-status").await;
+
+    ctx.api.post_status(&ctx.alice_token, "uniqueterm12345", "public").await;
+
+    let resp = ctx.api.get(
+        "/api/v2/search?q=uniqueterm12345&type=statuses",
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let statuses = body["statuses"].as_array().unwrap();
+    assert!(
+        statuses.iter().any(|s| s["content"].as_str().unwrap_or("").contains("uniqueterm12345")
+            || s["text"].as_str().unwrap_or("").contains("uniqueterm12345")),
+        "search did not find status with uniqueterm12345"
+    );
+}
+
+// ── tests: instance info ─────────────────────────────────────────────────────
+
+/// GET /api/v1/instance returns valid instance data.
+#[tokio::test]
+async fn test_instance_v1() {
+    let ctx = TestContext::new("instance-v1").await;
+
+    let resp = ctx.api.get("/api/v1/instance", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert!(body["uri"].as_str().is_some(), "uri field missing");
+    assert!(body["title"].as_str().is_some(), "title field missing");
+    assert!(body["version"].as_str().is_some(), "version field missing");
+}
+
+/// GET /api/v2/instance returns valid instance data including usage.
+#[tokio::test]
+async fn test_instance_v2() {
+    let ctx = TestContext::new("instance-v2").await;
+
+    let resp = ctx.api.get("/api/v2/instance", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert!(body["domain"].as_str().is_some(), "domain field missing");
+    assert!(body["version"].as_str().is_some(), "version field missing");
+}
+
+// ── tests: OAuth app registration ────────────────────────────────────────────
+
+/// POST /api/v1/apps registers an application and returns credentials.
+#[tokio::test]
+async fn test_register_app() {
+    let ctx = TestContext::new("oauth-app").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/apps",
+        None,
+        &json!({
+            "client_name": "Test App",
+            "redirect_uris": "urn:ietf:wg:oauth:2.0:oob",
+            "scopes": "read write"
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert!(body["client_id"].as_str().is_some(), "client_id missing");
+    assert!(body["client_secret"].as_str().is_some(), "client_secret missing");
+    assert_eq!(body["name"].as_str(), Some("Test App"));
 }
