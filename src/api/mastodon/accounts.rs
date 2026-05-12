@@ -45,6 +45,10 @@ pub async fn verify_credentials(
         note: account.note_text.clone(),
         fields: vec![],
         follow_requests_count: follow_requests,
+        discoverable: Some(account.discoverable),
+        indexable: account.indexable,
+        hide_collections: None,
+        attribution_domains: vec![],
     });
 
     Ok(Json(api_account))
@@ -661,6 +665,10 @@ pub async fn update_credentials(
         note: account.note_text.clone(),
         fields: fields.clone(),
         follow_requests_count: 0,
+        discoverable: Some(account.discoverable),
+        indexable: account.indexable,
+        hide_collections: None,
+        attribution_domains: vec![],
     });
     Ok(Json(api_account))
 }
@@ -969,6 +977,7 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
         blocked_by: false,
         muting: muting.is_some(),
         muting_notifications: muting.map_or(false, |m| m.hide_notifications),
+        muting_expires_at: None,
         requested: follow.as_ref().map_or(false, |f| f.state == "pending"),
         requested_by: false,
         domain_blocking: false,
@@ -1169,7 +1178,7 @@ pub async fn get_account_featured_tags(
 pub async fn update_profile_settings(
     Extension(auth): Extension<AuthenticatedUser>,
     State(state): State<AppState>,
-    Json(body): Json<serde_json::Value>,
+    Json(_body): Json<serde_json::Value>,
 ) -> AppResult<Json<super::types::Account>> {
     let account = sqlx::query_as!(
         crate::db::models::Account,

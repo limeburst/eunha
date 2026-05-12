@@ -71,9 +71,15 @@ pub async fn get_instance_v2(
         languages: vec!["en".to_string()],
         configuration: InstanceConfiguration {
             urls: InstanceUrls { streaming: streaming_url },
+            vapid: VapidConfiguration { public_key: instance.vapid_public_key.clone() },
             accounts: AccountsConfiguration {
                 max_featured_tags: 10,
                 max_pinned_statuses: 5,
+                max_profile_fields: 4,
+                max_display_name_length: 30,
+                max_note_length: 500,
+                max_avatar_description_length: 1500,
+                max_header_description_length: 1500,
             },
             statuses: StatusesConfiguration {
                 max_characters: 500,

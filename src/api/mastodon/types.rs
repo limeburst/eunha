@@ -13,16 +13,23 @@ pub struct Account {
     pub display_name: String,
     pub locked: bool,
     pub bot: bool,
+    pub group: bool,
     pub discoverable: Option<bool>,
     pub indexable: bool,
+    pub hide_collections: Option<bool>,
+    pub show_featured: Option<bool>,
+    pub show_media: Option<bool>,
+    pub show_media_replies: Option<bool>,
     pub created_at: String,         // ISO 8601 date (midnight UTC, day precision)
     pub note: String,               // HTML
     pub url: String,
     pub uri: String,
     pub avatar: String,
     pub avatar_static: String,
+    pub avatar_description: String,
     pub header: String,
     pub header_static: String,
+    pub header_description: String,
     pub followers_count: i64,
     pub following_count: i64,
     pub statuses_count: i64,
@@ -31,6 +38,14 @@ pub struct Account {
     pub fields: Vec<Field>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moved: Option<Box<Account>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suspended: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub noindex: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memorial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<AccountSource>,  // only on CredentialAccount
 }
@@ -43,6 +58,10 @@ pub struct AccountSource {
     pub note: String,               // plain text
     pub fields: Vec<Field>,
     pub follow_requests_count: i64,
+    pub discoverable: Option<bool>,
+    pub indexable: bool,
+    pub hide_collections: Option<bool>,
+    pub attribution_domains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +88,7 @@ pub struct Status {
     pub replies_count: i64,
     pub reblogs_count: i64,
     pub favourites_count: i64,
+    pub quotes_count: i64,
     pub edited_at: Option<String>,
     pub content: String,
     pub reblog: Option<Box<Status>>,
@@ -174,11 +194,17 @@ pub struct InstanceThumbnail {
 #[derive(Debug, Serialize)]
 pub struct InstanceConfiguration {
     pub urls: InstanceUrls,
+    pub vapid: VapidConfiguration,
     pub accounts: AccountsConfiguration,
     pub statuses: StatusesConfiguration,
     pub media_attachments: MediaConfiguration,
     pub polls: PollsConfiguration,
     pub translation: TranslationConfiguration,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VapidConfiguration {
+    pub public_key: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -190,6 +216,11 @@ pub struct InstanceUrls {
 pub struct AccountsConfiguration {
     pub max_featured_tags: u32,
     pub max_pinned_statuses: u32,
+    pub max_profile_fields: u32,
+    pub max_display_name_length: u32,
+    pub max_note_length: u32,
+    pub max_avatar_description_length: u32,
+    pub max_header_description_length: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -352,6 +383,7 @@ pub struct Relationship {
     pub blocked_by: bool,
     pub muting: bool,
     pub muting_notifications: bool,
+    pub muting_expires_at: Option<String>,
     pub requested: bool,
     pub requested_by: bool,
     pub domain_blocking: bool,
