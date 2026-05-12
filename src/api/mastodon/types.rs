@@ -1,6 +1,7 @@
 /// Mastodon REST API serialization types.
 /// Reference: https://docs.joinmastodon.org/entities/
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ── Account ────────────────────────────────────────────────────────────────
 
@@ -477,6 +478,141 @@ pub struct InstanceV1Stats {
 }
 
 // ── Pagination ─────────────────────────────────────────────────────────────
+
+// ── Filter ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct Filter {
+    pub id: String,
+    pub title: String,
+    pub context: Vec<String>,
+    pub expires_at: Option<String>,
+    pub filter_action: String,
+    pub keywords: Vec<FilterKeyword>,
+    pub statuses: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FilterKeyword {
+    pub id: String,
+    pub keyword: String,
+    pub whole_word: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FilterV1 {
+    pub id: String,
+    pub phrase: String,
+    pub context: Vec<String>,
+    pub whole_word: bool,
+    pub expires_at: Option<String>,
+    pub irreversible: bool,
+}
+
+// ── FeaturedTag ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct FeaturedTag {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub statuses_count: i64,
+    pub last_status_at: Option<String>,
+}
+
+// ── Report ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct Report {
+    pub id: String,
+    pub action_taken: bool,
+    pub action_taken_at: Option<String>,
+    pub category: String,
+    pub comment: String,
+    pub forwarded: bool,
+    pub created_at: String,
+    pub status_ids: Option<Vec<String>>,
+    pub rule_ids: Option<Vec<String>>,
+    pub target_account: Account,
+}
+
+// ── Notification v2 ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct NotificationGroupsResponse {
+    pub notification_groups: Vec<NotificationGroup>,
+    pub accounts: Vec<Account>,
+    pub statuses: Vec<Status>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationGroup {
+    pub group_key: String,
+    pub notifications_count: i64,
+    #[serde(rename = "type")]
+    pub notification_type: String,
+    pub most_recent_notification_id: String,
+    pub page_max_id: String,
+    pub page_min_id: String,
+    pub latest_page_notification_at: String,
+    pub sample_account_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_id: Option<String>,
+}
+
+// ── Notification Policy ─────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct NotificationPolicy {
+    pub filter_not_following: bool,
+    pub filter_not_followers: bool,
+    pub filter_new_accounts: bool,
+    pub filter_private_mentions: bool,
+    pub summary: NotificationPolicySummary,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct NotificationPolicySummary {
+    pub pending_requests_count: i64,
+    pub pending_notifications_count: i64,
+}
+
+// ── Suggestion v2 ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct SuggestionV2 {
+    pub source: String,
+    pub sources: Vec<String>,
+    pub account: Account,
+}
+
+// ── App Credentials ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AppCredentials {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    pub vapid_key: Option<String>,
+}
+
+// ── Extended Description ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ExtendedDescription {
+    pub updated_at: String,
+    pub content: String,
+}
+
+// ── Push Subscription ───────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct WebPushSubscription {
+    pub id: String,
+    pub endpoint: String,
+    pub alerts: HashMap<String, bool>,
+    pub server_key: String,
+}
 
 /// Query parameters used by timeline/list endpoints.
 #[derive(Debug, Deserialize)]

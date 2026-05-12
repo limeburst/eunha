@@ -1,0 +1,155 @@
+use axum::{
+    extract::{Extension, Path, State},
+    Json,
+};
+use serde::Deserialize;
+
+use crate::{
+    error::{AppError, AppResult},
+    middleware::{AuthenticatedUser, ResolvedInstance},
+    state::AppState,
+};
+use super::types::FeaturedTag;
+
+fn tag_url(domain: &str, name: &str) -> String {
+    format!("https://{domain}/tags/{name}")
+}
+
+// ── GET /api/v1/featured_tags ─────────────────────────────────────────────
+
+pub async fn list_featured_tags(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<FeaturedTag>>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+
+    let rows = sqlx::query!(
+        r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
+           FROM featured_tags ft
+           JOIN tags t ON t.id = ft.tag_id
+           WHERE ft.account_id = $1
+           ORDER BY ft.id"#,
+        auth.account_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let tags = rows
+        .into_iter()
+        .map(|r| FeaturedTag {
+            id: r.id.to_string(),
+            name: r.name.clone(),
+            url: tag_url(domain, &r.name),
+            statuses_count: r.statuses_count,
+            last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        })
+        .collect();
+
+    Ok(Json(tags))
+}
+
+// ── POST /api/v1/featured_tags ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct FeaturedTagForm {
+    pub name: String,
+}
+
+pub async fn feature_tag(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<FeaturedTagForm>,
+) -> AppResult<Json<FeaturedTag>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let name = form.name.to_lowercase();
+    let name = name.trim_start_matches('#');
+
+    let tag_id = sqlx::query_scalar!(
+        r#"INSERT INTO tags (name) VALUES ($1)
+           ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id"#,
+        name,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let row = sqlx::query!(
+        r#"INSERT INTO featured_tags (account_id, tag_id, name)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (account_id, tag_id) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id, statuses_count, last_status_at"#,
+        auth.account_id,
+        tag_id,
+        name,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(FeaturedTag {
+        id: row.id.to_string(),
+        name: name.to_string(),
+        url: tag_url(domain, name),
+        statuses_count: row.statuses_count,
+        last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+    }))
+}
+
+// ── DELETE /api/v1/featured_tags/:id ─────────────────────────────────────
+
+pub async fn unfeature_tag(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    let deleted = sqlx::query!(
+        "DELETE FROM featured_tags WHERE id = $1 AND account_id = $2",
+        id,
+        auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    if deleted.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v1/featured_tags/suggestions ────────────────────────────────
+
+pub async fn featured_tag_suggestions(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<super::types::Tag>>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+
+    let rows = sqlx::query!(
+        r#"SELECT t.name
+           FROM tags t
+           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses s ON s.id = st.status_id
+           WHERE s.account_id = $1 AND s.deleted_at IS NULL
+           GROUP BY t.name
+           ORDER BY COUNT(*) DESC
+           LIMIT 10"#,
+        auth.account_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let tags = rows
+        .into_iter()
+        .map(|r| super::types::Tag {
+            url: format!("https://{}/tags/{}", domain, r.name),
+            name: r.name,
+            history: vec![],
+            following: None,
+        })
+        .collect();
+
+    Ok(Json(tags))
+}

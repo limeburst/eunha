@@ -15,7 +15,7 @@ use crate::{
 };
 use super::{
     convert::{account_from_db, status_from_db},
-    types::{Account as ApiAccount, PaginationParams, Preferences, Relationship},
+    types::{Account as ApiAccount, PaginationParams, Preferences, Relationship, SuggestionV2},
 };
 
 // ── GET /api/v1/accounts/verify_credentials ────────────────────────────────
@@ -899,6 +899,14 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
     .fetch_optional(&state.db)
     .await?;
 
+    let note = sqlx::query_scalar!(
+        "SELECT comment FROM account_notes WHERE account_id = $1 AND target_account_id = $2",
+        source_id, target_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .unwrap_or_default();
+
     Ok(Relationship {
         id: target_id.to_string(),
         following: follow.as_ref().map_or(false, |f| f.state == "accepted"),
@@ -914,7 +922,7 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
         requested_by: false,
         domain_blocking: false,
         endorsed: false,
-        note: String::new(),
+        note,
     })
 }
 
@@ -959,4 +967,171 @@ pub async fn dismiss_suggestion(
     Path(_account_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v2/suggestions ───────────────────────────────────────────────
+
+pub async fn get_suggestions_v2(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(params): Query<PaginationParams>,
+) -> AppResult<Json<Vec<SuggestionV2>>> {
+    let limit = params.limit_clamped(40, 80);
+
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN follows f ON f.account_id = a.id
+           WHERE f.target_account_id = $1
+             AND f.state = 'accepted'
+             AND a.instance_id = $2
+             AND a.domain IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM follows f2
+               WHERE f2.account_id = $1 AND f2.target_account_id = a.id
+             )
+           ORDER BY f.created_at DESC
+           LIMIT $3"#,
+        auth.account_id,
+        instance.id,
+        limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let suggestions = accounts
+        .iter()
+        .map(|a| SuggestionV2 {
+            source: "friends_of_friends".to_string(),
+            sources: vec!["friends_of_friends".to_string()],
+            account: account_from_db(a),
+        })
+        .collect();
+
+    Ok(Json(suggestions))
+}
+
+// ── POST /api/v1/accounts/:id/note ────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct NoteForm {
+    pub comment: Option<String>,
+}
+
+pub async fn set_account_note(
+    State(state): State<AppState>,
+    Path(target_id): Path<Uuid>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<NoteForm>,
+) -> AppResult<Json<Relationship>> {
+    let comment = form.comment.unwrap_or_default();
+    sqlx::query!(
+        r#"INSERT INTO account_notes (account_id, target_account_id, comment)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (account_id, target_account_id)
+           DO UPDATE SET comment = EXCLUDED.comment, updated_at = now()"#,
+        auth.account_id,
+        target_id,
+        comment,
+    )
+    .execute(&state.db)
+    .await?;
+
+    build_relationship(&state, auth.account_id, target_id).await.map(Json)
+}
+
+// ── POST /api/v1/accounts/:id/remove_from_followers ───────────────────────
+
+pub async fn remove_from_followers(
+    State(state): State<AppState>,
+    Path(requester_id): Path<Uuid>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Relationship>> {
+    let deleted = sqlx::query!(
+        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted' RETURNING 1 as exists",
+        requester_id,
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_some() {
+        sqlx::query!(
+            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            auth.account_id
+        )
+        .execute(&state.db)
+        .await?;
+        sqlx::query!(
+            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            requester_id
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    build_relationship(&state, auth.account_id, requester_id).await.map(Json)
+}
+
+// ── POST /api/v1/accounts/:id/endorse ────────────────────────────────────
+
+pub async fn endorse_account(
+    State(state): State<AppState>,
+    Path(target_id): Path<Uuid>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Relationship>> {
+    // Endorsements not persisted yet; just return relationship
+    build_relationship(&state, auth.account_id, target_id).await.map(Json)
+}
+
+// ── POST /api/v1/accounts/:id/unendorse ──────────────────────────────────
+
+pub async fn unendorse_account(
+    State(state): State<AppState>,
+    Path(target_id): Path<Uuid>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Relationship>> {
+    build_relationship(&state, auth.account_id, target_id).await.map(Json)
+}
+
+// ── GET /api/v1/accounts/:id/endorsements ────────────────────────────────
+
+pub async fn get_endorsements(
+    Extension(_auth): Extension<AuthenticatedUser>,
+    Path(_id): Path<Uuid>,
+) -> Json<Vec<ApiAccount>> {
+    Json(vec![])
+}
+
+// ── GET /api/v1/accounts/:id/lists ───────────────────────────────────────
+
+pub async fn get_account_lists(
+    State(state): State<AppState>,
+    Path(target_id): Path<Uuid>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<super::types::List>>> {
+    let rows = sqlx::query!(
+        r#"SELECT l.id, l.title, l.replies_policy, l.exclusive
+           FROM lists l
+           JOIN list_accounts la ON la.list_id = l.id
+           WHERE l.account_id = $1 AND la.account_id = $2
+           ORDER BY l.id"#,
+        auth.account_id,
+        target_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let lists = rows
+        .into_iter()
+        .map(|r| super::types::List {
+            id: r.id.to_string(),
+            title: r.title,
+            replies_policy: r.replies_policy,
+            exclusive: r.exclusive,
+        })
+        .collect();
+
+    Ok(Json(lists))
 }

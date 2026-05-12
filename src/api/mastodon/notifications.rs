@@ -13,7 +13,10 @@ use crate::{
 use super::{
     accounts::{fetch_reblog_data, fetch_status_media},
     convert::{account_from_db, status_from_db},
-    types::{Notification, PaginationParams},
+    types::{
+        Notification, NotificationGroup, NotificationGroupsResponse, NotificationPolicy,
+        NotificationPolicySummary, PaginationParams,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +111,151 @@ pub async fn dismiss_notification(
     .execute(&state.db)
     .await?;
     Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v2/notifications ─────────────────────────────────────────────
+
+pub async fn get_notifications_v2(
+    State(state): State<AppState>,
+    Query(q): Query<NotificationsQuery>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<NotificationGroupsResponse>> {
+    let limit = q.pagination.limit_clamped(15, 30);
+    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
+    let notifications = sqlx::query_as!(
+        DbNotification,
+        r#"SELECT * FROM notifications
+           WHERE account_id = $1
+             AND ($2::bigint IS NULL OR id < $2)
+             AND ($3::bigint IS NULL OR id > $3)
+           ORDER BY id DESC
+           LIMIT $4"#,
+        auth.account_id,
+        max_id,
+        since_id,
+        limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut groups = Vec::with_capacity(notifications.len());
+    let mut accounts_map: std::collections::HashMap<String, super::types::Account> =
+        std::collections::HashMap::new();
+    let mut statuses_map: std::collections::HashMap<String, super::types::Status> =
+        std::collections::HashMap::new();
+
+    for n in &notifications {
+        let from_account = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE id = $1",
+            n.from_account_id
+        )
+        .fetch_one(&state.db)
+        .await?;
+        let api_account = account_from_db(&from_account);
+        accounts_map.insert(from_account.id.to_string(), api_account);
+
+        let status_id = if let Some(sid) = n.status_id {
+            if let Some(s) = sqlx::query_as!(
+                crate::db::models::Status,
+                "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+                sid
+            )
+            .fetch_optional(&state.db)
+            .await?
+            {
+                let saccount = sqlx::query_as!(
+                    Account,
+                    "SELECT * FROM accounts WHERE id = $1",
+                    s.account_id
+                )
+                .fetch_one(&state.db)
+                .await?;
+                let media = fetch_status_media(&state, s.id).await?;
+                let reblog = fetch_reblog_data(&state, &s).await?;
+                let api_status = status_from_db(&s, &saccount, media, reblog, None);
+                let sid_str = s.id.to_string();
+                statuses_map.insert(sid_str.clone(), api_status);
+                Some(sid_str)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let id_str = n.id.to_string();
+        groups.push(NotificationGroup {
+            group_key: format!("ungrouped-{}", id_str),
+            notifications_count: 1,
+            notification_type: n.notification_type.clone(),
+            most_recent_notification_id: id_str.clone(),
+            page_max_id: id_str.clone(),
+            page_min_id: id_str.clone(),
+            latest_page_notification_at: n.created_at.to_rfc3339(),
+            sample_account_ids: vec![n.from_account_id.to_string()],
+            status_id,
+        });
+    }
+
+    Ok(Json(NotificationGroupsResponse {
+        notification_groups: groups,
+        accounts: accounts_map.into_values().collect(),
+        statuses: statuses_map.into_values().collect(),
+    }))
+}
+
+// ── GET /api/v2/notifications/policy ─────────────────────────────────────
+
+pub async fn get_notification_policy(
+    Extension(_auth): Extension<AuthenticatedUser>,
+) -> Json<NotificationPolicy> {
+    Json(NotificationPolicy {
+        filter_not_following: false,
+        filter_not_followers: false,
+        filter_new_accounts: false,
+        filter_private_mentions: false,
+        summary: NotificationPolicySummary {
+            pending_requests_count: 0,
+            pending_notifications_count: 0,
+        },
+    })
+}
+
+// ── PATCH /api/v2/notifications/policy ───────────────────────────────────
+
+pub async fn update_notification_policy(
+    Extension(_auth): Extension<AuthenticatedUser>,
+) -> Json<NotificationPolicy> {
+    Json(NotificationPolicy::default())
+}
+
+// ── GET /api/v1/notifications/requests ───────────────────────────────────
+
+pub async fn get_notification_requests(
+    Extension(_auth): Extension<AuthenticatedUser>,
+) -> Json<Vec<serde_json::Value>> {
+    Json(vec![])
+}
+
+// ── POST /api/v1/notifications/requests/:id/accept ───────────────────────
+
+pub async fn accept_notification_request(
+    Extension(_auth): Extension<AuthenticatedUser>,
+    axum::extract::Path(_id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({}))
+}
+
+// ── POST /api/v1/notifications/requests/:id/dismiss ──────────────────────
+
+pub async fn dismiss_notification_request(
+    Extension(_auth): Extension<AuthenticatedUser>,
+    axum::extract::Path(_id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({}))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

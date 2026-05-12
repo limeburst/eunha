@@ -44,7 +44,38 @@ use crate::{
     middleware::ResolvedInstance,
     state::AppState,
 };
-use super::types::{CredentialApplication, Token};
+use super::types::{AppCredentials, CredentialApplication, Token};
+
+// ── GET /api/v1/apps/verify_credentials ───────────────────────────────────
+
+pub async fn verify_app_credentials(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> AppResult<Json<AppCredentials>> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(AppError::Unauthorized)?;
+
+    let row = sqlx::query!(
+        r#"SELECT a.name, a.website
+           FROM oauth_access_tokens t
+           JOIN oauth_applications a ON a.id = t.application_id
+           WHERE t.token = $1 AND t.revoked_at IS NULL
+             AND (t.expires_at IS NULL OR t.expires_at > now())"#,
+        token,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::Unauthorized)?;
+
+    Ok(Json(AppCredentials {
+        name: row.name,
+        website: row.website,
+        vapid_key: None,
+    }))
+}
 
 // ── POST /api/v1/apps ──────────────────────────────────────────────────────
 

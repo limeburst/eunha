@@ -14,6 +14,50 @@ fn tag_url(domain: &str, name: &str) -> String {
     format!("https://{domain}/tags/{name}")
 }
 
+// ── GET /api/v1/tags/:name ────────────────────────────────────────────────
+
+pub async fn get_tag(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Path(name): Path<String>,
+    auth: Option<Extension<AuthenticatedUser>>,
+) -> AppResult<Json<Tag>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let name = name.to_lowercase();
+
+    let _tag = sqlx::query!(
+        "SELECT id FROM tags WHERE name = $1",
+        name,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound)?;
+
+    let following = if let Some(Extension(auth)) = auth {
+        Some(sqlx::query_scalar!(
+            r#"SELECT EXISTS(
+               SELECT 1 FROM tag_follows tf
+               JOIN tags t ON t.id = tf.tag_id
+               WHERE tf.account_id = $1 AND t.name = $2
+            )"#,
+            auth.account_id,
+            name,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(false))
+    } else {
+        None
+    };
+
+    Ok(Json(Tag {
+        url: tag_url(domain, &name),
+        name,
+        history: vec![],
+        following,
+    }))
+}
+
 pub async fn list_followed_tags(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,

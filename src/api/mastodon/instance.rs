@@ -5,6 +5,17 @@ use crate::{
 };
 use super::types::*;
 
+// ── GET /api/v1/instance/extended_description ────────────────────────────
+
+pub async fn get_extended_description(
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> AppResult<Json<ExtendedDescription>> {
+    Ok(Json(ExtendedDescription {
+        updated_at: instance.updated_at.to_rfc3339(),
+        content: instance.description.clone(),
+    }))
+}
+
 // ── GET /api/v1/instance ──────────────────────────────────────────────────
 
 pub async fn get_instance_v1(

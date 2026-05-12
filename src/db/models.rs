@@ -260,3 +260,11 @@ pub struct Poll {
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, FromRow)]
+pub struct UserDomainBlock {
+    pub id: i64,
+    pub account_id: Uuid,
+    pub domain: String,
+    pub created_at: DateTime<Utc>,
+}
