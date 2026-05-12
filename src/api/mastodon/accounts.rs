@@ -11,6 +11,7 @@ use crate::{
     db::models::Account,
     error::{AppError, AppResult},
     middleware::{AuthenticatedUser, ResolvedInstance},
+    push,
     state::AppState,
 };
 use super::{
@@ -299,6 +300,30 @@ pub async fn follow_account(
         )
         .execute(&state.db)
         .await?;
+
+        let follower = fetch_account(&state, auth.account_id).await?;
+        push::create_and_push(
+            &state,
+            target_id,
+            auth.account_id,
+            "follow",
+            None,
+            format!("{} followed you", follower.display_name),
+            follower.acct().clone(),
+            follower.avatar.clone().unwrap_or_default(),
+        ).await;
+    } else {
+        let requester = fetch_account(&state, auth.account_id).await?;
+        push::create_and_push(
+            &state,
+            target_id,
+            auth.account_id,
+            "follow_request",
+            None,
+            format!("{} wants to follow you", requester.display_name),
+            requester.acct().clone(),
+            requester.avatar.clone().unwrap_or_default(),
+        ).await;
     }
 
     build_relationship(&state, auth.account_id, target_id).await.map(Json)

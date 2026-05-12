@@ -167,8 +167,13 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/domain_blocks", get(domain_blocks::get_domain_blocks).post(domain_blocks::block_domain).delete(domain_blocks::unblock_domain))
         // Reports
         .route("/api/v1/reports", post(reports::file_report))
-        // Push notifications (not implemented; return 404)
-        .route("/api/v1/push/subscription", get(push::get_subscription).post(push::create_subscription).put(push::update_subscription).delete(push::delete_subscription))
+        // Push notifications (VAPID + Web Push)
+        .route("/api/v1/push/subscription",
+            get(push::get_subscription)
+            .post(push::create_subscription)
+            .put(push::update_subscription)
+            .delete(push::delete_subscription)
+        )
         // Scheduled statuses
         .route("/api/v1/scheduled_statuses", get(scheduled_statuses::list_scheduled_statuses))
         // Media — 25 MB limit matching Mastodon's default

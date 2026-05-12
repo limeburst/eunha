@@ -9,6 +9,7 @@ pub mod error;
 pub mod locale;
 pub mod media;
 pub mod middleware;
+pub mod push;
 pub mod state;
 pub mod streaming;
 pub mod templates;

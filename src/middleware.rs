@@ -66,6 +66,7 @@ fn rebuild_url(req: &Request, new_host: &str) -> String {
 #[derive(Clone)]
 pub struct AuthenticatedUser {
     pub account_id: Uuid,
+    pub token_id: Uuid,
     pub scopes: Vec<String>,
 }
 
@@ -79,7 +80,7 @@ pub async fn authenticate(
 ) -> Response {
     if let Some(token) = extract_bearer(&req) {
         if let Some(tok) = sqlx::query!(
-            r#"SELECT account_id, scopes, expires_at, revoked_at
+            r#"SELECT id, account_id, scopes, expires_at, revoked_at
                FROM oauth_access_tokens WHERE token = $1"#,
             token
         )
@@ -95,6 +96,7 @@ pub async fn authenticate(
                 if let Some(account_id) = tok.account_id {
                     let user = AuthenticatedUser {
                         account_id,
+                        token_id: tok.id,
                         scopes: tok.scopes.split_whitespace().map(str::to_owned).collect(),
                     };
                     req.extensions_mut().insert(user);

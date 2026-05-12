@@ -9,6 +9,7 @@ use crate::{
     db::models::{Account, Status as DbStatus},
     error::{AppError, AppResult},
     middleware::{AuthenticatedUser, ResolvedInstance},
+    push,
     state::AppState,
     streaming::Event,
 };
@@ -115,6 +116,28 @@ pub async fn post_status(
                 status_id: status.id,
                 payload: std::sync::Arc::new(payload),
             });
+        }
+    }
+
+    // Notify the author of the parent status if this is a reply
+    if let Some(parent_id) = in_reply_to_id {
+        if let Ok(Some(parent)) = sqlx::query!(
+            "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            parent_id,
+        )
+        .fetch_optional(&state.db)
+        .await
+        {
+            push::create_and_push(
+                &state,
+                parent.account_id,
+                account.id,
+                "mention",
+                Some(status.id),
+                format!("{} mentioned you", account.display_name),
+                account.acct().clone(),
+                account.avatar.clone().unwrap_or_default(),
+            ).await;
         }
     }
 
@@ -234,6 +257,23 @@ pub async fn favourite_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+
+    // Notify status author
+    let from_display = {
+        let from = fetch_account(&state, auth.account_id).await?;
+        from.display_name.clone()
+    };
+    push::create_and_push(
+        &state,
+        status.account_id,
+        auth.account_id,
+        "favourite",
+        Some(id),
+        format!("{} favourited your post", from_display),
+        account_from_db(&account).acct.clone(),
+        account.avatar.clone().unwrap_or_default(),
+    ).await;
+
     Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
 }
 
@@ -300,6 +340,18 @@ pub async fn reblog_status(
     )
     .execute(&state.db)
     .await?;
+
+    // Notify original author
+    push::create_and_push(
+        &state,
+        original.account_id,
+        auth.account_id,
+        "reblog",
+        Some(id),
+        format!("{} boosted your post", boost_account.display_name),
+        boost_account.acct().clone(),
+        boost_account.avatar.clone().unwrap_or_default(),
+    ).await;
 
     let media = fetch_status_media(&state, boost.id).await?;
     let reblog = fetch_reblog_data(&state, &boost).await?;

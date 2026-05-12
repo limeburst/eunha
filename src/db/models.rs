@@ -16,6 +16,8 @@ pub struct Instance {
     pub private_key: String,
     pub public_key: String,
     pub console_user_id: Option<Uuid>,
+    pub vapid_private_key: String,
+    pub vapid_public_key: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -267,4 +269,23 @@ pub struct UserDomainBlock {
     pub account_id: Uuid,
     pub domain: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct WebPushSubscription {
+    pub id: i64,
+    pub account_id: Uuid,
+    pub access_token_id: Uuid,
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+    pub alert_follow: bool,
+    pub alert_favourite: bool,
+    pub alert_reblog: bool,
+    pub alert_mention: bool,
+    pub alert_poll: bool,
+    pub alert_status: bool,
+    pub policy: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
