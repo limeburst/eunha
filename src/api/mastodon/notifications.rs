@@ -300,7 +300,9 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         id: n.id.to_string(),
         notification_type: n.notification_type.clone(),
         created_at: n.created_at.to_rfc3339(),
+        group_key: format!("ungrouped-{}", n.id),
         account: account_from_db(&from_account),
         status,
+        filtered: None,
     })
 }

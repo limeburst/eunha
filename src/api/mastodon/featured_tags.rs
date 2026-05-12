@@ -128,12 +128,12 @@ pub async fn featured_tag_suggestions(
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
 
     let rows = sqlx::query!(
-        r#"SELECT t.name
+        r#"SELECT t.id, t.name
            FROM tags t
            JOIN status_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            WHERE s.account_id = $1 AND s.deleted_at IS NULL
-           GROUP BY t.name
+           GROUP BY t.id, t.name
            ORDER BY COUNT(*) DESC
            LIMIT 10"#,
         auth.account_id,
@@ -144,10 +144,12 @@ pub async fn featured_tag_suggestions(
     let tags = rows
         .into_iter()
         .map(|r| super::types::Tag {
+            id: r.id.to_string(),
             url: format!("https://{}/tags/{}", domain, r.name),
             name: r.name,
             history: vec![],
             following: None,
+            featuring: None,
         })
         .collect();
 

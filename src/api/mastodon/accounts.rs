@@ -49,6 +49,7 @@ pub async fn verify_credentials(
         indexable: account.indexable,
         hide_collections: None,
         attribution_domains: vec![],
+        quote_policy: "public".into(),
     });
 
     Ok(Json(api_account))
@@ -669,6 +670,7 @@ pub async fn update_credentials(
         indexable: account.indexable,
         hide_collections: None,
         attribution_domains: vec![],
+        quote_policy: "public".into(),
     });
     Ok(Json(api_account))
 }

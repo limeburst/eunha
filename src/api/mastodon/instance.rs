@@ -53,24 +53,32 @@ pub async fn get_instance_v2(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV2>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
+    let base_url = format!("https://{}", instance.domain);
 
     Ok(Json(InstanceV2 {
         domain: instance.domain.clone(),
         title: instance.title.clone(),
-        version: "0.0.1".to_string(),
+        version: "0.0.1 (compatible; Mastodon 4.3.0)".to_string(),
         source_url: "https://github.com/limeburst/eunha".to_string(),
         description: instance.description.clone(),
         usage: InstanceUsage {
             users: InstanceUsageUsers { active_month: 0 },
         },
         thumbnail: InstanceThumbnail {
-            url: format!("https://{}/instance-thumbnail.png", instance.domain),
+            url: format!("{base_url}/instance-thumbnail.png"),
             blurhash: None,
             versions: None,
         },
+        icon: vec![],
         languages: vec!["en".to_string()],
         configuration: InstanceConfiguration {
-            urls: InstanceUrls { streaming: streaming_url },
+            urls: InstanceUrls {
+                streaming: streaming_url,
+                status: None,
+                about: Some(format!("{base_url}/about")),
+                privacy_policy: None,
+                terms_of_service: None,
+            },
             vapid: VapidConfiguration { public_key: instance.vapid_public_key.clone() },
             accounts: AccountsConfiguration {
                 max_featured_tags: 10,
@@ -117,6 +125,7 @@ pub async fn get_instance_v2(
                     "audio/3gpp".into(),
                     "video/x-ms-asf".into(),
                 ],
+                description_limit: 1500,
                 image_size_limit: 16 * 1024 * 1024,
                 image_matrix_limit: 33_177_600,
                 video_size_limit: 99 * 1024 * 1024,
@@ -134,6 +143,8 @@ pub async fn get_instance_v2(
         registrations: InstanceRegistrations {
             enabled: instance.registrations_open,
             approval_required: instance.approval_required,
+            reason_required: false,
+            min_age: None,
             message: None,
             url: None,
         },
@@ -142,5 +153,6 @@ pub async fn get_instance_v2(
             account: None,
         },
         rules: vec![],
+        api_versions: serde_json::json!({ "mastodon": 2 }),
     }))
 }

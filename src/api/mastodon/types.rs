@@ -36,6 +36,7 @@ pub struct Account {
     pub last_status_at: Option<String>,
     pub emojis: Vec<CustomEmoji>,
     pub fields: Vec<Field>,
+    pub roles: Vec<Role>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moved: Option<Box<Account>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +63,14 @@ pub struct AccountSource {
     pub indexable: bool,
     pub hide_collections: Option<bool>,
     pub attribution_domains: Vec<String>,
+    pub quote_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Role {
+    pub id: String,
+    pub name: String,
+    pub color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +157,8 @@ pub struct MediaAttachment {
     pub url: Option<String>,
     pub preview_url: Option<String>,
     pub remote_url: Option<String>,
+    pub preview_remote_url: Option<String>,
+    pub text_url: Option<String>,
     pub description: Option<String>,
     pub blurhash: Option<String>,
     pub meta: Option<serde_json::Value>,
@@ -165,11 +176,13 @@ pub struct InstanceV2 {
     pub description: String,
     pub usage: InstanceUsage,
     pub thumbnail: InstanceThumbnail,
+    pub icon: Vec<serde_json::Value>,
     pub languages: Vec<String>,
     pub configuration: InstanceConfiguration,
     pub registrations: InstanceRegistrations,
     pub contact: InstanceContact,
     pub rules: Vec<Rule>,
+    pub api_versions: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -210,6 +223,10 @@ pub struct VapidConfiguration {
 #[derive(Debug, Serialize)]
 pub struct InstanceUrls {
     pub streaming: String,
+    pub status: Option<String>,
+    pub about: Option<String>,
+    pub privacy_policy: Option<String>,
+    pub terms_of_service: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,6 +250,7 @@ pub struct StatusesConfiguration {
 #[derive(Debug, Serialize)]
 pub struct MediaConfiguration {
     pub supported_mime_types: Vec<String>,
+    pub description_limit: u64,
     pub image_size_limit: u64,
     pub image_matrix_limit: u64,
     pub video_size_limit: u64,
@@ -257,6 +275,8 @@ pub struct TranslationConfiguration {
 pub struct InstanceRegistrations {
     pub enabled: bool,
     pub approval_required: bool,
+    pub reason_required: bool,
+    pub min_age: Option<u32>,
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -284,9 +304,12 @@ pub struct Notification {
     #[serde(rename = "type")]
     pub notification_type: String,
     pub created_at: String,
+    pub group_key: String,
     pub account: Account,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filtered: Option<Vec<serde_json::Value>>,
 }
 
 // ── OAuth ──────────────────────────────────────────────────────────────────
@@ -355,6 +378,7 @@ pub struct PreviewCard {
     pub url: String,
     pub title: String,
     pub description: String,
+    pub language: Option<String>,
     #[serde(rename = "type")]
     pub card_type: String,
     pub author_name: String,
@@ -365,8 +389,18 @@ pub struct PreviewCard {
     pub width: i32,
     pub height: i32,
     pub image: Option<String>,
+    pub image_description: String,
     pub embed_url: String,
     pub blurhash: Option<String>,
+    pub published_at: Option<String>,
+    pub authors: Vec<PreviewCardAuthor>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewCardAuthor {
+    pub name: String,
+    pub url: String,
+    pub account: Option<Account>,
 }
 
 // ── Relationship ───────────────────────────────────────────────────────────
@@ -402,11 +436,14 @@ pub struct SearchResults {
 
 #[derive(Debug, Serialize)]
 pub struct Tag {
+    pub id: String,
     pub name: String,
     pub url: String,
     pub history: Vec<TagHistory>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub following: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub featuring: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

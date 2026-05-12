@@ -25,7 +25,7 @@ pub async fn get_tag(
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let name = name.to_lowercase();
 
-    let _tag = sqlx::query!(
+    let tag = sqlx::query!(
         "SELECT id FROM tags WHERE name = $1",
         name,
     )
@@ -33,8 +33,8 @@ pub async fn get_tag(
     .await?
     .ok_or_else(|| AppError::NotFound)?;
 
-    let following = if let Some(Extension(auth)) = auth {
-        Some(sqlx::query_scalar!(
+    let (following, featuring) = if let Some(Extension(auth)) = auth {
+        let following = sqlx::query_scalar!(
             r#"SELECT EXISTS(
                SELECT 1 FROM tag_follows tf
                JOIN tags t ON t.id = tf.tag_id
@@ -45,16 +45,32 @@ pub async fn get_tag(
         )
         .fetch_one(&state.db)
         .await?
-        .unwrap_or(false))
+        .unwrap_or(false);
+
+        let featuring = sqlx::query_scalar!(
+            r#"SELECT EXISTS(
+               SELECT 1 FROM featured_tags ft
+               WHERE ft.account_id = $1 AND ft.tag_id = $2
+            )"#,
+            auth.account_id,
+            tag.id,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(false);
+
+        (Some(following), Some(featuring))
     } else {
-        None
+        (None, None)
     };
 
     Ok(Json(Tag {
+        id: tag.id.to_string(),
         url: tag_url(domain, &name),
         name,
         history: vec![],
         following,
+        featuring,
     }))
 }
 
@@ -66,7 +82,7 @@ pub async fn list_followed_tags(
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
 
     let rows = sqlx::query!(
-        r#"SELECT t.name
+        r#"SELECT t.id, t.name
            FROM tag_follows tf
            JOIN tags t ON t.id = tf.tag_id
            WHERE tf.account_id = $1
@@ -79,10 +95,12 @@ pub async fn list_followed_tags(
     let tags = rows
         .into_iter()
         .map(|r| Tag {
+            id: r.id.to_string(),
             url: tag_url(domain, &r.name),
             name: r.name,
             history: vec![],
             following: Some(true),
+            featuring: None,
         })
         .collect();
 
@@ -115,10 +133,12 @@ pub async fn follow_tag(
     .await?;
 
     Ok(Json(Tag {
+        id: tag_id.to_string(),
         url: tag_url(domain, &name),
         name,
         history: vec![],
         following: Some(true),
+        featuring: Some(false),
     }))
 }
 
@@ -148,9 +168,11 @@ pub async fn unfollow_tag(
     .await?;
 
     Ok(Json(Tag {
+        id: tag_id.to_string(),
         url: tag_url(domain, &name),
         name,
         history: vec![],
         following: Some(false),
+        featuring: Some(false),
     }))
 }

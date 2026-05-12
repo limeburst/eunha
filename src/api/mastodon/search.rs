@@ -118,17 +118,19 @@ pub async fn search(
 
     let hashtags = if search_type.is_none() || search_type == Some("hashtags") {
         sqlx::query!(
-            "SELECT name FROM tags WHERE lower(name) LIKE $1 ORDER BY name LIMIT $2",
+            "SELECT id, name FROM tags WHERE lower(name) LIKE $1 ORDER BY name LIMIT $2",
             pattern, limit
         )
         .fetch_all(&state.db)
         .await?
         .into_iter()
         .map(|r| Tag {
+            id: r.id.to_string(),
             name: r.name.clone(),
             url: format!("https://{}/tags/{}", instance.domain, r.name),
             history: vec![],
             following: None,
+            featuring: None,
         })
         .collect()
     } else {
