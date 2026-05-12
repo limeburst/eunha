@@ -414,9 +414,12 @@ pub async fn reblog_status(
         boost_account.avatar.clone().unwrap_or_default(),
     ).await;
 
+    // Build viewer context against the ORIGINAL so the nested reblog object
+    // carries correct favourited/bookmarked/reblogged flags for the iOS client.
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
     let media = fetch_status_media(&state, boost.id).await?;
     let reblog = fetch_reblog_data(&state, &boost).await?;
-    Ok(Json(status_from_db(&boost, &boost_account, media, reblog, None)))
+    Ok(Json(status_from_db(&boost, &boost_account, media, reblog, Some(ctx))))
 }
 
 // ── GET /api/v1/statuses/:id/context ──────────────────────────────────────
@@ -497,11 +500,15 @@ pub async fn unreblog_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
-    fetch_status_with_account(&state, id).await?;
+    let (status_raw, _) = fetch_status_with_account(&state, id).await?;
+
+    // Accept both the original status ID and the reblog's own ID.
+    // When iOS sends the reblog wrapper's ID, resolve it to the original.
+    let original_id = status_raw.reblog_of_id.unwrap_or(id);
 
     let deleted = sqlx::query!(
         "DELETE FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL RETURNING id",
-        auth.account_id, id
+        auth.account_id, original_id
     )
     .fetch_optional(&state.db)
     .await?;
@@ -509,17 +516,17 @@ pub async fn unreblog_status(
     if deleted.is_some() {
         sqlx::query!(
             "UPDATE statuses SET reblogs_count = GREATEST(reblogs_count - 1, 0) WHERE id = $1",
-            id
+            original_id
         )
         .execute(&state.db)
         .await?;
     }
 
-    let (status, account) = fetch_status_with_account(&state, id).await?;
-    let media = fetch_status_media(&state, id).await?;
-    let reblog = fetch_reblog_data(&state, &status).await?;
-    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    let (original, account) = fetch_status_with_account(&state, original_id).await?;
+    let media = fetch_status_media(&state, original_id).await?;
+    let reblog = fetch_reblog_data(&state, &original).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, original_id).await?;
+    Ok(Json(status_from_db(&original, &account, media, reblog, Some(ctx))))
 }
 
 // ── POST /api/v1/statuses/:id/bookmark ────────────────────────────────────
