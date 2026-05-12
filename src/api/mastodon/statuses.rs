@@ -1,5 +1,6 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, FromRequest, Multipart, Path, State},
+    http::header,
     Json,
 };
 use serde::Deserialize;
@@ -19,7 +20,7 @@ use super::{
     types::{Status, StatusContext, StatusEdit, StatusSource},
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct PostStatusForm {
     pub status: Option<String>,
     pub in_reply_to_id: Option<String>,
@@ -36,8 +37,9 @@ pub async fn post_status(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Json(form): Json<PostStatusForm>,
+    request: axum::extract::Request,
 ) -> AppResult<Json<Status>> {
+    let form = extract_post_status_form(request).await?;
     let account = fetch_account(&state, auth.account_id).await?;
     let text = form.status.unwrap_or_default();
     if text.is_empty() && form.media_ids.as_ref().map_or(true, |m| m.is_empty()) {
@@ -142,6 +144,65 @@ pub async fn post_status(
     }
 
     Ok(Json(api_status))
+}
+
+async fn extract_post_status_form(request: axum::extract::Request) -> AppResult<PostStatusForm> {
+    let ct = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if ct.contains("application/json") {
+        return axum::extract::Json::<PostStatusForm>::from_request(request, &())
+            .await
+            .map(|axum::extract::Json(f)| f)
+            .map_err(|e| AppError::Unprocessable(e.to_string()));
+    }
+
+    if ct.contains("multipart/form-data") {
+        let mut multipart = Multipart::from_request(request, &())
+            .await
+            .map_err(|e| AppError::Unprocessable(e.to_string()))?;
+        let mut form = PostStatusForm::default();
+        let mut media_ids: Vec<String> = Vec::new();
+        while let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(|e| AppError::Unprocessable(e.to_string()))?
+        {
+            let name = field.name().unwrap_or("").to_string();
+            let text = field
+                .text()
+                .await
+                .map_err(|e| AppError::Unprocessable(e.to_string()))?;
+            match name.as_str() {
+                "status" => form.status = Some(text),
+                "in_reply_to_id" => form.in_reply_to_id = if text.is_empty() { None } else { Some(text) },
+                "spoiler_text" => form.spoiler_text = if text.is_empty() { None } else { Some(text) },
+                "visibility" => form.visibility = Some(text),
+                "language" => form.language = if text.is_empty() { None } else { Some(text) },
+                "sensitive" => form.sensitive = Some(text == "true" || text == "1"),
+                "media_ids[]" | "media_ids" => {
+                    if !text.is_empty() {
+                        media_ids.push(text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !media_ids.is_empty() {
+            form.media_ids = Some(media_ids);
+        }
+        return Ok(form);
+    }
+
+    // Fall back to URL-encoded form
+    axum::extract::Form::<PostStatusForm>::from_request(request, &())
+        .await
+        .map(|axum::extract::Form(f)| f)
+        .map_err(|e| AppError::Unprocessable(e.to_string()))
 }
 
 // ── GET /api/v1/statuses/:id ───────────────────────────────────────────────
