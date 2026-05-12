@@ -690,11 +690,6 @@ pub struct FamiliarFollowers {
     pub accounts: Vec<Account>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct FamiliarFollowersQuery {
-    #[serde(default, rename = "id[]")]
-    pub ids: Vec<String>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct PaginationParams {

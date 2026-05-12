@@ -1194,15 +1194,19 @@ pub async fn update_profile_settings(
 
 // ── GET /api/v1/accounts/familiar_followers ──────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct FamiliarFollowersQuery {
+    #[serde(default, rename = "id[]", deserialize_with = "deserialize_uuid_list")]
+    ids: Vec<Uuid>,
+}
+
 pub async fn get_familiar_followers(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Query(q): Query<super::types::FamiliarFollowersQuery>,
+    Query(q): Query<FamiliarFollowersQuery>,
 ) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
     let mut result = Vec::with_capacity(q.ids.len());
-    for raw_id in &q.ids {
-        let Ok(target_id) = raw_id.parse::<Uuid>() else { continue };
-
+    for target_id in &q.ids {
         // Find followers of target_id that also follow the viewer (auth.account_id)
         let accounts = sqlx::query_as!(
             crate::db::models::Account,
@@ -1218,7 +1222,7 @@ pub async fn get_familiar_followers(
         .unwrap_or_default();
 
         result.push(super::types::FamiliarFollowers {
-            id: raw_id.clone(),
+            id: target_id.to_string(),
             accounts: accounts.iter().map(account_from_db).collect(),
         });
     }
