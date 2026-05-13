@@ -207,6 +207,10 @@ pub async fn get_account_statuses(
                OR reblog_of_id IS NOT NULL
                OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
              )
+             AND ($9::boolean IS NOT TRUE OR
+               EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id) OR
+               (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
+             )
            ORDER BY id DESC
            LIMIT $8"#,
         account.id,
@@ -217,6 +221,7 @@ pub async fn get_account_statuses(
         is_self,
         is_follower,
         limit,
+        q.only_media.unwrap_or(false),
     )
     .fetch_all(&state.db)
     .await?;
