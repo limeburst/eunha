@@ -1233,7 +1233,6 @@ pub async fn unendorse_account(
 // ── GET /api/v1/accounts/:id/endorsements ────────────────────────────────
 
 pub async fn get_endorsements(
-    Extension(_auth): Extension<AuthenticatedUser>,
     Path(_id): Path<Uuid>,
 ) -> Json<Vec<ApiAccount>> {
     Json(vec![])
