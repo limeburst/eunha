@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Multipart, Path, Query, State},
+    extract::{Extension, Multipart, Path, Query, RawQuery, State},
     http::{header, HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -251,44 +251,22 @@ pub async fn get_account_statuses(
 
 // ── GET /api/v1/accounts/relationships ────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-pub struct RelationshipsQuery {
-    // Mastodon clients send id[]=uuid1&id[]=uuid2; serde_urlencoded can't coerce
-    // a single string into Vec, so use a custom visitor that handles both cases.
-    #[serde(default, rename = "id[]", deserialize_with = "deserialize_uuid_list")]
-    id: Vec<Uuid>,
-}
-
-fn deserialize_uuid_list<'de, D>(de: D) -> Result<Vec<Uuid>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{SeqAccess, Visitor};
-    struct UuidListVisitor;
-    impl<'de> Visitor<'de> for UuidListVisitor {
-        type Value = Vec<Uuid>;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a UUID string or sequence of UUID strings")
-        }
-        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            v.parse::<Uuid>().map(|u| vec![u]).map_err(serde::de::Error::custom)
-        }
-        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let mut out = Vec::new();
-            while let Some(v) = seq.next_element::<Uuid>()? { out.push(v); }
-            Ok(out)
-        }
-    }
-    de.deserialize_any(UuidListVisitor)
-}
-
 pub async fn get_relationships(
     State(state): State<AppState>,
-    Query(q): Query<RelationshipsQuery>,
+    RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Relationship>>> {
-    let mut results = Vec::with_capacity(q.id.len());
-    for target_id in &q.id {
+    // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
+    // Parse with form_urlencoded which correctly returns each pair separately.
+    let ids: Vec<Uuid> = url::form_urlencoded::parse(
+            qs.as_deref().unwrap_or("").as_bytes()
+        )
+        .filter(|(k, _)| k == "id[]" || k == "id")
+        .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .collect();
+
+    let mut results = Vec::with_capacity(ids.len());
+    for target_id in &ids {
         results.push(build_relationship(&state, auth.account_id, *target_id).await?);
     }
     Ok(Json(results))
@@ -1194,19 +1172,20 @@ pub async fn update_profile_settings(
 
 // ── GET /api/v1/accounts/familiar_followers ──────────────────────────────
 
-#[derive(Debug, Deserialize)]
-pub struct FamiliarFollowersQuery {
-    #[serde(default, rename = "id[]", deserialize_with = "deserialize_uuid_list")]
-    ids: Vec<Uuid>,
-}
-
 pub async fn get_familiar_followers(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Query(q): Query<FamiliarFollowersQuery>,
+    RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
-    let mut result = Vec::with_capacity(q.ids.len());
-    for target_id in &q.ids {
+    let ids: Vec<Uuid> = url::form_urlencoded::parse(
+            qs.as_deref().unwrap_or("").as_bytes()
+        )
+        .filter(|(k, _)| k == "id[]" || k == "id")
+        .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .collect();
+
+    let mut result = Vec::with_capacity(ids.len());
+    for target_id in &ids {
         // Find followers of target_id that also follow the viewer (auth.account_id)
         let accounts = sqlx::query_as!(
             crate::db::models::Account,
