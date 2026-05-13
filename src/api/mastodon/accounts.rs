@@ -674,13 +674,21 @@ pub async fn update_credentials(
     let account = fetch_account(&state, auth.account_id).await?;
     let fields = super::convert::fields_from_db(&account.fields);
     let mut api_account = account_from_db(&account);
+    let follow_requests_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM follows WHERE target_account_id = $1 AND state = 'pending'",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
     api_account.source = Some(super::types::AccountSource {
         privacy: "public".into(),
         sensitive: false,
         language: None,
         note: account.note_text.clone(),
         fields: fields.clone(),
-        follow_requests_count: 0,
+        follow_requests_count,
         discoverable: Some(account.discoverable),
         indexable: account.indexable,
         hide_collections: None,
@@ -873,6 +881,18 @@ pub async fn authorize_follow_request(
     )
     .execute(&state.db)
     .await?;
+
+    let accepter = fetch_account(&state, auth.account_id).await?;
+    push::create_and_push(
+        &state,
+        requester_id,
+        auth.account_id,
+        "follow",
+        None,
+        format!("{} accepted your follow request", accepter.display_name),
+        accepter.acct().clone(),
+        accepter.avatar.clone().unwrap_or_default(),
+    ).await;
 
     build_relationship(&state, auth.account_id, requester_id).await.map(Json)
 }
@@ -1086,7 +1106,13 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
         requested: follow.as_ref().map_or(false, |f| f.state == "pending"),
         requested_by: false,
         domain_blocking: false,
-        endorsed: false,
+        endorsed: sqlx::query!(
+            "SELECT 1 AS e FROM account_pins WHERE account_id = $1 AND target_account_id = $2",
+            source_id, target_id
+        )
+        .fetch_optional(&state.db)
+        .await?
+        .is_some(),
         note,
     })
 }
@@ -1246,7 +1272,12 @@ pub async fn endorse_account(
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
-    // Endorsements not persisted yet; just return relationship
+    sqlx::query!(
+        "INSERT INTO account_pins (account_id, target_account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auth.account_id, target_id,
+    )
+    .execute(&state.db)
+    .await?;
     build_relationship(&state, auth.account_id, target_id).await.map(Json)
 }
 
@@ -1257,23 +1288,63 @@ pub async fn unendorse_account(
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    sqlx::query!(
+        "DELETE FROM account_pins WHERE account_id = $1 AND target_account_id = $2",
+        auth.account_id, target_id,
+    )
+    .execute(&state.db)
+    .await?;
     build_relationship(&state, auth.account_id, target_id).await.map(Json)
 }
 
 // ── GET /api/v1/accounts/:id/endorsements ────────────────────────────────
 
 pub async fn get_endorsements(
-    Path(_id): Path<Uuid>,
-) -> Json<Vec<ApiAccount>> {
-    Json(vec![])
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN account_pins ap ON ap.target_account_id = a.id
+           WHERE ap.account_id = $1
+           ORDER BY ap.created_at DESC"#,
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
 }
 
 // ── GET /api/v1/accounts/:id/featured_tags ───────────────────────────────
 
 pub async fn get_account_featured_tags(
-    Path(_id): Path<Uuid>,
-) -> Json<Vec<super::types::FeaturedTag>> {
-    Json(vec![])
+    State(state): State<AppState>,
+    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<super::types::FeaturedTag>>> {
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let rows = sqlx::query!(
+        r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
+           FROM featured_tags ft
+           JOIN tags t ON t.id = ft.tag_id
+           WHERE ft.account_id = $1
+           ORDER BY ft.id"#,
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let tags = rows
+        .into_iter()
+        .map(|r| super::types::FeaturedTag {
+            id: r.id.to_string(),
+            name: r.name.clone(),
+            url: format!("https://{}/tags/{}", domain, r.name),
+            statuses_count: r.statuses_count,
+            last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        })
+        .collect();
+    Ok(Json(tags))
 }
 
 // ── PUT /api/v1/profile (tab display settings) ───────────────────────────
