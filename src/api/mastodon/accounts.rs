@@ -558,8 +558,8 @@ pub async fn search_accounts(
     let limit = q.limit.unwrap_or(40).min(80).max(1);
     let pattern = format!("%{}%", q.q.to_lowercase());
 
-    let accounts = if q.following.unwrap_or(false) {
-        if let Some(Extension(auth)) = auth {
+    let mut accounts = if q.following.unwrap_or(false) {
+        if let Some(Extension(ref auth)) = auth {
             sqlx::query_as!(
                 Account,
                 r#"SELECT a.* FROM accounts a
@@ -588,6 +588,64 @@ pub async fn search_accounts(
         .fetch_all(&state.db)
         .await?
     };
+
+    // If resolve=true and the query looks like user@domain, try WebFinger for any
+    // remote account not already in the local results.
+    if q.resolve.unwrap_or(false) && accounts.is_empty() {
+        if let Some((username, domain)) = q.q.split_once('@') {
+            let username = username.to_lowercase();
+            let domain = domain.to_lowercase();
+            // Only attempt fetch if not already present locally
+            let already_known = sqlx::query_scalar!(
+                "SELECT id FROM accounts WHERE lower(username) = $1 AND lower(domain) = $2",
+                username, domain,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+
+            if !already_known {
+                let acct_uri = format!("acct:{}@{}", username, domain);
+                let wf_url = format!("https://{}/.well-known/webfinger?resource={}", domain, acct_uri);
+                if let Ok(resp) = state.http.get(&wf_url)
+                    .header("Accept", "application/jrd+json, application/json")
+                    .send()
+                    .await
+                {
+                    if let Ok(jrd) = resp.json::<serde_json::Value>().await {
+                        let actor_uri = jrd
+                            .get("links").and_then(|l| l.as_array())
+                            .and_then(|links| links.iter().find(|l| {
+                                l.get("rel").and_then(|r| r.as_str()) == Some("self")
+                                    && l.get("type").and_then(|t| t.as_str())
+                                        .map(|t| t.contains("activity+json") || t.contains("ld+json"))
+                                        .unwrap_or(false)
+                            }))
+                            .and_then(|l| l.get("href"))
+                            .and_then(|h| h.as_str())
+                            .map(str::to_owned);
+
+                        if let Some(uri) = actor_uri {
+                            if let Ok(account_id) =
+                                crate::api::ap::inbox::resolve_or_fetch_remote_account(&state, &uri).await
+                            {
+                                if let Ok(account) = sqlx::query_as!(
+                                    Account,
+                                    "SELECT * FROM accounts WHERE id = $1",
+                                    account_id,
+                                )
+                                .fetch_one(&state.db)
+                                .await
+                                {
+                                    accounts.push(account);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(Json(accounts.iter().map(account_from_db).collect()))
 }
