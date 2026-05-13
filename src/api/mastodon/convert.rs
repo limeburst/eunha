@@ -74,7 +74,7 @@ pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
         text_url: None,
         description: m.description.clone(),
         blurhash: m.blurhash.clone(),
-        meta: m.meta.clone(),
+        meta: Some(m.meta.clone().unwrap_or_else(|| serde_json::json!({}))),
     }
 }
 
