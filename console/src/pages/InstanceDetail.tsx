@@ -429,7 +429,7 @@ export function InstanceDetail() {
         )}
 
         {inviteTree && (
-          <InviteListView members={inviteTree.members} invites={inviteTree.invites} />
+          <InviteListView members={inviteTree.members} invites={inviteTree.invites} rejected={inviteTree.rejected ?? []} />
         )}
       </section>
 

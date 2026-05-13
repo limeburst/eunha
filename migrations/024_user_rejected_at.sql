@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN rejected_at TIMESTAMPTZ;

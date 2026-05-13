@@ -59,9 +59,19 @@ export interface InviteTreeMember {
   joined_at: string
 }
 
+export interface RejectedMember {
+  account_id: string
+  username: string
+  email: string
+  reason: string | null
+  applied_at: string
+  rejected_at: string
+}
+
 export interface InviteTree {
   members: InviteTreeMember[]
   invites: ConsoleInvite[]
+  rejected: RejectedMember[]
 }
 
 export interface CreateInstanceRequest {

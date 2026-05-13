@@ -350,6 +350,10 @@ msgstr "준비 중"
 msgid "Reject"
 msgstr "거절"
 
+#: src/components/InviteListView.tsx:74
+msgid "Rejected"
+msgstr "거절됨"
+
 #: src/pages/InstanceDetail.tsx:345
 msgid "Require approval"
 msgstr "승인 필요"

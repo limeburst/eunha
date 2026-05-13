@@ -428,9 +428,20 @@ pub struct InviteTreeMember {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RejectedMember {
+    pub account_id: String,
+    pub username: String,
+    pub email: String,
+    pub reason: Option<String>,
+    pub applied_at: chrono::DateTime<chrono::Utc>,
+    pub rejected_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct InviteTreeResponse {
     pub members: Vec<InviteTreeMember>,
     pub invites: Vec<ConsoleInviteResponse>,
+    pub rejected: Vec<RejectedMember>,
 }
 
 pub async fn invite_tree(
@@ -496,7 +507,31 @@ pub async fn invite_tree(
     })
     .collect();
 
-    Ok(Json(InviteTreeResponse { members, invites }))
+    let rejected = sqlx::query!(
+        r#"SELECT a.id AS account_id, a.username, u.email, u.reason,
+                  u.created_at, u.rejected_at AS "rejected_at!: chrono::DateTime<chrono::Utc>"
+           FROM users u
+           JOIN accounts a ON a.id = u.account_id
+           WHERE u.instance_id = $1
+             AND a.domain IS NULL
+             AND u.rejected_at IS NOT NULL
+           ORDER BY u.rejected_at DESC"#,
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| RejectedMember {
+        account_id: r.account_id.to_string(),
+        username: r.username,
+        email: r.email,
+        reason: r.reason,
+        applied_at: r.created_at,
+        rejected_at: r.rejected_at,
+    })
+    .collect();
+
+    Ok(Json(InviteTreeResponse { members, invites, rejected }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -591,6 +626,7 @@ pub async fn list_applications(
            WHERE u.instance_id = $1
              AND a.domain IS NULL
              AND u.approved_at IS NULL
+             AND u.rejected_at IS NULL
            ORDER BY u.created_at ASC"#,
         instance.id,
     )
@@ -639,28 +675,20 @@ pub async fn reject_application(
 ) -> AppResult<StatusCode> {
     let instance = instance_for_user(&state, &domain, user.id).await?;
 
-    // Verify the account exists and is pending for this instance
-    let exists = sqlx::query_scalar!(
-        r#"SELECT 1 FROM users
-           WHERE account_id = $1 AND instance_id = $2 AND approved_at IS NULL"#,
-        account_id,
-        instance.id,
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    if exists.is_none() {
-        return Err(AppError::NotFound);
-    }
-
-    // Delete the account (cascades to users via FK)
-    sqlx::query!(
-        "DELETE FROM accounts WHERE id = $1 AND instance_id = $2",
+    let rows_affected = sqlx::query!(
+        r#"UPDATE users SET rejected_at = now(), updated_at = now()
+           WHERE account_id = $1 AND instance_id = $2
+             AND approved_at IS NULL AND rejected_at IS NULL"#,
         account_id,
         instance.id,
     )
     .execute(&state.db)
-    .await?;
+    .await?
+    .rows_affected();
+
+    if rows_affected == 0 {
+        return Err(AppError::NotFound);
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

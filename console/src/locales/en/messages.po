@@ -350,6 +350,10 @@ msgstr "provisioning"
 msgid "Reject"
 msgstr "Reject"
 
+#: src/components/InviteListView.tsx:74
+msgid "Rejected"
+msgstr "Rejected"
+
 #: src/pages/InstanceDetail.tsx:345
 msgid "Require approval"
 msgstr "Require approval"

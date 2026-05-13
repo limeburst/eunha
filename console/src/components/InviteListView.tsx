@@ -1,8 +1,8 @@
 import React from 'react'
 import { Trans } from '@lingui/macro'
-import type { InviteTreeMember, ConsoleInvite } from '../api/types'
+import type { InviteTreeMember, ConsoleInvite, RejectedMember } from '../api/types'
 
-export function InviteListView({ members, invites }: { members: InviteTreeMember[]; invites: ConsoleInvite[] }) {
+export function InviteListView({ members, invites, rejected }: { members: InviteTreeMember[]; invites: ConsoleInvite[]; rejected: RejectedMember[] }) {
   const [copied, setCopied] = React.useState<string | null>(null)
 
   const redeemedBy: Record<string, InviteTreeMember[]> = {}
@@ -19,7 +19,7 @@ export function InviteListView({ members, invites }: { members: InviteTreeMember
     })
   }
 
-  if (invites.length === 0 && members.length === 0) {
+  if (invites.length === 0 && members.length === 0 && rejected.length === 0) {
     return <p className="text-xs text-muted"><Trans>No members yet.</Trans></p>
   }
 
@@ -66,6 +66,21 @@ export function InviteListView({ members, invites }: { members: InviteTreeMember
         <div className="space-y-0.5">
           {members.filter((m) => !m.invite_id).map((m) => (
             <div key={m.account_id} className="text-xs text-muted">{m.username}</div>
+          ))}
+        </div>
+      )}
+      {rejected.length > 0 && (
+        <div className="space-y-1 pt-2 border-t border-border">
+          <p className="text-xs text-muted/60 uppercase tracking-widest pb-1"><Trans>Rejected</Trans></p>
+          {rejected.map((r) => (
+            <div key={r.account_id} className="flex items-start justify-between gap-3 py-0.5">
+              <div>
+                <span className="text-xs text-muted line-through">@{r.username}</span>
+                <span className="text-xs text-muted/50 ml-2">{r.email}</span>
+                {r.reason && <p className="text-xs text-muted/50 mt-0.5">{r.reason}</p>}
+              </div>
+              <span className="text-xs text-muted/40 shrink-0">{new Date(r.rejected_at).toLocaleDateString()}</span>
+            </div>
           ))}
         </div>
       )}
