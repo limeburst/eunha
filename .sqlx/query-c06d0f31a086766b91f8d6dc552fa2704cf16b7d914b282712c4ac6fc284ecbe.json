@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(\n               SELECT 1 FROM tag_follows tf\n               JOIN tags t ON t.id = tf.tag_id\n               WHERE tf.account_id = $1 AND t.name = $2\n            )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c06d0f31a086766b91f8d6dc552fa2704cf16b7d914b282712c4ac6fc284ecbe"
+}

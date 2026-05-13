@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE instances SET vapid_private_key = $1, vapid_public_key = $2 WHERE id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4bfa5e6407ebcf9b47ab1f33e4e3d6f87b635cbf7d541f500696e296084ec426"
+}

@@ -6,6 +6,8 @@ use crate::{
     state::AppState,
 };
 
+pub type ScheduledStatusResponse = ScheduledStatus;
+
 #[derive(Debug, Serialize)]
 pub struct ScheduledStatus {
     pub id: String,

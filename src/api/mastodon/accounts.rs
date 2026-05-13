@@ -1590,3 +1590,49 @@ pub async fn build_status(
     }
     Ok(api)
 }
+
+// ── DELETE /api/v1/accounts ────────────────────────────────────────────────
+
+pub async fn delete_account(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    body: Option<Json<serde_json::Value>>,
+) -> AppResult<axum::http::StatusCode> {
+    let password = body.as_ref()
+        .and_then(|b| b.get("password"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let user = sqlx::query!(
+        "SELECT password_hash FROM users WHERE account_id = $1",
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::Unauthorized)?;
+
+    crate::crypto::verify_password(password, &user.password_hash)?;
+
+    // Soft-delete: mark account as suspended, revoke tokens, remove user row.
+    // Hard delete of statuses/follows is deferred (could be a background job).
+    let mut tx = state.db.begin().await?;
+    sqlx::query!(
+        "UPDATE statuses SET deleted_at = now() WHERE account_id = $1 AND deleted_at IS NULL",
+        auth.account_id,
+    ).execute(&mut *tx).await?;
+    sqlx::query!(
+        "UPDATE oauth_access_tokens SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL",
+        auth.account_id,
+    ).execute(&mut *tx).await?;
+    sqlx::query!(
+        "UPDATE accounts SET suspended_at = now() WHERE id = $1",
+        auth.account_id,
+    ).execute(&mut *tx).await?;
+    sqlx::query!(
+        "DELETE FROM users WHERE account_id = $1",
+        auth.account_id,
+    ).execute(&mut *tx).await?;
+    tx.commit().await?;
+
+    Ok(axum::http::StatusCode::OK)
+}

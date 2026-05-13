@@ -108,6 +108,7 @@ pub struct User {
     pub invite_id: Option<Uuid>,
     pub approved_at: Option<DateTime<Utc>>,
     pub reason: Option<String>,
+    pub role: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

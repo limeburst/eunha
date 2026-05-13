@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_domain_blocks (account_id, domain) VALUES ($1, $2)\n           ON CONFLICT (account_id, domain) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7dc7143ed59cd4d2358a64adf5765e79f48333139299faf4dbbb6667a4ca8b4d"
+}

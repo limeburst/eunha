@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.id AS account_id, a.username, u.email, u.reason, u.created_at\n           FROM users u\n           JOIN accounts a ON a.id = u.account_id\n           WHERE u.instance_id = $1\n             AND a.domain IS NULL\n             AND u.approved_at IS NULL\n             AND u.rejected_at IS NULL\n           ORDER BY u.created_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "cbca8f256c112616fa70862a6fc8bc4d4931032c6c0058abc22abe316c357ad2"
+}

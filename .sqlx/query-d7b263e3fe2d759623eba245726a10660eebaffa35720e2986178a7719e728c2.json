@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n           SET confirmed_at = now(), confirmation_token = NULL\n           WHERE confirmation_token = $1 AND confirmed_at IS NULL\n           RETURNING account_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d7b263e3fe2d759623eba245726a10660eebaffa35720e2986178a7719e728c2"
+}

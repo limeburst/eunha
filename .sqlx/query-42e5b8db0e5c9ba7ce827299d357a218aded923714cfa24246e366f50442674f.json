@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.username FROM accounts a\n           JOIN users u ON u.account_id = a.id\n           WHERE a.instance_id = $1\n           ORDER BY u.created_at ASC\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "username",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "42e5b8db0e5c9ba7ce827299d357a218aded923714cfa24246e366f50442674f"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET approved_at = now(), updated_at = now()\n           WHERE account_id = $1 AND instance_id = $2 AND approved_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9d97e60d78dfd82b484ccc0a8cdb9b570f5476996b97606f518141c863324b4f"
+}

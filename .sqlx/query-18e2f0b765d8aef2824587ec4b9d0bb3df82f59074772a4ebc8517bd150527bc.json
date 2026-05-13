@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO instances (domain, title, registrations_open, private_key, public_key)\n           VALUES ($1, $1, false, '', '')\n           ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain\n           RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "18e2f0b765d8aef2824587ec4b9d0bb3df82f59074772a4ebc8517bd150527bc"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.username, inv_a.username AS \"invited_by?: String\"\n           FROM users u\n           JOIN accounts a ON a.id = u.account_id\n           LEFT JOIN invites i ON i.id = u.invite_id\n           LEFT JOIN accounts inv_a ON inv_a.id = i.created_by\n           WHERE u.instance_id = $1 AND a.domain IS NULL\n           ORDER BY u.created_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "invited_by?: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "fc899a49958ec4129151eb8dc7c83b2bad9647fe16d6848d7a766474a2387045"
+}

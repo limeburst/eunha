@@ -1,0 +1,143 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM statuses\n           WHERE instance_id = $1\n             AND deleted_at IS NULL\n             AND visibility = 'public'\n             AND reblog_of_id IS NULL\n             AND created_at > now() - interval '2 days'\n           ORDER BY (favourites_count + reblogs_count * 2) DESC, created_at DESC\n           LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "instance_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "spoiler_text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "in_reply_to_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "in_reply_to_account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 8,
+        "name": "reblog_of_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "language",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "sensitive",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "uri",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "replies_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "reblogs_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "favourites_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "edited_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "conversation_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "69f7bddb099d2a3a5815f63decf7f067211eb296b52ae5918dab10e89d27081b"
+}

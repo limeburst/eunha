@@ -1,0 +1,135 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO instances\n             (domain, custom_domain, title, private_key, public_key, console_user_id)\n           VALUES ($1, $2, $3, $4, $5, $6)\n           RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "short_description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "contact_email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "registrations_open",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "approval_required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "private_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "public_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "console_user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 13,
+        "name": "custom_domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "vapid_private_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "vapid_public_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "icon_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "privacy_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "rules",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "bf249858373700969b37e0a8c1fe471afb700d704e484ef109f532a0c662cb79"
+}

@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE web_push_subscriptions SET\n             alert_follow    = COALESCE($1, alert_follow),\n             alert_favourite = COALESCE($2, alert_favourite),\n             alert_reblog    = COALESCE($3, alert_reblog),\n             alert_mention   = COALESCE($4, alert_mention),\n             alert_poll      = COALESCE($5, alert_poll),\n             alert_status    = COALESCE($6, alert_status),\n             policy          = $7,\n             updated_at      = now()\n           WHERE access_token_id = $8\n           RETURNING id, endpoint, alert_follow, alert_favourite, alert_reblog,\n                     alert_mention, alert_poll, alert_status, policy",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "endpoint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "alert_follow",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "alert_favourite",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "alert_reblog",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "alert_mention",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "alert_poll",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "alert_status",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "policy",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "dc5bfe8283a8bea9d4223e5d6a39df6ed2b69d08822b506e2dec6bd7932192ec"
+}

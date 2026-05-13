@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO conversation_participants (conversation_id, account_id, unread)\n             VALUES ($1, $2, false)\n             ON CONFLICT (conversation_id, account_id) DO UPDATE SET unread = false",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c0274e32902eeda1974bfe694137d2f733697ba1dc02f75cef5523e0a7c95447"
+}

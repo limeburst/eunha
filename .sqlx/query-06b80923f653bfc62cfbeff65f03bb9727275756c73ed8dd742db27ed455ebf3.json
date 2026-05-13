@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)\n                   VALUES ($1, $2, $3, 'profile')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "06b80923f653bfc62cfbeff65f03bb9727275756c73ed8dd742db27ed455ebf3"
+}

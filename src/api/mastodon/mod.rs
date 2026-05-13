@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod admin;
 pub mod announcements;
 pub mod bookmarks;
 pub mod conversations;
@@ -149,8 +150,27 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Invites
         .route("/api/v1/invites", get(invites::list_invites).post(invites::create_invite))
         .route("/api/v1/invites/{id}", delete(invites::delete_invite))
+        // Account deletion
+        .route("/api/v1/accounts", delete(accounts::delete_account))
         // Email confirmation resend stub (accounts are confirmed immediately; this is a no-op)
         .route("/api/v1/emails/confirmations", post(empty_object))
+        // Admin API
+        .route("/api/v1/admin/accounts", get(admin::list_admin_accounts))
+        .route("/api/v1/admin/accounts/{id}", get(admin::get_admin_account))
+        .route("/api/v1/admin/accounts/{id}/approve", post(admin::approve_account))
+        .route("/api/v1/admin/accounts/{id}/reject", post(admin::reject_account))
+        .route("/api/v1/admin/accounts/{id}/enable", post(admin::enable_account))
+        .route("/api/v1/admin/accounts/{id}/silence", post(admin::silence_account))
+        .route("/api/v1/admin/accounts/{id}/unsilence", post(admin::unsilence_account))
+        .route("/api/v1/admin/accounts/{id}/suspend", post(admin::suspend_account))
+        .route("/api/v1/admin/accounts/{id}/unsuspend", post(admin::unsuspend_account))
+        .route("/api/v1/admin/reports", get(admin::list_admin_reports))
+        .route("/api/v1/admin/reports/{id}", get(admin::get_admin_report))
+        .route("/api/v1/admin/reports/{id}/resolve", post(admin::resolve_report))
+        .route("/api/v1/admin/reports/{id}/reopen", post(admin::reopen_report))
+        .route("/api/v1/admin/dimensions", post(admin::get_dimensions))
+        .route("/api/v1/admin/measures", post(admin::get_measures))
+        .route("/api/v1/admin/retention", post(admin::get_retention))
         // Suggestions
         .route("/api/v1/suggestions", get(accounts::get_suggestions))
         .route("/api/v1/suggestions/{id}", delete(accounts::dismiss_suggestion))

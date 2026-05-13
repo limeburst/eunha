@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM invites WHERE id = $1 AND instance_id = $2 AND created_by = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4eeee9959a21b5a85ac76d6a6b747d4c8d34821e146b18a90ec116624e73065e"
+}

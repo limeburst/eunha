@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO follows (account_id, target_account_id, state, uri)\n           VALUES ($1,$2,$3,$4)\n           ON CONFLICT (account_id, target_account_id)\n           DO UPDATE SET state = EXCLUDED.state, uri = EXCLUDED.uri",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4217e201ca23b12de0252441a2434fcc95d60040d07f690782c2765212cc8d4b"
+}

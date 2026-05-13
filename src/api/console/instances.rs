@@ -194,8 +194,8 @@ pub async fn create(
 
     sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at)
-           VALUES ($1, $2, $3, $4, $5, now())"#,
+             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, role)
+           VALUES ($1, $2, $3, $4, $5, now(), 'admin')"#,
         account.id,
         instance.id,
         admin_email,

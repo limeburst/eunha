@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET rejected_at = now(), updated_at = now()\n           WHERE account_id = $1 AND instance_id = $2\n             AND approved_at IS NULL AND rejected_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bd536bc9263079583f7b838f70c4f50105621d7fd8179904abbeeff5aa7e16e0"
+}

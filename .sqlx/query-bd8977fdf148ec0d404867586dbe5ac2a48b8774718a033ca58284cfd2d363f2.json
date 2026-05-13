@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id, l.title, l.replies_policy, l.exclusive\n           FROM lists l\n           JOIN list_accounts la ON la.list_id = l.id\n           WHERE l.account_id = $1 AND la.account_id = $2\n           ORDER BY l.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "replies_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "exclusive",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bd8977fdf148ec0d404867586dbe5ac2a48b8774718a033ca58284cfd2d363f2"
+}

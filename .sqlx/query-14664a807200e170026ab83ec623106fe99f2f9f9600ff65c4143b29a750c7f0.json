@@ -1,0 +1,75 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO web_push_subscriptions\n             (account_id, access_token_id, endpoint, p256dh, auth,\n              alert_follow, alert_favourite, alert_reblog, alert_mention, alert_poll, alert_status, policy)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)\n           ON CONFLICT (access_token_id) DO UPDATE SET\n             endpoint        = EXCLUDED.endpoint,\n             p256dh          = EXCLUDED.p256dh,\n             auth            = EXCLUDED.auth,\n             alert_follow    = EXCLUDED.alert_follow,\n             alert_favourite = EXCLUDED.alert_favourite,\n             alert_reblog    = EXCLUDED.alert_reblog,\n             alert_mention   = EXCLUDED.alert_mention,\n             alert_poll      = EXCLUDED.alert_poll,\n             alert_status    = EXCLUDED.alert_status,\n             policy          = EXCLUDED.policy,\n             updated_at      = now()\n           RETURNING id, alert_follow, alert_favourite, alert_reblog, alert_mention, alert_poll, alert_status, policy",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "alert_follow",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "alert_favourite",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "alert_reblog",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "alert_mention",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "alert_poll",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "alert_status",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "policy",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "14664a807200e170026ab83ec623106fe99f2f9f9600ff65c4143b29a750c7f0"
+}

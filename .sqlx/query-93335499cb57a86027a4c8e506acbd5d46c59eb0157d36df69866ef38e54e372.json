@@ -1,0 +1,145 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.* FROM statuses s\n           JOIN list_accounts la ON la.account_id = s.account_id\n           WHERE la.list_id = $1\n             AND s.deleted_at IS NULL\n             AND ($2::bigint IS NULL OR s.id < $2)\n             AND ($3::bigint IS NULL OR s.id > $3)\n             AND (s.text != '' OR s.content != ''\n                  OR s.reblog_of_id IS NOT NULL\n                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "instance_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "spoiler_text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "in_reply_to_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "in_reply_to_account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 8,
+        "name": "reblog_of_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "language",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "sensitive",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "uri",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "replies_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "reblogs_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "favourites_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "edited_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "conversation_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "93335499cb57a86027a4c8e506acbd5d46c59eb0157d36df69866ef38e54e372"
+}

@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.id, t.name,\n                  COUNT(DISTINCT st.status_id) FILTER (\n                      WHERE s.created_at > now() - interval '1 day'\n                  ) AS day_uses,\n                  COUNT(DISTINCT st.status_id) FILTER (\n                      WHERE s.created_at > now() - interval '7 days'\n                  ) AS week_uses\n           FROM tags t\n           JOIN status_tags st ON st.tag_id = t.id\n           JOIN statuses s ON s.id = st.status_id\n           WHERE s.instance_id = $1\n             AND s.deleted_at IS NULL\n             AND s.visibility = 'public'\n             AND s.created_at > now() - interval '7 days'\n           GROUP BY t.id, t.name\n           HAVING COUNT(DISTINCT st.status_id) > 1\n           ORDER BY day_uses DESC, week_uses DESC\n           LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "day_uses",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "week_uses",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "a3582068ae1773b142bedf284b4197f2a673db09c9449bf9f3eab4b4e53d4648"
+}
