@@ -8,6 +8,10 @@ default-run = "eunha"
 name = "eunha"
 path = "src/main.rs"
 
+[[test]]
+name = "c2s_api"
+path = "tests/c2s_api/mod.rs"
+
 [[bin]]
 name = "eunha-migrate-mastodon"
 path = "src/bin/migrate_mastodon.rs"
