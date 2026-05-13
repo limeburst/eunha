@@ -863,3 +863,318 @@ async fn test_domain_block_lifecycle() {
         .await.json().await.unwrap();
     assert!(!after.contains(&"evil.example.com".to_string()));
 }
+
+// ── follow settings (showing_reblogs / notifying) ─────────────────────────────
+
+/// Following with reblogs=false sets showing_reblogs=false in relationship.
+#[tokio::test]
+async fn test_follow_with_reblogs_false() {
+    let ctx = TestContext::new("follow-no-reblogs").await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"reblogs": false}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["following"].as_bool(), Some(true));
+    assert_eq!(rel["showing_reblogs"].as_bool(), Some(false));
+}
+
+/// Following with notify=true sets notifying=true in relationship.
+#[tokio::test]
+async fn test_follow_with_notify_true() {
+    let ctx = TestContext::new("follow-notify").await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"notify": true}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["following"].as_bool(), Some(true));
+    assert_eq!(rel["notifying"].as_bool(), Some(true));
+}
+
+/// Re-following an already-followed account updates settings without duplicating.
+#[tokio::test]
+async fn test_follow_update_settings_when_already_following() {
+    let ctx = TestContext::new("follow-update-settings").await;
+
+    // First follow with defaults.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Re-follow with reblogs=false.
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"reblogs": false, "notify": true}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["following"].as_bool(), Some(true), "should still be following after re-follow");
+    assert_eq!(rel["showing_reblogs"].as_bool(), Some(false));
+    assert_eq!(rel["notifying"].as_bool(), Some(true));
+}
+
+/// Default follow has showing_reblogs=true and notifying=false.
+#[tokio::test]
+async fn test_follow_defaults_showing_reblogs_true() {
+    let ctx = TestContext::new("follow-defaults").await;
+
+    let rel = ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    assert_eq!(rel["showing_reblogs"].as_bool(), Some(true));
+    assert_eq!(rel["notifying"].as_bool(), Some(false));
+}
+
+// ── mute settings ─────────────────────────────────────────────────────────────
+
+/// Muting with notifications=false sets muting_notifications=false.
+#[tokio::test]
+async fn test_mute_with_notifications_false() {
+    let ctx = TestContext::new("mute-no-notif").await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"notifications": false}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["muting"].as_bool(), Some(true));
+    assert_eq!(rel["muting_notifications"].as_bool(), Some(false));
+}
+
+/// Muting with duration=3600 sets muting_expires_at to a non-null value.
+#[tokio::test]
+async fn test_mute_with_duration_sets_expires_at() {
+    let ctx = TestContext::new("mute-duration").await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"duration": 3600}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["muting"].as_bool(), Some(true));
+    assert!(rel["muting_expires_at"].as_str().is_some(), "muting_expires_at should be set");
+}
+
+/// Re-muting an account updates hide_notifications in place.
+#[tokio::test]
+async fn test_mute_upsert_updates_settings() {
+    let ctx = TestContext::new("mute-upsert").await;
+
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"notifications": true}),
+    ).await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"notifications": false}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rel: Value = resp.json().await.unwrap();
+    assert_eq!(rel["muting_notifications"].as_bool(), Some(false));
+}
+
+// ── relationship extras ───────────────────────────────────────────────────────
+
+/// blocked_by reflects when the target has blocked the requesting user.
+#[tokio::test]
+async fn test_relationship_blocked_by() {
+    let ctx = TestContext::new("blocked-by").await;
+
+    // Bob blocks Alice.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Alice checks her relationship with Bob.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(list[0]["blocked_by"].as_bool(), Some(true));
+}
+
+/// requested_by reflects when the target has a pending follow request to the user.
+#[tokio::test]
+async fn test_relationship_requested_by() {
+    let ctx = TestContext::new("requested-by").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+
+    // Lock Alice's account so Bob's follow becomes pending.
+    sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", alice_uuid)
+        .execute(&db).await.unwrap();
+
+    // Bob sends a follow request to Alice.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Alice checks her relationship with Bob.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(list[0]["requested_by"].as_bool(), Some(true));
+}
+
+/// domain_blocking reflects a domain block on the target's domain.
+#[tokio::test]
+async fn test_relationship_domain_blocking() {
+    let ctx = TestContext::new("rel-domain-block").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+
+    // Set Bob's domain to a remote domain.
+    sqlx::query!("UPDATE accounts SET domain = 'remote.example.com' WHERE id = $1", bob_uuid)
+        .execute(&db).await.unwrap();
+
+    // Alice domain-blocks that domain.
+    ctx.api.post_json(
+        "/api/v1/domain_blocks",
+        Some(&ctx.alice_token),
+        &json!({"domain": "remote.example.com"}),
+    ).await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(list[0]["domain_blocking"].as_bool(), Some(true));
+}
+
+// ── hide_collections ──────────────────────────────────────────────────────────
+
+/// When hide_collections=true, followers list is empty for non-owner viewers.
+#[tokio::test]
+async fn test_hide_collections_hides_followers_from_others() {
+    let ctx = TestContext::new("hide-coll-followers").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+
+    // Bob follows Alice.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    // Enable hide_collections on Alice's account.
+    sqlx::query!("UPDATE accounts SET hide_collections = true WHERE id = $1", alice_uuid)
+        .execute(&db).await.unwrap();
+
+    // Bob tries to see Alice's followers — should be empty.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.is_empty(), "followers should be hidden when hide_collections=true");
+}
+
+/// When hide_collections=true, following list is empty for non-owner viewers.
+#[tokio::test]
+async fn test_hide_collections_hides_following_from_others() {
+    let ctx = TestContext::new("hide-coll-following").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+
+    // Alice follows Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Enable hide_collections on Alice's account.
+    sqlx::query!("UPDATE accounts SET hide_collections = true WHERE id = $1", alice_uuid)
+        .execute(&db).await.unwrap();
+
+    // Bob tries to see Alice's following — should be empty.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/following", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.is_empty(), "following should be hidden when hide_collections=true");
+}
+
+/// Owner can always see their own followers even with hide_collections=true.
+#[tokio::test]
+async fn test_hide_collections_owner_sees_own_followers() {
+    let ctx = TestContext::new("hide-coll-self").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+    sqlx::query!("UPDATE accounts SET hide_collections = true WHERE id = $1", alice_uuid)
+        .execute(&db).await.unwrap();
+
+    // Alice views her own followers.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await;
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(!list.is_empty(), "owner should see own followers even with hide_collections");
+}
+
+// ── preferences ───────────────────────────────────────────────────────────────
+
+/// GET /api/v1/preferences returns sensible defaults.
+#[tokio::test]
+async fn test_get_preferences_defaults() {
+    let ctx = TestContext::new("prefs-defaults").await;
+
+    let resp = ctx.api.get("/api/v1/preferences", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let prefs: Value = resp.json().await.unwrap();
+
+    assert!(prefs["posting:default:visibility"].as_str().is_some(), "missing posting:default:visibility");
+    assert!(prefs["posting:default:sensitive"].as_bool().is_some(), "missing posting:default:sensitive");
+}
+
+/// GET /api/v1/preferences reflects values written by update_credentials.
+#[tokio::test]
+async fn test_preferences_reflect_user_table_values() {
+    let ctx = TestContext::new("prefs-custom").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+
+    sqlx::query!(
+        "UPDATE users SET default_privacy = 'private', default_sensitive = true, default_language = 'fr' WHERE account_id = $1",
+        alice_uuid
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let resp = ctx.api.get("/api/v1/preferences", Some(&ctx.alice_token)).await;
+    let prefs: Value = resp.json().await.unwrap();
+    assert_eq!(prefs["posting:default:visibility"].as_str(), Some("private"));
+    assert_eq!(prefs["posting:default:sensitive"].as_bool(), Some(true));
+    assert_eq!(prefs["posting:default:language"].as_str(), Some("fr"));
+}

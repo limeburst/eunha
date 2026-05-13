@@ -246,3 +246,92 @@ async fn test_reblog_appears_in_home_timeline() {
         "Bob's reblog should appear in Alice's home timeline",
     );
 }
+
+// ── min_id pagination ──────────────────────────────────────────────────────────
+
+/// Public timeline: min_id returns statuses *after* that id in ascending order.
+#[tokio::test]
+async fn test_public_timeline_min_id_pagination() {
+    let ctx = TestContext::new("pub-min-id").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "public min_id 1", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "public min_id 2", "public").await;
+    let s3 = ctx.api.post_status(&ctx.alice_token, "public min_id 3", "public").await;
+
+    let min_id = s1["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/timelines/public?local=true&min_id={min_id}"),
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let timeline: Vec<Value> = resp.json().await.unwrap();
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+
+    assert!(!ids.contains(&min_id), "min_id anchor itself should not appear");
+    assert!(ids.contains(&s2["id"].as_str().unwrap()), "s2 should appear after min_id");
+    assert!(ids.contains(&s3["id"].as_str().unwrap()), "s3 should appear after min_id");
+
+    // Results should be in ascending order (oldest first).
+    let s2_pos = ids.iter().position(|&id| id == s2["id"].as_str().unwrap()).unwrap();
+    let s3_pos = ids.iter().position(|&id| id == s3["id"].as_str().unwrap()).unwrap();
+    assert!(s2_pos < s3_pos, "min_id results should be in ascending order");
+}
+
+/// Home timeline: min_id returns statuses after that id in ascending order.
+#[tokio::test]
+async fn test_home_timeline_min_id_pagination() {
+    let ctx = TestContext::new("home-min-id").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let s1 = ctx.api.post_status(&ctx.bob_token, "home min_id 1", "public").await;
+    let s2 = ctx.api.post_status(&ctx.bob_token, "home min_id 2", "public").await;
+    let s3 = ctx.api.post_status(&ctx.bob_token, "home min_id 3", "public").await;
+
+    let min_id = s1["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/timelines/home?min_id={min_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let timeline: Vec<Value> = resp.json().await.unwrap();
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+
+    assert!(!ids.contains(&min_id), "min_id anchor itself should not appear");
+    assert!(ids.contains(&s2["id"].as_str().unwrap()), "s2 should appear");
+    assert!(ids.contains(&s3["id"].as_str().unwrap()), "s3 should appear");
+
+    let s2_pos = ids.iter().position(|&id| id == s2["id"].as_str().unwrap()).unwrap();
+    let s3_pos = ids.iter().position(|&id| id == s3["id"].as_str().unwrap()).unwrap();
+    assert!(s2_pos < s3_pos, "home min_id results should be in ascending order");
+}
+
+/// Tag timeline: min_id returns statuses after that id in ascending order.
+#[tokio::test]
+async fn test_tag_timeline_min_id_pagination() {
+    let ctx = TestContext::new("tag-min-id").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "tag min_id #minidtest 1", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "tag min_id #minidtest 2", "public").await;
+    let s3 = ctx.api.post_status(&ctx.alice_token, "tag min_id #minidtest 3", "public").await;
+
+    let min_id = s1["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/timelines/tag/minidtest?min_id={min_id}"),
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let timeline: Vec<Value> = resp.json().await.unwrap();
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+
+    assert!(!ids.contains(&min_id), "min_id anchor itself should not appear");
+    assert!(ids.contains(&s2["id"].as_str().unwrap()), "s2 should appear after tag min_id");
+    assert!(ids.contains(&s3["id"].as_str().unwrap()), "s3 should appear after tag min_id");
+
+    let s2_pos = ids.iter().position(|&id| id == s2["id"].as_str().unwrap()).unwrap();
+    let s3_pos = ids.iter().position(|&id| id == s3["id"].as_str().unwrap()).unwrap();
+    assert!(s2_pos < s3_pos, "tag min_id results should be in ascending order");
+}

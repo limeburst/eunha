@@ -39,37 +39,72 @@ pub async fn public_timeline(
     let limit = q.pagination.limit_clamped(20, 40);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let local_only = q.local.unwrap_or(false);
+    let remote_only = q.remote.unwrap_or(false);
 
-    let statuses = sqlx::query_as!(
-        DbStatus,
-        r#"SELECT s.*
-           FROM statuses s
-           JOIN accounts a ON a.id = s.account_id
-           WHERE s.visibility = 'public'
-             AND s.deleted_at IS NULL
-             AND s.reblog_of_id IS NULL
-             AND s.instance_id = $2
-             AND (NOT $1::bool OR a.domain IS NULL)
-             AND a.suspended_at IS NULL
-             AND (a.domain IS NULL OR NOT EXISTS (
-                 SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
-             ))
-             AND ($3::bigint IS NULL OR s.id < $3)
-             AND ($4::bigint IS NULL OR s.id > $4)
-             AND (s.text != '' OR s.content != ''
-                  OR s.reblog_of_id IS NOT NULL
-                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-           ORDER BY s.id DESC
-           LIMIT $5"#,
-        local_only,
-        instance.id,
-        max_id,
-        since_id,
-        limit,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    // min_id: return oldest items just after min_id (ASC); else DESC
+    let statuses = if min_id.is_some() {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.*
+               FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.visibility = 'public'
+                 AND s.deleted_at IS NULL
+                 AND s.reblog_of_id IS NULL
+                 AND s.instance_id = $2
+                 AND (NOT $1::bool OR a.domain IS NULL)
+                 AND (NOT $5::bool OR a.domain IS NOT NULL)
+                 AND a.suspended_at IS NULL
+                 AND (a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+                 ))
+                 AND ($3::bigint IS NULL OR s.id > $3)
+                 AND (s.text != '' OR s.content != ''
+                      OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+               ORDER BY s.id ASC
+               LIMIT $4"#,
+            local_only,
+            instance.id,
+            min_id,
+            limit,
+            remote_only,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.*
+               FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.visibility = 'public'
+                 AND s.deleted_at IS NULL
+                 AND s.reblog_of_id IS NULL
+                 AND s.instance_id = $2
+                 AND (NOT $1::bool OR a.domain IS NULL)
+                 AND (NOT $6::bool OR a.domain IS NOT NULL)
+                 AND a.suspended_at IS NULL
+                 AND (a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+                 ))
+                 AND ($3::bigint IS NULL OR s.id < $3)
+                 AND ($5::bigint IS NULL OR s.id > $5)
+                 AND (s.text != '' OR s.content != ''
+                      OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+               ORDER BY s.id DESC
+               LIMIT $4"#,
+            local_only,
+            instance.id,
+            max_id,
+            limit,
+            since_id,
+            remote_only,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let result = build_status_list(&state, statuses, None).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
@@ -88,36 +123,67 @@ pub async fn home_timeline(
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let statuses = sqlx::query_as!(
-        DbStatus,
-        r#"SELECT s.*
-           FROM statuses s
-           JOIN accounts a ON a.id = s.account_id
-           WHERE s.account_id IN (
-               SELECT target_account_id FROM follows
-               WHERE account_id = $1 AND state = 'accepted'
-               UNION ALL SELECT $1
-           )
-           AND s.deleted_at IS NULL
-           AND a.suspended_at IS NULL
-           AND (a.domain IS NULL OR NOT EXISTS (
-               SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
-           ))
-           AND ($2::bigint IS NULL OR s.id < $2)
-           AND ($3::bigint IS NULL OR s.id > $3)
-           AND (s.text != '' OR s.content != ''
-                OR s.reblog_of_id IS NOT NULL
-                OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-           ORDER BY s.id DESC
-           LIMIT $4"#,
-        auth.account_id,
-        max_id,
-        since_id,
-        limit,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let statuses = if min_id.is_some() {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.*
+               FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.account_id IN (
+                   SELECT target_account_id FROM follows
+                   WHERE account_id = $1 AND state = 'accepted'
+                   UNION ALL SELECT $1
+               )
+               AND s.deleted_at IS NULL
+               AND a.suspended_at IS NULL
+               AND (a.domain IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+               ))
+               AND ($2::bigint IS NULL OR s.id > $2)
+               AND (s.text != '' OR s.content != ''
+                    OR s.reblog_of_id IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+               ORDER BY s.id ASC
+               LIMIT $3"#,
+            auth.account_id,
+            min_id,
+            limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.*
+               FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.account_id IN (
+                   SELECT target_account_id FROM follows
+                   WHERE account_id = $1 AND state = 'accepted'
+                   UNION ALL SELECT $1
+               )
+               AND s.deleted_at IS NULL
+               AND a.suspended_at IS NULL
+               AND (a.domain IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+               ))
+               AND ($2::bigint IS NULL OR s.id < $2)
+               AND ($3::bigint IS NULL OR s.id > $3)
+               AND (s.text != '' OR s.content != ''
+                    OR s.reblog_of_id IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+               ORDER BY s.id DESC
+               LIMIT $4"#,
+            auth.account_id,
+            max_id,
+            since_id,
+            limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
@@ -145,24 +211,44 @@ pub async fn list_timeline(
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let statuses = sqlx::query_as!(
-        DbStatus,
-        r#"SELECT s.* FROM statuses s
-           JOIN list_accounts la ON la.account_id = s.account_id
-           WHERE la.list_id = $1
-             AND s.deleted_at IS NULL
-             AND ($2::bigint IS NULL OR s.id < $2)
-             AND ($3::bigint IS NULL OR s.id > $3)
-             AND (s.text != '' OR s.content != ''
-                  OR s.reblog_of_id IS NOT NULL
-                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-           ORDER BY s.id DESC
-           LIMIT $4"#,
-        list_id, max_id, since_id, limit,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let statuses = if min_id.is_some() {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.* FROM statuses s
+               JOIN list_accounts la ON la.account_id = s.account_id
+               WHERE la.list_id = $1
+                 AND s.deleted_at IS NULL
+                 AND ($2::bigint IS NULL OR s.id > $2)
+                 AND (s.text != '' OR s.content != ''
+                      OR s.reblog_of_id IS NOT NULL
+                      OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+               ORDER BY s.id ASC
+               LIMIT $3"#,
+            list_id, min_id, limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.* FROM statuses s
+               JOIN list_accounts la ON la.account_id = s.account_id
+               WHERE la.list_id = $1
+                 AND s.deleted_at IS NULL
+                 AND ($2::bigint IS NULL OR s.id < $2)
+                 AND ($3::bigint IS NULL OR s.id > $3)
+                 AND (s.text != '' OR s.content != ''
+                      OR s.reblog_of_id IS NOT NULL
+                      OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+               ORDER BY s.id DESC
+               LIMIT $4"#,
+            list_id, max_id, since_id, limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
@@ -182,25 +268,45 @@ pub async fn tag_timeline(
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let tag_name = hashtag.to_lowercase();
 
-    let statuses = sqlx::query_as!(
-        DbStatus,
-        r#"SELECT s.* FROM statuses s
-           JOIN status_tags st ON st.status_id = s.id
-           JOIN tags t ON t.id = st.tag_id
-           WHERE lower(t.name) = $1
-             AND s.instance_id = $2
-             AND s.visibility = 'public'
-             AND s.deleted_at IS NULL
-             AND ($3::bigint IS NULL OR s.id < $3)
-             AND ($4::bigint IS NULL OR s.id > $4)
-           ORDER BY s.id DESC
-           LIMIT $5"#,
-        tag_name, instance.id, max_id, since_id, limit,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let statuses = if min_id.is_some() {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.* FROM statuses s
+               JOIN status_tags st ON st.status_id = s.id
+               JOIN tags t ON t.id = st.tag_id
+               WHERE lower(t.name) = $1
+                 AND s.instance_id = $2
+                 AND s.visibility = 'public'
+                 AND s.deleted_at IS NULL
+                 AND ($3::bigint IS NULL OR s.id > $3)
+               ORDER BY s.id ASC
+               LIMIT $4"#,
+            tag_name, instance.id, min_id, limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            DbStatus,
+            r#"SELECT s.* FROM statuses s
+               JOIN status_tags st ON st.status_id = s.id
+               JOIN tags t ON t.id = st.tag_id
+               WHERE lower(t.name) = $1
+                 AND s.instance_id = $2
+                 AND s.visibility = 'public'
+                 AND s.deleted_at IS NULL
+                 AND ($3::bigint IS NULL OR s.id < $3)
+                 AND ($4::bigint IS NULL OR s.id > $4)
+               ORDER BY s.id DESC
+               LIMIT $5"#,
+            tag_name, instance.id, max_id, since_id, limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let result = build_status_list(&state, statuses, None).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);

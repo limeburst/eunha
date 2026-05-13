@@ -14,6 +14,7 @@ use sqlx::{PgPool, PgConnection, Row};
 use std::collections::HashMap;
 use uuid::Uuid;
 use serde_json;
+use serde_yaml;
 
 #[derive(Parser, Debug)]
 #[command(about = "Migrate a Mastodon database into eunha")]
@@ -344,6 +345,42 @@ async fn migrate_accounts(
     Ok(map)
 }
 
+fn parse_mastodon_settings(yaml: &str) -> (String, bool, Option<String>) {
+    // Mastodon serialises user settings with YAML. Keys may appear as plain
+    // strings or as Ruby symbols (":key"). We try both forms.
+    let doc: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap_or(serde_yaml::Value::Null);
+    let map = match &doc {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => return ("public".to_string(), false, None),
+    };
+
+    let get_str = |key: &str| -> Option<String> {
+        for candidate in &[
+            serde_yaml::Value::String(key.to_string()),
+            serde_yaml::Value::String(format!(":{key}")),
+        ] {
+            if let Some(v) = map.get(candidate) {
+                return match v {
+                    serde_yaml::Value::String(s) if !s.is_empty() => Some(s.clone()),
+                    serde_yaml::Value::Bool(b) => Some(b.to_string()),
+                    _ => None,
+                };
+            }
+        }
+        None
+    };
+
+    let privacy = get_str("default_privacy")
+        .filter(|v| matches!(v.as_str(), "public" | "unlisted" | "private"))
+        .unwrap_or_else(|| "public".to_string());
+    let sensitive = get_str("default_sensitive")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let language = get_str("default_language");
+
+    (privacy, sensitive, language)
+}
+
 async fn migrate_users(
     src: &PgPool,
     dst: &mut PgConnection,
@@ -365,11 +402,18 @@ async fn migrate_users(
         let created_at = get_ts(&row, "created_at")?;
         let updated_at = get_ts(&row, "updated_at")?;
 
+        let settings_yaml: Option<String> = row.try_get("settings").ok().flatten();
+        let (default_privacy, default_sensitive, default_language) = settings_yaml
+            .as_deref()
+            .map(parse_mastodon_settings)
+            .unwrap_or_else(|| ("public".to_string(), false, None));
+
         sqlx::query(
             r#"INSERT INTO users
                  (account_id, instance_id, email, email_normalized, password_hash,
-                  confirmed_at, created_at, updated_at)
-               VALUES ($1,$2,$3,lower($3),$4,$5,$6,$7)
+                  confirmed_at, created_at, updated_at,
+                  default_privacy, default_sensitive, default_language)
+               VALUES ($1,$2,$3,lower($3),$4,$5,$6,$7,$8,$9,$10)
                ON CONFLICT (instance_id, email_normalized) DO NOTHING"#,
         )
         .bind(account_id)
@@ -379,6 +423,9 @@ async fn migrate_users(
         .bind(confirmed_at)
         .bind(created_at)
         .bind(updated_at)
+        .bind(&default_privacy)
+        .bind(default_sensitive)
+        .bind(&default_language)
         .execute(&mut *dst)
         .await?;
     }
@@ -486,7 +533,7 @@ async fn migrate_follows(
     account_map: &HashMap<i64, Uuid>,
 ) -> Result<()> {
     let rows = sqlx::query(
-        "SELECT account_id, target_account_id, uri, created_at FROM follows",
+        "SELECT account_id, target_account_id, uri, created_at, show_reblogs, notify FROM follows",
     )
     .fetch_all(src)
     .await?;
@@ -499,16 +546,20 @@ async fn migrate_follows(
 
         let uri: Option<String> = row.try_get("uri").ok().flatten();
         let created_at = get_ts(&row, "created_at")?;
+        let show_reblogs: bool = row.try_get("show_reblogs").unwrap_or(true);
+        let notify: bool = row.try_get("notify").unwrap_or(false);
 
         sqlx::query(
-            r#"INSERT INTO follows (account_id, target_account_id, state, uri, created_at)
-               VALUES ($1,$2,'accepted',$3,$4)
+            r#"INSERT INTO follows (account_id, target_account_id, state, uri, created_at, show_reblogs, notify)
+               VALUES ($1,$2,'accepted',$3,$4,$5,$6)
                ON CONFLICT DO NOTHING"#,
         )
         .bind(account_id)
         .bind(target_id)
         .bind(&uri)
         .bind(created_at)
+        .bind(show_reblogs)
+        .bind(notify)
         .execute(&mut *dst)
         .await?;
     }

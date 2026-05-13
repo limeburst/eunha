@@ -640,6 +640,10 @@ pub async fn get_status_context(
 
     let viewer_id = auth.map(|Extension(a)| a.account_id);
 
+    // Mastodon limits: authenticated=4096 each; unauthenticated=40 ancestors, 60 descendants (depth 20).
+    let (ancestor_limit, descendant_limit, depth_limit): (i64, i64, i64) =
+        if viewer_id.is_some() { (4096, 4096, 4096) } else { (40, 60, 20) };
+
     let ancestor_rows = sqlx::query_as::<_, DbStatus>(
         r#"WITH RECURSIVE ancestor_chain AS (
              SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL
@@ -648,23 +652,32 @@ pub async fn get_status_context(
                JOIN ancestor_chain a ON s.id = a.in_reply_to_id
              WHERE s.deleted_at IS NULL
            )
-           SELECT * FROM ancestor_chain WHERE id != $1 ORDER BY id ASC"#
+           SELECT * FROM ancestor_chain WHERE id != $1 ORDER BY id ASC LIMIT $2"#
     )
     .bind(id)
+    .bind(ancestor_limit)
     .fetch_all(&state.db)
     .await?;
 
     let descendant_rows = sqlx::query_as::<_, DbStatus>(
         r#"WITH RECURSIVE reply_tree AS (
-             SELECT * FROM statuses WHERE in_reply_to_id = $1 AND deleted_at IS NULL
+             SELECT *, 1::int AS depth FROM statuses
+             WHERE in_reply_to_id = $1 AND deleted_at IS NULL
              UNION ALL
-             SELECT s.* FROM statuses s
+             SELECT s.*, r.depth + 1 FROM statuses s
                JOIN reply_tree r ON s.in_reply_to_id = r.id
-             WHERE s.deleted_at IS NULL
+             WHERE s.deleted_at IS NULL AND r.depth < $3
            )
-           SELECT * FROM reply_tree ORDER BY id ASC LIMIT 100"#
+           SELECT id, instance_id, account_id, text, content, spoiler_text,
+                  in_reply_to_id, in_reply_to_account_id, reblog_of_id,
+                  visibility, language, sensitive, url, uri,
+                  replies_count, reblogs_count, favourites_count,
+                  deleted_at, edited_at, created_at, conversation_id
+           FROM reply_tree ORDER BY id ASC LIMIT $2"#
     )
     .bind(id)
+    .bind(descendant_limit)
+    .bind(depth_limit)
     .fetch_all(&state.db)
     .await?;
 

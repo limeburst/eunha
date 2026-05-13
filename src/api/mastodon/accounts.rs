@@ -29,7 +29,18 @@ pub async fn verify_credentials(
     let account = fetch_account(&state, auth.account_id).await?;
     let mut api_account = account_from_db(&account);
 
-    // Attach `source` field for the credential account
+    let user_prefs = sqlx::query!(
+        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        account.id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (default_privacy, default_sensitive, default_language) = user_prefs.map_or(
+        ("public".to_string(), false, None),
+        |u| (u.default_privacy, u.default_sensitive, u.default_language),
+    );
+
     let follow_requests: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM follows WHERE target_account_id = $1 AND state = 'pending'",
         account.id
@@ -39,15 +50,15 @@ pub async fn verify_credentials(
     .unwrap_or(0);
 
     api_account.source = Some(super::types::AccountSource {
-        privacy: "public".into(),
-        sensitive: false,
-        language: None,
+        privacy: default_privacy,
+        sensitive: default_sensitive,
+        language: default_language,
         note: account.note_text.clone(),
         fields: vec![],
         follow_requests_count: follow_requests,
         discoverable: Some(account.discoverable),
         indexable: account.indexable,
-        hide_collections: None,
+        hide_collections: Some(account.hide_collections),
         attribution_domains: vec![],
         quote_policy: "public".into(),
     });
@@ -358,24 +369,59 @@ pub async fn get_relationships(
 
 // ── POST /api/v1/accounts/:id/follow ──────────────────────────────────────
 
+#[derive(Debug, Deserialize, Default)]
+pub struct FollowParams {
+    pub reblogs: Option<bool>,
+    pub notify: Option<bool>,
+    pub languages: Option<Vec<String>>,
+}
+
 pub async fn follow_account(
     State(state): State<AppState>,
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
+    body: Option<Json<FollowParams>>,
 ) -> AppResult<Json<Relationship>> {
     if auth.account_id == target_id {
         return Err(AppError::Unprocessable("Cannot follow yourself".into()));
     }
+    let params = body.map(|Json(p)| p).unwrap_or_default();
+    let show_reblogs = params.reblogs.unwrap_or(true);
+    let notify = params.notify.unwrap_or(false);
+    let languages: Vec<String> = params.languages.unwrap_or_default();
+
+    // Check if follow already exists
+    let existing = sqlx::query!(
+        "SELECT state FROM follows WHERE account_id = $1 AND target_account_id = $2",
+        auth.account_id, target_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if existing.is_some() {
+        // Already following — update settings only, no counts or notifications
+        sqlx::query!(
+            "UPDATE follows SET show_reblogs = $3, notify = $4, languages = $5
+             WHERE account_id = $1 AND target_account_id = $2",
+            auth.account_id, target_id, show_reblogs, notify, &languages,
+        )
+        .execute(&state.db)
+        .await?;
+        return build_relationship(&state, auth.account_id, target_id).await.map(Json);
+    }
+
     let target = fetch_account(&state, target_id).await?;
     let state_val = if target.locked { "pending" } else { "accepted" };
 
     sqlx::query!(
-        r#"INSERT INTO follows (account_id, target_account_id, state)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (account_id, target_account_id) DO NOTHING"#,
+        r#"INSERT INTO follows (account_id, target_account_id, state, show_reblogs, notify, languages)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
         auth.account_id,
         target_id,
         state_val,
+        show_reblogs,
+        notify,
+        &languages,
     )
     .execute(&state.db)
     .await?;
@@ -469,7 +515,15 @@ pub async fn get_account_followers(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Query(q): Query<FollowersQuery>,
+    viewer: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
+    let target = fetch_account(&state, id).await?;
+    let viewer_id = viewer.map(|Extension(a)| a.account_id);
+    // Respect hide_collections unless the viewer is the account owner
+    if target.hide_collections && viewer_id != Some(id) {
+        return Ok(Json(vec![]));
+    }
+
     let limit = q.pagination.limit_clamped(40, 80);
     let max_id_str = q.pagination.max_id.as_deref();
 
@@ -507,7 +561,15 @@ pub async fn get_account_following(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Query(q): Query<FollowersQuery>,
+    viewer: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
+    let target = fetch_account(&state, id).await?;
+    let viewer_id = viewer.map(|Extension(a)| a.account_id);
+    // Respect hide_collections unless the viewer is the account owner
+    if target.hide_collections && viewer_id != Some(id) {
+        return Ok(Json(vec![]));
+    }
+
     let limit = q.pagination.limit_clamped(40, 80);
     let max_id_str = q.pagination.max_id.as_deref();
 
@@ -665,6 +727,10 @@ pub async fn update_credentials(
     let mut discoverable: Option<bool> = None;
     let mut avatar_url: Option<String> = None;
     let mut header_url: Option<String> = None;
+    let mut source_privacy: Option<String> = None;
+    let mut source_sensitive: Option<bool> = None;
+    let mut source_language: Option<Option<String>> = None;
+    let mut source_hide_collections: Option<bool> = None;
     // fields_attributes[N][name] / fields_attributes[N][value]
     let mut fields_map: std::collections::BTreeMap<u32, (String, String)> = std::collections::BTreeMap::new();
     let mut fields_submitted = false;
@@ -705,6 +771,24 @@ pub async fn update_credentials(
             "discoverable" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 discoverable = Some(v == "true" || v == "1");
+            }
+            "source[privacy]" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                if matches!(v.as_str(), "public" | "unlisted" | "private" | "direct") {
+                    source_privacy = Some(v);
+                }
+            }
+            "source[sensitive]" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                source_sensitive = Some(v == "true" || v == "1");
+            }
+            "source[language]" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                source_language = Some(if v.is_empty() { None } else { Some(v) });
+            }
+            "source[hide_collections]" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                source_hide_collections = Some(v == "true" || v == "1");
             }
             "avatar" => {
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
@@ -778,6 +862,35 @@ pub async fn update_credentials(
         .execute(&state.db).await?;
     }
 
+    if let Some(ref p) = source_privacy {
+        sqlx::query!(
+            "UPDATE users SET default_privacy = $1 WHERE account_id = $2",
+            p, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
+    if let Some(s) = source_sensitive {
+        sqlx::query!(
+            "UPDATE users SET default_sensitive = $1 WHERE account_id = $2",
+            s, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
+    if let Some(ref lang) = source_language {
+        sqlx::query!(
+            "UPDATE users SET default_language = $1 WHERE account_id = $2",
+            *lang, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
+    if let Some(hc) = source_hide_collections {
+        sqlx::query!(
+            "UPDATE accounts SET hide_collections = $1 WHERE id = $2",
+            hc, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
+
     let account = fetch_account(&state, auth.account_id).await?;
     let fields = super::convert::fields_from_db(&account.fields);
     let mut api_account = account_from_db(&account);
@@ -789,16 +902,28 @@ pub async fn update_credentials(
     .await?
     .unwrap_or(0);
 
+    let user_prefs = sqlx::query!(
+        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        auth.account_id
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (default_privacy, default_sensitive, default_language) = user_prefs.map_or(
+        ("public".to_string(), false, None),
+        |u| (u.default_privacy, u.default_sensitive, u.default_language),
+    );
+
     api_account.source = Some(super::types::AccountSource {
-        privacy: "public".into(),
-        sensitive: false,
-        language: None,
+        privacy: default_privacy,
+        sensitive: default_sensitive,
+        language: default_language,
         note: account.note_text.clone(),
         fields: fields.clone(),
         follow_requests_count,
         discoverable: Some(account.discoverable),
         indexable: account.indexable,
-        hide_collections: None,
+        hide_collections: Some(account.hide_collections),
         attribution_domains: vec![],
         quote_policy: "public".into(),
     });
@@ -807,15 +932,33 @@ pub async fn update_credentials(
 
 // ── POST /api/v1/accounts/:id/mute ────────────────────────────────────────
 
+#[derive(Debug, Deserialize, Default)]
+pub struct MuteParams {
+    /// Whether to also mute notifications from this account (default true).
+    pub notifications: Option<bool>,
+    /// Mute duration in seconds; 0 or absent means indefinite.
+    pub duration: Option<i64>,
+}
+
 pub async fn mute_account(
     State(state): State<AppState>,
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
+    body: Option<Json<MuteParams>>,
 ) -> AppResult<Json<Relationship>> {
+    let params = body.map(|Json(p)| p).unwrap_or_default();
+    let hide_notifications = params.notifications.unwrap_or(true);
+    let expires_at: Option<chrono::DateTime<chrono::Utc>> = params.duration
+        .filter(|&d| d > 0)
+        .map(|d| chrono::Utc::now() + chrono::Duration::seconds(d));
+
     sqlx::query!(
-        r#"INSERT INTO mutes (account_id, target_account_id) VALUES ($1, $2)
-           ON CONFLICT (account_id, target_account_id) DO NOTHING"#,
-        auth.account_id, target_id
+        r#"INSERT INTO mutes (account_id, target_account_id, hide_notifications, expires_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (account_id, target_account_id)
+           DO UPDATE SET hide_notifications = EXCLUDED.hide_notifications,
+                         expires_at = EXCLUDED.expires_at"#,
+        auth.account_id, target_id, hide_notifications, expires_at,
     )
     .execute(&state.db)
     .await?;
@@ -928,15 +1071,28 @@ pub async fn get_mutes(
 // ── GET /api/v1/preferences ───────────────────────────────────────────────
 
 pub async fn get_preferences(
-    Extension(_auth): Extension<AuthenticatedUser>,
-) -> Json<Preferences> {
-    Json(Preferences {
-        posting_default_visibility: "public".into(),
-        posting_default_sensitive: false,
-        posting_default_language: None,
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Preferences>> {
+    let user = sqlx::query!(
+        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (privacy, sensitive, language) = user.map_or(
+        ("public".to_string(), false, None),
+        |u| (u.default_privacy, u.default_sensitive, u.default_language),
+    );
+
+    Ok(Json(Preferences {
+        posting_default_visibility: privacy,
+        posting_default_sensitive: sensitive,
+        posting_default_language: language,
         reading_expand_media: "default".into(),
         reading_expand_spoilers: false,
-    })
+    }))
 }
 
 // ── GET /api/v1/follow_requests ───────────────────────────────────────────
@@ -1161,7 +1317,7 @@ pub async fn fetch_reblog_data(
 
 async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) -> AppResult<Relationship> {
     let follow = sqlx::query!(
-        "SELECT state FROM follows WHERE account_id = $1 AND target_account_id = $2",
+        "SELECT state, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = $2",
         source_id, target_id
     )
     .fetch_optional(&state.db)
@@ -1183,12 +1339,49 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
     .await?
     .is_some();
 
+    let blocked_by = sqlx::query!(
+        "SELECT 1 as exists FROM blocks WHERE account_id = $1 AND target_account_id = $2",
+        target_id, source_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
+    let requested_by = sqlx::query!(
+        "SELECT 1 as exists FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
+        target_id, source_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
     let muting = sqlx::query!(
-        "SELECT hide_notifications FROM mutes WHERE account_id = $1 AND target_account_id = $2",
+        "SELECT hide_notifications, expires_at FROM mutes WHERE account_id = $1 AND target_account_id = $2",
         source_id, target_id
     )
     .fetch_optional(&state.db)
     .await?;
+
+    // Check if source has domain-blocked target's domain
+    let target_domain = sqlx::query_scalar!(
+        "SELECT domain FROM accounts WHERE id = $1",
+        target_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let domain_blocking = if let Some(domain) = target_domain {
+        sqlx::query!(
+            "SELECT 1 as exists FROM user_domain_blocks WHERE account_id = $1 AND domain = $2",
+            source_id, domain
+        )
+        .fetch_optional(&state.db)
+        .await?
+        .is_some()
+    } else {
+        false
+    };
 
     let note = sqlx::query_scalar!(
         "SELECT comment FROM account_notes WHERE account_id = $1 AND target_account_id = $2",
@@ -1198,21 +1391,27 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
     .await?
     .unwrap_or_default();
 
+    let showing_reblogs = follow.as_ref().map_or(true, |f| f.show_reblogs);
+    let notifying = follow.as_ref().map_or(false, |f| f.notify);
+    let languages = follow.as_ref().map_or(vec![], |f| f.languages.clone());
+    let muting_expires_at = muting.as_ref().and_then(|m| m.expires_at)
+        .map(|t| t.to_rfc3339());
+
     Ok(Relationship {
         id: target_id.to_string(),
         following: follow.as_ref().map_or(false, |f| f.state == "accepted"),
-        showing_reblogs: true,
-        notifying: false,
-        languages: vec![],
+        showing_reblogs,
+        notifying,
+        languages,
         followed_by,
         blocking,
-        blocked_by: false,
+        blocked_by,
         muting: muting.is_some(),
         muting_notifications: muting.map_or(false, |m| m.hide_notifications),
-        muting_expires_at: None,
+        muting_expires_at,
         requested: follow.as_ref().map_or(false, |f| f.state == "pending"),
-        requested_by: false,
-        domain_blocking: false,
+        requested_by,
+        domain_blocking,
         endorsed: sqlx::query!(
             "SELECT 1 AS e FROM account_pins WHERE account_id = $1 AND target_account_id = $2",
             source_id, target_id

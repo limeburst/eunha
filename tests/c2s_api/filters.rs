@@ -155,3 +155,58 @@ async fn test_filter_v2_crud() {
     ).await;
     assert_eq!(del_resp.status(), StatusCode::OK);
 }
+
+// ── v1 filter whole_word reflects database value ───────────────────────────────
+
+/// The v1 filter whole_word field reads from the keyword row, not hardcoded.
+#[tokio::test]
+async fn test_filter_v1_whole_word_reads_from_db() {
+    let ctx = TestContext::new("filter-ww").await;
+
+    // Create a v2 filter with whole_word=false via the v2 API.
+    let create_resp = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "whole_word test",
+            "context": ["home"],
+            "filter_action": "warn",
+            "keywords_attributes": [{"keyword": "badword", "whole_word": false}]
+        }),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let filter: Value = create_resp.json().await.unwrap();
+    let filter_id = filter["id"].as_str().unwrap();
+
+    // Retrieve via v1 and check that whole_word is false (not hardcoded true).
+    let get_resp = ctx.api.get(
+        &format!("/api/v1/filters/{filter_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let v1_filter: Value = get_resp.json().await.unwrap();
+    assert_eq!(v1_filter["whole_word"].as_bool(), Some(false),
+        "whole_word should be false as stored, not hardcoded to true");
+
+    // Create another filter with whole_word=true and verify it reads back correctly.
+    let create2 = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "whole_word true test",
+            "context": ["home"],
+            "filter_action": "warn",
+            "keywords_attributes": [{"keyword": "strictword", "whole_word": true}]
+        }),
+    ).await;
+    let filter2: Value = create2.json().await.unwrap();
+    let filter2_id = filter2["id"].as_str().unwrap();
+
+    let get2 = ctx.api.get(
+        &format!("/api/v1/filters/{filter2_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    let v1_filter2: Value = get2.json().await.unwrap();
+    assert_eq!(v1_filter2["whole_word"].as_bool(), Some(true),
+        "whole_word should be true as stored");
+}

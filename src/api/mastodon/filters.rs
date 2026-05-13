@@ -408,7 +408,15 @@ pub async fn get_filters_v1(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterV1>>> {
     let filters = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE account_id = $1 ORDER BY id",
+        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at, cf.action,
+                  COALESCE(
+                    (SELECT whole_word FROM custom_filter_keywords
+                     WHERE custom_filter_id = cf.id ORDER BY id LIMIT 1),
+                    false
+                  ) AS "whole_word!"
+           FROM custom_filters cf
+           WHERE cf.account_id = $1
+           ORDER BY cf.id"#,
         auth.account_id,
     )
     .fetch_all(&state.db)
@@ -420,7 +428,7 @@ pub async fn get_filters_v1(
             id: f.id.to_string(),
             phrase: f.phrase,
             context: f.context,
-            whole_word: true,
+            whole_word: f.whole_word,
             expires_at: f.expires_at.map(|t| t.to_rfc3339()),
             irreversible: f.action == "hide",
         })
@@ -437,7 +445,14 @@ pub async fn get_filter_v1(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterV1>> {
     let f = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1 AND account_id = $2",
+        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at, cf.action,
+                  COALESCE(
+                    (SELECT whole_word FROM custom_filter_keywords
+                     WHERE custom_filter_id = cf.id ORDER BY id LIMIT 1),
+                    false
+                  ) AS "whole_word!"
+           FROM custom_filters cf
+           WHERE cf.id = $1 AND cf.account_id = $2"#,
         id, auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -448,7 +463,7 @@ pub async fn get_filter_v1(
         id: f.id.to_string(),
         phrase: f.phrase,
         context: f.context,
-        whole_word: true,
+        whole_word: f.whole_word,
         expires_at: f.expires_at.map(|t| t.to_rfc3339()),
         irreversible: f.action == "hide",
     }))

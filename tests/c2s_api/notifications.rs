@@ -181,3 +181,41 @@ async fn test_notification_exclude_types() {
         "follow notification appeared despite exclusion",
     );
 }
+
+/// GET /api/v1/notifications accepts limit up to 80 (Mastodon default max).
+#[tokio::test]
+async fn test_notifications_limit_param_respected() {
+    let ctx = TestContext::new("notif-limit").await;
+
+    // Default limit should be 40 (not some lower number).
+    let resp = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    // limit=1 should return at most 1.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    let status = ctx.api.post_status(&ctx.alice_token, "notif limit test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.bob_token),
+        &serde_json::json!({}),
+    ).await;
+
+    let notifs: Vec<serde_json::Value> = ctx.api.get(
+        "/api/v1/notifications?limit=1",
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert!(notifs.len() <= 1, "limit=1 should return at most 1 notification");
+}
+
+/// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
+#[tokio::test]
+async fn test_notifications_limit_80_is_accepted() {
+    let ctx = TestContext::new("notif-limit-80").await;
+
+    let resp = ctx.api.get("/api/v1/notifications?limit=80", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "limit=80 should be accepted");
+    // limit=81 should be clamped to 80 and still return 200.
+    let resp2 = ctx.api.get("/api/v1/notifications?limit=81", Some(&ctx.alice_token)).await;
+    assert_eq!(resp2.status(), reqwest::StatusCode::OK, "limit=81 should be clamped, not rejected");
+}

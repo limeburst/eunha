@@ -35,7 +35,7 @@ pub async fn get_notifications(
     Query(q): Query<NotificationsQuery>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Notification>>> {
-    let limit = q.pagination.limit_clamped(15, 30);
+    let limit = q.pagination.limit_clamped(40, 80);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let types = q.types.as_deref();
@@ -127,7 +127,7 @@ pub async fn get_notifications_v2(
     Query(q): Query<NotificationsQuery>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationGroupsResponse>> {
-    let limit = q.pagination.limit_clamped(15, 30);
+    let limit = q.pagination.limit_clamped(40, 80);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 

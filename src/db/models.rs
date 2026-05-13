@@ -78,6 +78,7 @@ pub struct Account {
     pub shared_inbox_url: Option<String>,
     pub suspended_at: Option<DateTime<Utc>>,
     pub silenced_at: Option<DateTime<Utc>>,
+    pub hide_collections: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub fields: serde_json::Value,
@@ -109,6 +110,9 @@ pub struct User {
     pub approved_at: Option<DateTime<Utc>>,
     pub reason: Option<String>,
     pub role: String,
+    pub default_privacy: String,
+    pub default_sensitive: bool,
+    pub default_language: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -161,6 +165,9 @@ pub struct Follow {
     pub account_id: Uuid,
     pub target_account_id: Uuid,
     pub state: String,
+    pub show_reblogs: bool,
+    pub notify: bool,
+    pub languages: Vec<String>,
     pub uri: Option<String>,
     pub created_at: DateTime<Utc>,
 }
