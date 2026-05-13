@@ -27,6 +27,12 @@ struct Args {
     domain: String,
     #[arg(long)]
     limit_accounts: Option<i64>,
+    /// VAPID private key from the Mastodon instance (base64url). Required for push subscriptions to continue working.
+    #[arg(long)]
+    vapid_private_key: Option<String>,
+    /// VAPID public key from the Mastodon instance (base64url).
+    #[arg(long)]
+    vapid_public_key: Option<String>,
 }
 
 #[tokio::main]
@@ -89,7 +95,7 @@ async fn main() -> Result<()> {
     migrate_poll_votes(&src, &mut *tx, &account_map, &poll_map).await?;
 
     tracing::info!("migrating tags...");
-    migrate_tags(&src, &mut *tx, &status_map).await?;
+    let tag_map = migrate_tags(&src, &mut *tx, &status_map).await?;
 
     tracing::info!("migrating mentions...");
     migrate_mentions(&src, &mut *tx, &account_map, &status_map).await?;
@@ -143,6 +149,33 @@ async fn main() -> Result<()> {
 
     tracing::info!("migrating scheduled statuses...");
     migrate_scheduled_statuses(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating markers...");
+    migrate_markers(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating tag follows...");
+    migrate_tag_follows(&src, &mut *tx, &account_map, &tag_map).await?;
+
+    tracing::info!("migrating user domain blocks...");
+    migrate_user_domain_blocks(&src, &mut *tx, &account_map).await?;
+
+    tracing::info!("migrating invites...");
+    migrate_invites(&src, &mut *tx, instance_id, &account_map).await?;
+
+    tracing::info!("migrating web push subscriptions...");
+    migrate_web_push_subscriptions(&src, &mut *tx, &account_map).await?;
+
+    if let (Some(priv_key), Some(pub_key)) = (&args.vapid_private_key, &args.vapid_public_key) {
+        tracing::info!("storing VAPID keys in instance row...");
+        sqlx::query(
+            "UPDATE instances SET vapid_private_key = $1, vapid_public_key = $2 WHERE id = $3",
+        )
+        .bind(priv_key)
+        .bind(pub_key)
+        .bind(instance_id)
+        .execute(&mut *tx)
+        .await?;
+    }
 
     tx.commit().await.context("committing transaction")?;
     tracing::info!("migration complete");
@@ -971,7 +1004,7 @@ async fn migrate_tags(
     src: &PgPool,
     dst: &mut PgConnection,
     status_map: &HashMap<i64, i64>,
-) -> Result<()> {
+) -> Result<HashMap<i64, Uuid>> {
     let tag_rows = sqlx::query("SELECT id, name, created_at FROM tags")
         .fetch_all(src)
         .await?;
@@ -1016,7 +1049,7 @@ async fn migrate_tags(
         .await?;
     }
 
-    Ok(())
+    Ok(tag_id_map)
 }
 
 async fn migrate_mentions(
@@ -1806,6 +1839,266 @@ async fn migrate_scheduled_statuses(
         .bind(account_id)
         .bind(scheduled_at)
         .bind(&params)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+// ── markers ────────────────────────────────────────────────────────────────
+// mastodon: markers.user_id → users.account_id → account_map → eunha UUID
+// mastodon: last_read_id bigint → eunha: last_read_id text
+// mastodon: lock_version → eunha: version
+// mastodon: timeline must be 'home' or 'notifications' (eunha CHECK constraint)
+
+async fn migrate_markers(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        r#"SELECT m.timeline, m.last_read_id, m.lock_version, m.updated_at,
+                  u.account_id AS src_account_id
+           FROM markers m
+           JOIN users u ON u.id = m.user_id
+           WHERE m.timeline IN ('home', 'notifications')"#,
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("src_account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let timeline: String = row.get("timeline");
+        let last_read_id: i64 = row.get("last_read_id");
+        let version: i32 = row.get("lock_version");
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO markers (account_id, timeline, last_read_id, version, updated_at)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (account_id, timeline)
+               DO UPDATE SET last_read_id = EXCLUDED.last_read_id,
+                             version      = EXCLUDED.version,
+                             updated_at   = EXCLUDED.updated_at"#,
+        )
+        .bind(account_id)
+        .bind(&timeline)
+        .bind(last_read_id.to_string())
+        .bind(version)
+        .bind(updated_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+// ── tag_follows ────────────────────────────────────────────────────────────
+
+async fn migrate_tag_follows(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+    tag_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query("SELECT account_id, tag_id, created_at FROM tag_follows")
+        .fetch_all(src)
+        .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let src_tag: i64 = row.get("tag_id");
+        let (Some(&account_id), Some(&tag_id)) = (account_map.get(&src_account), tag_map.get(&src_tag))
+        else { continue };
+
+        let created_at = get_ts(&row, "created_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO tag_follows (account_id, tag_id, created_at)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (account_id, tag_id) DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(tag_id)
+        .bind(created_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+// ── user_domain_blocks (from mastodon account_domain_blocks) ───────────────
+
+async fn migrate_user_domain_blocks(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query("SELECT account_id, domain, created_at FROM account_domain_blocks")
+        .fetch_all(src)
+        .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let domain: String = row.get("domain");
+        let created_at = get_ts(&row, "created_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO user_domain_blocks (account_id, domain, created_at)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (account_id, domain) DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(&domain)
+        .bind(created_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+// ── invites ────────────────────────────────────────────────────────────────
+// mastodon: invites.user_id → users.account_id → account_map → eunha UUID
+// eunha invites have instance_id (required) and created_by (FK to accounts)
+
+async fn migrate_invites(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    instance_id: Uuid,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        r#"SELECT i.code, i.expires_at, i.max_uses, i.uses, i.created_at,
+                  u.account_id AS src_account_id
+           FROM invites i
+           JOIN users u ON u.id = i.user_id"#,
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("src_account_id");
+        let created_by = account_map.get(&src_account).copied();
+
+        let code: String = row.get("code");
+        let expires_at = get_ts_opt(&row, "expires_at");
+        let max_uses: Option<i32> = row.try_get("max_uses").ok().flatten();
+        let uses: i32 = row.try_get("uses").unwrap_or(0);
+        let created_at = get_ts(&row, "created_at")?;
+
+        sqlx::query(
+            r#"INSERT INTO invites (instance_id, code, created_by, max_uses, uses, expires_at, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (code) DO NOTHING"#,
+        )
+        .bind(instance_id)
+        .bind(&code)
+        .bind(created_by)
+        .bind(max_uses)
+        .bind(uses)
+        .bind(expires_at)
+        .bind(created_at)
+        .execute(&mut *dst)
+        .await?;
+    }
+
+    Ok(())
+}
+
+// ── web_push_subscriptions ─────────────────────────────────────────────────
+// Mastodon ties each subscription to an oauth_access_token.  Eunha does the
+// same (access_token_id FK, unique).  We migrate the mastodon access token
+// directly into eunha (same token string, no application_id) so the FK can
+// be satisfied.  Subscriptions are still functional only when eunha is
+// configured with the same VAPID keys that the browser subscribed with.
+
+async fn migrate_web_push_subscriptions(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    account_map: &HashMap<i64, Uuid>,
+) -> Result<()> {
+    let rows = sqlx::query(
+        r#"SELECT w.endpoint, w.key_p256dh, w.key_auth, w.data,
+                  w.created_at, w.updated_at,
+                  t.token, t.scopes, t.revoked_at, t.created_at AS token_created_at,
+                  u.account_id AS src_account_id
+           FROM web_push_subscriptions w
+           JOIN oauth_access_tokens t  ON t.id  = w.access_token_id
+           JOIN users u                ON u.id  = t.resource_owner_id"#,
+    )
+    .fetch_all(src)
+    .await?;
+
+    for row in &rows {
+        let src_account: i64 = row.get("src_account_id");
+        let Some(&account_id) = account_map.get(&src_account) else { continue };
+
+        let token: String = row.get("token");
+        let scopes: Option<String> = row.try_get("scopes").ok().flatten();
+        let token_revoked_at = get_ts_opt(&row, "revoked_at");
+        let token_created_at = get_ts(&row, "token_created_at")?;
+
+        // Upsert the mastodon access token into eunha so the FK can be satisfied.
+        let token_id: Uuid = sqlx::query_scalar(
+            r#"INSERT INTO oauth_access_tokens (account_id, token, scopes, revoked_at, created_at)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (token) DO UPDATE SET account_id = EXCLUDED.account_id
+               RETURNING id"#,
+        )
+        .bind(account_id)
+        .bind(&token)
+        .bind(scopes.as_deref().unwrap_or("read write push"))
+        .bind(token_revoked_at)
+        .bind(token_created_at)
+        .fetch_one(&mut *dst)
+        .await?;
+
+        let endpoint: String = row.get("endpoint");
+        let p256dh: String = row.get("key_p256dh");
+        let auth: String = row.get("key_auth");
+        let data: serde_json::Value = row.try_get("data").unwrap_or(serde_json::Value::Null);
+        let created_at = get_ts(&row, "created_at")?;
+        let updated_at = get_ts(&row, "updated_at")?;
+
+        let alerts = data.get("alerts").unwrap_or(&serde_json::Value::Null);
+        let policy = data.get("policy").and_then(|v| v.as_str()).unwrap_or("all");
+
+        let alert_follow    = alerts.get("follow")   .and_then(|v| v.as_bool()).unwrap_or(true);
+        let alert_favourite = alerts.get("favourite").and_then(|v| v.as_bool()).unwrap_or(true);
+        let alert_reblog    = alerts.get("reblog")   .and_then(|v| v.as_bool()).unwrap_or(true);
+        let alert_mention   = alerts.get("mention")  .and_then(|v| v.as_bool()).unwrap_or(true);
+        let alert_poll      = alerts.get("poll")     .and_then(|v| v.as_bool()).unwrap_or(false);
+        let alert_status    = alerts.get("status")   .and_then(|v| v.as_bool()).unwrap_or(false);
+
+        sqlx::query(
+            r#"INSERT INTO web_push_subscriptions
+                 (account_id, access_token_id, endpoint, p256dh, auth,
+                  alert_follow, alert_favourite, alert_reblog, alert_mention,
+                  alert_poll, alert_status, policy, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+               ON CONFLICT (access_token_id) DO NOTHING"#,
+        )
+        .bind(account_id)
+        .bind(token_id)
+        .bind(&endpoint)
+        .bind(&p256dh)
+        .bind(&auth)
+        .bind(alert_follow)
+        .bind(alert_favourite)
+        .bind(alert_reblog)
+        .bind(alert_mention)
+        .bind(alert_poll)
+        .bind(alert_status)
+        .bind(policy)
+        .bind(created_at)
+        .bind(updated_at)
         .execute(&mut *dst)
         .await?;
     }
