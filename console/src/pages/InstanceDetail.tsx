@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Trans, t } from '@lingui/macro'
 import { useLingui } from '@lingui/react'
-import { getInstance, updateInstance, uploadInstanceIcon, deleteInstance, getInviteTree, createConsoleInvite, listApplications, approveApplication, rejectApplication } from '../api/endpoints'
-import type { Instance, Rule, InviteTree, ConsoleInvite, Application } from '../api/types'
+import { getInstance, updateInstance, uploadInstanceIcon, deleteInstance, getInviteTree, createConsoleInvite, listApplications, approveApplication, rejectApplication, listAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement } from '../api/endpoints'
+import type { Instance, Rule, InviteTree, ConsoleInvite, Application, Announcement } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 import { InviteListView } from '../components/InviteListView'
 
@@ -39,6 +39,12 @@ export function InstanceDetail() {
   const [applications, setApplications] = useState<Application[]>([])
   const [appActing, setAppActing] = useState<string | null>(null)
 
+  const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [announcementText, setAnnouncementText] = useState('')
+  const [announcementPublished, setAnnouncementPublished] = useState(true)
+  const [announcementSaving, setAnnouncementSaving] = useState(false)
+  const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null)
+
   useEffect(() => {
     if (!domain) return
     getInstance(domain)
@@ -53,6 +59,7 @@ export function InstanceDetail() {
       .finally(() => setLoading(false))
     getInviteTree(domain).then(setInviteTree).catch(() => {})
     listApplications(domain).then(setApplications).catch(() => {})
+    listAnnouncements(domain).then(setAnnouncements).catch(() => {})
   }, [domain])
 
   const handleSave = async (e: React.FormEvent) => {
@@ -155,6 +162,47 @@ export function InstanceDetail() {
     } finally {
       setCreatingInvite(false)
     }
+  }
+
+  const handleCreateAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!domain || announcementSaving) return
+    setAnnouncementSaving(true)
+    try {
+      const created = await createAnnouncement(domain, announcementText, announcementPublished)
+      setAnnouncements((prev) => [created, ...prev])
+      setAnnouncementText('')
+      setAnnouncementPublished(true)
+    } finally {
+      setAnnouncementSaving(false)
+    }
+  }
+
+  const handleUpdateAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!domain || !editingAnnouncement || announcementSaving) return
+    setAnnouncementSaving(true)
+    try {
+      const updated = await updateAnnouncement(domain, editingAnnouncement.id, announcementText, announcementPublished)
+      setAnnouncements((prev) => prev.map((a) => a.id === updated.id ? updated : a))
+      setEditingAnnouncement(null)
+      setAnnouncementText('')
+      setAnnouncementPublished(true)
+    } finally {
+      setAnnouncementSaving(false)
+    }
+  }
+
+  const handleDeleteAnnouncement = async (id: string) => {
+    if (!domain) return
+    await deleteAnnouncement(domain, id)
+    setAnnouncements((prev) => prev.filter((a) => a.id !== id))
+  }
+
+  const handleEditAnnouncement = (a: Announcement) => {
+    setEditingAnnouncement(a)
+    setAnnouncementText(a.text)
+    setAnnouncementPublished(a.published)
   }
 
   const handleDelete = async () => {
@@ -431,6 +479,81 @@ export function InstanceDetail() {
         {inviteTree && (
           <InviteListView members={inviteTree.members} invites={inviteTree.invites} rejected={inviteTree.rejected ?? []} />
         )}
+      </section>
+
+      <section className="space-y-4">
+        <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
+          <Trans>Announcements</Trans>
+        </p>
+
+        {announcements.length > 0 && (
+          <ul className="space-y-2">
+            {announcements.map((a) => (
+              <li key={a.id} className="border border-border p-3 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs text-text flex-1 whitespace-pre-wrap">{a.text}</p>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleEditAnnouncement(a)}
+                      className="text-xs text-muted hover:text-text transition-colors"
+                    >
+                      <Trans>Edit</Trans>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteAnnouncement(a.id)}
+                      className="text-xs text-muted hover:text-danger transition-colors"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted/60">
+                  {a.published ? <Trans>Published</Trans> : <Trans>Draft</Trans>}
+                  {' · '}{new Date(a.updated_at).toLocaleString()}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form onSubmit={editingAnnouncement ? handleUpdateAnnouncement : handleCreateAnnouncement} className="space-y-2">
+          {editingAnnouncement && (
+            <p className="text-xs text-muted">
+              <Trans>Editing announcement</Trans>
+              {' '}
+              <button type="button" onClick={() => { setEditingAnnouncement(null); setAnnouncementText(''); setAnnouncementPublished(true) }} className="underline hover:text-text transition-colors">
+                <Trans>cancel</Trans>
+              </button>
+            </p>
+          )}
+          <textarea
+            value={announcementText}
+            onChange={(e) => setAnnouncementText(e.target.value)}
+            rows={3}
+            required
+            placeholder={t`Announcement text…`}
+            className="w-full bg-surface border border-border px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors resize-y"
+          />
+          <div className="flex items-center justify-between gap-3">
+            <Toggle
+              label={t`Published`}
+              description={t`Show to users`}
+              checked={announcementPublished}
+              onChange={setAnnouncementPublished}
+            />
+            <button
+              type="submit"
+              disabled={announcementSaving || !announcementText.trim()}
+              className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              {announcementSaving
+                ? <Trans>Saving…</Trans>
+                : editingAnnouncement ? <Trans>Update</Trans> : <Trans>Post</Trans>}
+            </button>
+          </div>
+        </form>
       </section>
 
       <section className="space-y-3">

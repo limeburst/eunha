@@ -693,6 +693,162 @@ pub async fn reject_application(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── Announcements ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AnnouncementResponse {
+    pub id: String,
+    pub text: String,
+    pub published: bool,
+    pub all_day: bool,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub published_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnnouncementForm {
+    pub text: String,
+    pub published: Option<bool>,
+    pub all_day: Option<bool>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+}
+
+pub async fn list_announcements(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path(domain): Path<String>,
+) -> AppResult<Json<Vec<AnnouncementResponse>>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let rows = sqlx::query!(
+        "SELECT id, text, published, all_day, starts_at, ends_at, published_at, created_at, updated_at
+         FROM announcements WHERE instance_id = $1 ORDER BY published_at DESC",
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(rows.into_iter().map(|r| AnnouncementResponse {
+        id: r.id.to_string(),
+        text: r.text,
+        published: r.published,
+        all_day: r.all_day,
+        starts_at: r.starts_at.map(|t| t.to_rfc3339()),
+        ends_at: r.ends_at.map(|t| t.to_rfc3339()),
+        published_at: r.published_at.to_rfc3339(),
+        created_at: r.created_at.to_rfc3339(),
+        updated_at: r.updated_at.to_rfc3339(),
+    }).collect()))
+}
+
+pub async fn create_announcement(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path(domain): Path<String>,
+    Json(form): Json<AnnouncementForm>,
+) -> AppResult<Json<AnnouncementResponse>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let starts_at = form.starts_at.as_deref()
+        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+    let ends_at = form.ends_at.as_deref()
+        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+
+    let r = sqlx::query!(
+        r#"INSERT INTO announcements (instance_id, text, published, all_day, starts_at, ends_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, text, published, all_day, starts_at, ends_at, published_at, created_at, updated_at"#,
+        instance.id,
+        form.text,
+        form.published.unwrap_or(true),
+        form.all_day.unwrap_or(false),
+        starts_at,
+        ends_at,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(AnnouncementResponse {
+        id: r.id.to_string(),
+        text: r.text,
+        published: r.published,
+        all_day: r.all_day,
+        starts_at: r.starts_at.map(|t| t.to_rfc3339()),
+        ends_at: r.ends_at.map(|t| t.to_rfc3339()),
+        published_at: r.published_at.to_rfc3339(),
+        created_at: r.created_at.to_rfc3339(),
+        updated_at: r.updated_at.to_rfc3339(),
+    }))
+}
+
+pub async fn update_announcement(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path((domain, id)): Path<(String, i64)>,
+    Json(form): Json<AnnouncementForm>,
+) -> AppResult<Json<AnnouncementResponse>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let starts_at = form.starts_at.as_deref()
+        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+    let ends_at = form.ends_at.as_deref()
+        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+
+    let r = sqlx::query!(
+        r#"UPDATE announcements
+           SET text = $3, published = $4, all_day = $5, starts_at = $6, ends_at = $7, updated_at = now()
+           WHERE id = $1 AND instance_id = $2
+           RETURNING id, text, published, all_day, starts_at, ends_at, published_at, created_at, updated_at"#,
+        id,
+        instance.id,
+        form.text,
+        form.published.unwrap_or(true),
+        form.all_day.unwrap_or(false),
+        starts_at,
+        ends_at,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(AnnouncementResponse {
+        id: r.id.to_string(),
+        text: r.text,
+        published: r.published,
+        all_day: r.all_day,
+        starts_at: r.starts_at.map(|t| t.to_rfc3339()),
+        ends_at: r.ends_at.map(|t| t.to_rfc3339()),
+        published_at: r.published_at.to_rfc3339(),
+        created_at: r.created_at.to_rfc3339(),
+        updated_at: r.updated_at.to_rfc3339(),
+    }))
+}
+
+pub async fn delete_announcement(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path((domain, id)): Path<(String, i64)>,
+) -> AppResult<StatusCode> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let deleted = sqlx::query_scalar!(
+        "DELETE FROM announcements WHERE id = $1 AND instance_id = $2 RETURNING id",
+        id, instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 async fn instance_for_user(state: &AppState, domain: &str, user_id: Uuid) -> AppResult<Instance> {

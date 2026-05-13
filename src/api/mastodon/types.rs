@@ -589,6 +589,27 @@ pub struct FeaturedTag {
     pub last_status_at: Option<String>,
 }
 
+// ── Announcement ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct Announcement {
+    pub id: String,
+    pub text: String,
+    pub published: bool,
+    pub all_day: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub published_at: String,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub read: bool,
+    pub reactions: Vec<serde_json::Value>,
+    pub statuses: Vec<serde_json::Value>,
+    pub tags: Vec<serde_json::Value>,
+    pub emojis: Vec<serde_json::Value>,
+    pub mentions: Vec<serde_json::Value>,
+}
+
 // ── Conversation ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

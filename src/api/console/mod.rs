@@ -52,6 +52,14 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/console/instances/{domain}/applications/{account_id}/reject",
             post(instances::reject_application),
         )
+        .route(
+            "/api/console/instances/{domain}/announcements",
+            get(instances::list_announcements).post(instances::create_announcement),
+        )
+        .route(
+            "/api/console/instances/{domain}/announcements/{id}",
+            patch(instances::update_announcement).delete(instances::delete_announcement),
+        )
         .with_state(state)
 }
 

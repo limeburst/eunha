@@ -74,6 +74,18 @@ export interface InviteTree {
   rejected: RejectedMember[]
 }
 
+export interface Announcement {
+  id: string
+  text: string
+  published: boolean
+  all_day: boolean
+  starts_at: string | null
+  ends_at: string | null
+  published_at: string
+  created_at: string
+  updated_at: string
+}
+
 export interface CreateInstanceRequest {
   domain: string
   custom_domain?: string

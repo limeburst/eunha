@@ -1,6 +1,8 @@
 pub mod accounts;
+pub mod announcements;
 pub mod bookmarks;
 pub mod conversations;
+pub mod trends;
 pub mod convert;
 pub mod domain_blocks;
 pub mod emojis;
@@ -236,14 +238,15 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Tags (public)
         .route("/api/v1/tags/{name}", get(tags::get_tag))
         // Trends — no analytics data; always empty
-        .route("/api/v1/trends", get(empty_array))
-        .route("/api/v1/trends/statuses", get(empty_array))
-        .route("/api/v1/trends/tags", get(empty_array))
-        .route("/api/v1/trends/links", get(empty_array))
+        .route("/api/v1/trends", get(trends::trending_tags))
+        .route("/api/v1/trends/statuses", get(trends::trending_statuses))
+        .route("/api/v1/trends/tags", get(trends::trending_tags))
+        .route("/api/v1/trends/links", get(trends::trending_links))
         // Custom emojis (public)
         .route("/api/v1/custom_emojis", get(emojis::list_custom_emojis))
         // Announcements / conversations — not yet implemented
-        .route("/api/v1/announcements", get(empty_array))
+        .route("/api/v1/announcements", get(announcements::get_announcements))
+        .route("/api/v1/announcements/{id}/dismiss", post(announcements::dismiss_announcement))
         .route("/api/v1/conversations", get(conversations::get_conversations))
         .route("/api/v1/conversations/{id}", delete(conversations::delete_conversation))
         .route("/api/v1/conversations/{id}/read", post(conversations::mark_conversation_read))
@@ -261,10 +264,6 @@ pub fn router(state: AppState) -> Router<AppState> {
 /// Routes that must NOT be wrapped by CompressionLayer (WebSocket upgrades).
 pub fn streaming_router() -> Router<AppState> {
     Router::new().route("/api/v1/streaming", get(streaming::handler))
-}
-
-async fn empty_array() -> Json<[(); 0]> {
-    Json([])
 }
 
 async fn empty_object() -> Json<serde_json::Value> {

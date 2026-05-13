@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { User, Instance, Rule, CreateInstanceRequest, InviteTree, ConsoleInvite, Application } from './types'
+import type { User, Instance, Rule, CreateInstanceRequest, InviteTree, ConsoleInvite, Application, Announcement } from './types'
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -61,3 +61,17 @@ export const approveApplication = (domain: string, accountId: string) =>
 
 export const rejectApplication = (domain: string, accountId: string) =>
   api.post<void>(`/api/console/instances/${domain}/applications/${accountId}/reject`, {})
+
+// ── Announcements ──────────────────────────────────────────────────────────
+
+export const listAnnouncements = (domain: string) =>
+  api.get<Announcement[]>(`/api/console/instances/${domain}/announcements`)
+
+export const createAnnouncement = (domain: string, text: string, published: boolean) =>
+  api.post<Announcement>(`/api/console/instances/${domain}/announcements`, { text, published })
+
+export const updateAnnouncement = (domain: string, id: string, text: string, published: boolean) =>
+  api.patch<Announcement>(`/api/console/instances/${domain}/announcements/${id}`, { text, published })
+
+export const deleteAnnouncement = (domain: string, id: string) =>
+  api.delete<void>(`/api/console/instances/${domain}/announcements/${id}`)
