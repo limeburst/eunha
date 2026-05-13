@@ -1,8 +1,7 @@
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query, RawQuery, State},
     Json,
 };
-use serde::Deserialize;
 
 use crate::{
     db::models::{Account, Notification as DbNotification},
@@ -19,27 +18,19 @@ use super::{
     },
 };
 
-#[derive(Debug, Deserialize)]
-pub struct NotificationsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
-    pub types: Option<Vec<String>>,
-    pub exclude_types: Option<Vec<String>>,
-    pub account_id: Option<uuid::Uuid>,
-}
-
 // ── GET /api/v1/notifications ─────────────────────────────────────────────
 
 pub async fn get_notifications(
     State(state): State<AppState>,
-    Query(q): Query<NotificationsQuery>,
+    Query(pagination): Query<PaginationParams>,
+    RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Notification>>> {
-    let limit = q.pagination.limit_clamped(40, 80);
-    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let types = q.types.as_deref();
-    let exclude_types = q.exclude_types.as_deref();
+    let limit = pagination.limit_clamped(40, 80);
+    let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
+    let (types, exclude_types, account_id) = parse_notif_filters(qs.as_deref());
 
     let notifications = sqlx::query_as(
         r#"SELECT * FROM notifications
@@ -58,7 +49,7 @@ pub async fn get_notifications(
     .bind(limit)
     .bind(types)
     .bind(exclude_types)
-    .bind(q.account_id)
+    .bind(account_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -124,15 +115,15 @@ pub async fn dismiss_notification(
 
 pub async fn get_notifications_v2(
     State(state): State<AppState>,
-    Query(q): Query<NotificationsQuery>,
+    Query(pagination): Query<PaginationParams>,
+    RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationGroupsResponse>> {
-    let limit = q.pagination.limit_clamped(40, 80);
-    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let limit = pagination.limit_clamped(40, 80);
+    let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let types = q.types.as_deref();
-    let exclude_types = q.exclude_types.as_deref();
+    let (types, exclude_types, account_id) = parse_notif_filters(qs.as_deref());
 
     let notifications: Vec<DbNotification> = sqlx::query_as(
         r#"SELECT * FROM notifications
@@ -151,7 +142,7 @@ pub async fn get_notifications_v2(
     .bind(limit)
     .bind(types)
     .bind(exclude_types)
-    .bind(q.account_id)
+    .bind(account_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -274,6 +265,32 @@ pub async fn dismiss_notification_request(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// Parse `types[]=x`, `types=x`, `exclude_types[]=x`, `exclude_types=x`, and
+/// `account_id=x` from the raw query string.  Mastodon clients use bracket
+/// array notation (`foo[]=val`) which serde_urlencoded does not normalise.
+fn parse_notif_filters(
+    qs: Option<&str>,
+) -> (Option<Vec<String>>, Option<Vec<String>>, Option<uuid::Uuid>) {
+    let pairs: Vec<(std::borrow::Cow<str>, std::borrow::Cow<str>)> =
+        url::form_urlencoded::parse(qs.unwrap_or("").as_bytes()).collect();
+
+    let collect_arr = |plain: &str, bracket: &str| -> Option<Vec<String>> {
+        let v: Vec<String> = pairs.iter()
+            .filter(|(k, _)| k == plain || k == bracket)
+            .map(|(_, v)| v.to_string())
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    };
+
+    let types = collect_arr("types", "types[]");
+    let exclude_types = collect_arr("exclude_types", "exclude_types[]");
+    let account_id = pairs.iter()
+        .find(|(k, _)| k == "account_id")
+        .and_then(|(_, v)| v.parse::<uuid::Uuid>().ok());
+
+    (types, exclude_types, account_id)
+}
 
 async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<Notification> {
     let from_account = sqlx::query_as!(
