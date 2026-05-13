@@ -1737,7 +1737,7 @@ async fn migrate_scheduled_statuses(
     account_map: &HashMap<i64, Uuid>,
 ) -> Result<()> {
     let rows = sqlx::query(
-        "SELECT account_id, scheduled_at, params, created_at FROM scheduled_statuses",
+        "SELECT account_id, scheduled_at, params FROM scheduled_statuses",
     )
     .fetch_all(src)
     .await?;
@@ -1748,15 +1748,13 @@ async fn migrate_scheduled_statuses(
 
         let scheduled_at = get_ts_opt(&row, "scheduled_at");
         let params: Option<serde_json::Value> = row.try_get("params").ok().flatten();
-        let created_at = get_ts(&row, "created_at")?;
 
         sqlx::query(
-            "INSERT INTO scheduled_statuses (account_id, scheduled_at, params, created_at) VALUES ($1,$2,$3,$4)",
+            "INSERT INTO scheduled_statuses (account_id, scheduled_at, params) VALUES ($1,$2,$3)",
         )
         .bind(account_id)
         .bind(scheduled_at)
         .bind(&params)
-        .bind(created_at)
         .execute(&mut *dst)
         .await?;
     }
