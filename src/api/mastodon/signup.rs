@@ -146,7 +146,7 @@ pub async fn signup_post(
 
     let base_url = format!("https://{}", instance.domain);
     let uri = format!("{}/users/{}", base_url, username);
-    let url = format!("{}/{}", base_url, username);
+    let url = format!("{}/@{}", base_url, username);
     let inbox_url = format!("{}/inbox", uri);
     let outbox_url = format!("{}/outbox", uri);
     let shared_inbox_url = format!("https://{}/inbox", instance.domain);
@@ -360,7 +360,7 @@ pub async fn api_create_account(
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let base_url = format!("https://{}", domain);
     let uri = format!("https://{}/users/{}", instance.domain, username);
-    let url = format!("{}/{}", base_url, username);
+    let url = format!("{}/@{}", base_url, username);
 
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
