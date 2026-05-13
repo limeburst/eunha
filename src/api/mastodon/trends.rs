@@ -30,14 +30,11 @@ pub async fn trending_tags(
     let limit = params.limit.unwrap_or(10).min(20).max(1);
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
 
-    let rows = sqlx::query!(
+    // Get top trending tag IDs ordered by usage in last 7 days
+    let top_tags = sqlx::query!(
         r#"SELECT t.id, t.name,
-                  COUNT(DISTINCT st.status_id) FILTER (
-                      WHERE s.created_at > now() - interval '1 day'
-                  ) AS day_uses,
-                  COUNT(DISTINCT st.status_id) FILTER (
-                      WHERE s.created_at > now() - interval '7 days'
-                  ) AS week_uses
+                  COUNT(DISTINCT st.status_id) FILTER (WHERE s.created_at > now() - interval '1 day') AS day_uses,
+                  COUNT(DISTINCT st.status_id) AS week_uses
            FROM tags t
            JOIN status_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
@@ -55,24 +52,49 @@ pub async fn trending_tags(
     .fetch_all(&state.db)
     .await?;
 
-    let tags = rows
+    if top_tags.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    let tag_ids: Vec<uuid::Uuid> = top_tags.iter().map(|r| r.id).collect();
+
+    // Fetch 7-day per-day breakdown for all returned tags in one query
+    let history_rows = sqlx::query!(
+        r#"SELECT st.tag_id,
+                  date_trunc('day', s.created_at)::timestamptz AS day,
+                  COUNT(DISTINCT st.status_id) AS uses,
+                  COUNT(DISTINCT s.account_id) AS accounts
+           FROM status_tags st
+           JOIN statuses s ON s.id = st.status_id
+           WHERE st.tag_id = ANY($1::uuid[])
+             AND s.created_at >= now() - interval '7 days'
+             AND s.deleted_at IS NULL
+           GROUP BY st.tag_id, date_trunc('day', s.created_at)
+           ORDER BY day DESC"#,
+        &tag_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    // Build per-tag history map
+    let mut history_map: std::collections::HashMap<uuid::Uuid, Vec<TagHistory>> =
+        std::collections::HashMap::new();
+    for row in history_rows {
+        let day_ts = row.day.map(|d| d.timestamp()).unwrap_or(0).to_string();
+        history_map.entry(row.tag_id).or_default().push(TagHistory {
+            day: day_ts,
+            uses: row.uses.unwrap_or(0).to_string(),
+            accounts: row.accounts.unwrap_or(0).to_string(),
+        });
+    }
+
+    let tags = top_tags
         .into_iter()
         .map(|r| Tag {
             id: r.id.to_string(),
             name: r.name.clone(),
             url: format!("https://{}/tags/{}", domain, r.name),
-            history: vec![
-                TagHistory {
-                    day: chrono::Utc::now().timestamp().to_string(),
-                    uses: r.day_uses.unwrap_or(0).to_string(),
-                    accounts: r.day_uses.unwrap_or(0).to_string(),
-                },
-                TagHistory {
-                    day: (chrono::Utc::now() - chrono::Duration::days(7)).timestamp().to_string(),
-                    uses: r.week_uses.unwrap_or(0).to_string(),
-                    accounts: r.week_uses.unwrap_or(0).to_string(),
-                },
-            ],
+            history: history_map.remove(&r.id).unwrap_or_default(),
             following: None,
             featuring: None,
         })

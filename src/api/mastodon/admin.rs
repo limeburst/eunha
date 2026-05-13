@@ -605,11 +605,252 @@ pub async fn get_admin_role(
     Ok(Json(role))
 }
 
-// ── GET /api/v1/admin/dimension / measures / retention (stubs) ───────────
+// ── POST /api/v1/admin/measures ───────────────────────────────────────────
 
-pub async fn get_dimensions() -> Json<Vec<serde_json::Value>> { Json(vec![]) }
-pub async fn get_measures() -> Json<Vec<serde_json::Value>> { Json(vec![]) }
-pub async fn get_retention() -> Json<serde_json::Value> { Json(serde_json::json!({"data": []})) }
+#[derive(Debug, Deserialize)]
+pub struct MeasuresRequest {
+    pub keys: Vec<String>,
+    pub start_at: Option<String>,
+    pub end_at: Option<String>,
+}
+
+pub async fn get_measures(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(body): Json<MeasuresRequest>,
+) -> AppResult<Json<Vec<serde_json::Value>>> {
+    require_admin(&state, auth.account_id).await?;
+    let instance_id = sqlx::query_scalar!(
+        "SELECT instance_id FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(7));
+    let end: chrono::DateTime<chrono::Utc> = body.end_at.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+    let prev_start = start - (end - start);
+
+    let mut result = Vec::new();
+
+    for key in &body.keys {
+        let measure = match key.as_str() {
+            "new_users" => {
+                let total = sqlx::query_scalar!(
+                    "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND created_at BETWEEN $2 AND $3",
+                    instance_id, start, end,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let previous_total = sqlx::query_scalar!(
+                    "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND created_at BETWEEN $2 AND $3",
+                    instance_id, prev_start, start,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let data = sqlx::query!(
+                    r#"SELECT date_trunc('day', created_at)::timestamptz AS day, COUNT(*) AS n
+                       FROM accounts WHERE instance_id = $1 AND domain IS NULL AND created_at BETWEEN $2 AND $3
+                       GROUP BY day ORDER BY day"#,
+                    instance_id, start, end,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key,
+                    "unit": null,
+                    "total": total.to_string(),
+                    "human_value": total.to_string(),
+                    "previous_total": previous_total.to_string(),
+                    "data": data.iter().map(|r| serde_json::json!({
+                        "date": r.day.map(|d| d.to_rfc3339()).unwrap_or_default(),
+                        "value": r.n.unwrap_or(0).to_string(),
+                    })).collect::<Vec<_>>(),
+                })
+            }
+            "active_users" => {
+                let total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
+                       JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
+                    instance_id, start, end,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let previous_total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
+                       JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
+                    instance_id, prev_start, start,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let data = sqlx::query!(
+                    r#"SELECT date_trunc('day', s.created_at)::timestamptz AS day, COUNT(DISTINCT s.account_id) AS n
+                       FROM statuses s JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL
+                       GROUP BY day ORDER BY day"#,
+                    instance_id, start, end,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key,
+                    "unit": null,
+                    "total": total.to_string(),
+                    "human_value": total.to_string(),
+                    "previous_total": previous_total.to_string(),
+                    "data": data.iter().map(|r| serde_json::json!({
+                        "date": r.day.map(|d| d.to_rfc3339()).unwrap_or_default(),
+                        "value": r.n.unwrap_or(0).to_string(),
+                    })).collect::<Vec<_>>(),
+                })
+            }
+            "new_statuses" => {
+                let total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
+                    instance_id, start, end,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let previous_total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
+                    instance_id, prev_start, start,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let data = sqlx::query!(
+                    r#"SELECT date_trunc('day', s.created_at)::timestamptz AS day, COUNT(*) AS n
+                       FROM statuses s JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL
+                       GROUP BY day ORDER BY day"#,
+                    instance_id, start, end,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key,
+                    "unit": null,
+                    "total": total.to_string(),
+                    "human_value": total.to_string(),
+                    "previous_total": previous_total.to_string(),
+                    "data": data.iter().map(|r| serde_json::json!({
+                        "date": r.day.map(|d| d.to_rfc3339()).unwrap_or_default(),
+                        "value": r.n.unwrap_or(0).to_string(),
+                    })).collect::<Vec<_>>(),
+                })
+            }
+            "opened_reports" => {
+                let total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
+                       WHERE a.instance_id = $1 AND r.created_at BETWEEN $2 AND $3"#,
+                    instance_id, start, end,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let previous_total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
+                       WHERE a.instance_id = $1 AND r.created_at BETWEEN $2 AND $3"#,
+                    instance_id, prev_start, start,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                serde_json::json!({
+                    "key": key, "unit": null,
+                    "total": total.to_string(), "human_value": total.to_string(),
+                    "previous_total": previous_total.to_string(), "data": [],
+                })
+            }
+            "resolved_reports" => {
+                let total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
+                       WHERE a.instance_id = $1 AND r.action_taken_at BETWEEN $2 AND $3"#,
+                    instance_id, start, end,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                let previous_total = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
+                       WHERE a.instance_id = $1 AND r.action_taken_at BETWEEN $2 AND $3"#,
+                    instance_id, prev_start, start,
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+                serde_json::json!({
+                    "key": key, "unit": null,
+                    "total": total.to_string(), "human_value": total.to_string(),
+                    "previous_total": previous_total.to_string(), "data": [],
+                })
+            }
+            _ => serde_json::json!({
+                "key": key, "unit": null, "total": "0",
+                "human_value": "0", "previous_total": "0", "data": [],
+            }),
+        };
+        result.push(measure);
+    }
+
+    Ok(Json(result))
+}
+
+// ── POST /api/v1/admin/dimensions ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DimensionsRequest {
+    pub keys: Vec<String>,
+    pub start_at: Option<String>,
+    pub end_at: Option<String>,
+    pub limit: Option<i64>,
+}
+
+pub async fn get_dimensions(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(body): Json<DimensionsRequest>,
+) -> AppResult<Json<Vec<serde_json::Value>>> {
+    require_admin(&state, auth.account_id).await?;
+    let instance_id = sqlx::query_scalar!(
+        "SELECT instance_id FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(7));
+    let end: chrono::DateTime<chrono::Utc> = body.end_at.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+    let limit = body.limit.unwrap_or(10).min(50).max(1);
+
+    let mut result = Vec::new();
+
+    for key in &body.keys {
+        let dimension = match key.as_str() {
+            "servers" => {
+                let rows = sqlx::query!(
+                    r#"SELECT COALESCE(a.domain, 'local') AS server, COUNT(*) AS n
+                       FROM statuses s JOIN accounts a ON a.id = s.account_id
+                       WHERE a.instance_id = $1 AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL
+                       GROUP BY server ORDER BY n DESC LIMIT $4"#,
+                    instance_id, start, end, limit,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key,
+                    "data": rows.iter().map(|r| {
+                        let v = r.n.unwrap_or(0).to_string();
+                        serde_json::json!({
+                            "key": r.server,
+                            "human_key": r.server,
+                            "value": v,
+                            "unit": null,
+                            "human_value": v,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            }
+            "sources" => {
+                // Statuses don't store the originating OAuth application — not trackable.
+                serde_json::json!({"key": key, "data": []})
+            }
+            _ => serde_json::json!({"key": key, "data": []}),
+        };
+        result.push(dimension);
+    }
+
+    Ok(Json(result))
+}
+
+// ── POST /api/v1/admin/retention (stub — cohort analysis not implemented) ──
+
+pub async fn get_retention() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"data": []}))
+}
 
 // ── Admin CustomEmoji type ────────────────────────────────────────────────
 

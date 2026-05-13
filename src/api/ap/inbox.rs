@@ -222,7 +222,7 @@ async fn handle_update(
 }
 
 /// Looks up a remote account by URI, fetching it from the remote server if unknown.
-async fn resolve_or_fetch_remote_account(
+pub async fn resolve_or_fetch_remote_account(
     state: &AppState,
     actor_uri: &str,
 ) -> AppResult<uuid::Uuid> {
@@ -300,7 +300,7 @@ async fn resolve_or_fetch_remote_account(
     Ok(id)
 }
 
-async fn get_or_create_remote_instance(state: &AppState, domain: &str) -> AppResult<uuid::Uuid> {
+pub async fn get_or_create_remote_instance(state: &AppState, domain: &str) -> AppResult<uuid::Uuid> {
     if let Some(id) = sqlx::query_scalar!(
         "SELECT id FROM instances WHERE domain = $1",
         domain
