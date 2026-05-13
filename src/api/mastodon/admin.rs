@@ -577,6 +577,34 @@ pub async fn reopen_report(
     get_admin_report(State(state), Extension(auth), Path(id)).await
 }
 
+// ── GET /api/v1/admin/roles ───────────────────────────────────────────────
+
+pub async fn list_admin_roles(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AdminRole>>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(vec![
+        role_for("admin"),
+        role_for("moderator"),
+        role_for("user"),
+    ]))
+}
+
+pub async fn get_admin_role(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<String>,
+) -> AppResult<Json<AdminRole>> {
+    require_admin(&state, auth.account_id).await?;
+    let role = match id.as_str() {
+        "1" => role_for("admin"),
+        "2" => role_for("moderator"),
+        _ => role_for("user"),
+    };
+    Ok(Json(role))
+}
+
 // ── GET /api/v1/admin/dimension / measures / retention (stubs) ───────────
 
 pub async fn get_dimensions() -> Json<Vec<serde_json::Value>> { Json(vec![]) }

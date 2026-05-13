@@ -168,6 +168,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/admin/reports/{id}", get(admin::get_admin_report))
         .route("/api/v1/admin/reports/{id}/resolve", post(admin::resolve_report))
         .route("/api/v1/admin/reports/{id}/reopen", post(admin::reopen_report))
+        .route("/api/v1/admin/roles", get(admin::list_admin_roles))
+        .route("/api/v1/admin/roles/{id}", get(admin::get_admin_role))
         .route("/api/v1/admin/dimensions", post(admin::get_dimensions))
         .route("/api/v1/admin/measures", post(admin::get_measures))
         .route("/api/v1/admin/retention", post(admin::get_retention))
@@ -230,6 +232,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/instance/extended_description", get(instance::get_extended_description))
         .route("/api/v1/instance/privacy_policy", get(instance::get_privacy_policy))
         .route("/api/v1/instance/translation_languages", get(instance::get_translation_languages))
+        .route("/api/v1/instance/peers", get(instance::get_peers))
         .route("/api/v2/instance", get(instance::get_instance_v2))
         // App credentials
         .route("/api/v1/apps/verify_credentials", get(oauth::verify_app_credentials))

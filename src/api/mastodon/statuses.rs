@@ -1218,7 +1218,7 @@ pub async fn build_viewer_context(
     })
 }
 
-fn render_content(
+pub fn render_content(
     text: &str,
     domain: &str,
     mention_map: &HashMap<String, (String, String)>,
@@ -1316,7 +1316,7 @@ fn linkify_entities(
     result
 }
 
-fn extract_hashtags(text: &str) -> Vec<String> {
+pub fn extract_hashtags(text: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     HASHTAG_RE.captures_iter(text)
         .filter_map(|c| {
@@ -1326,7 +1326,7 @@ fn extract_hashtags(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn extract_mention_handles(text: &str) -> Vec<(String, Option<String>)> {
+pub fn extract_mention_handles(text: &str) -> Vec<(String, Option<String>)> {
     let mut seen = std::collections::HashSet::new();
     MENTION_RE.captures_iter(text)
         .filter_map(|c| {
@@ -1341,7 +1341,7 @@ fn extract_mention_handles(text: &str) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
-async fn resolve_mention_accounts(
+pub async fn resolve_mention_accounts(
     state: &AppState,
     instance_id: Uuid,
     handles: &[(String, Option<String>)],
@@ -1376,7 +1376,7 @@ async fn resolve_mention_accounts(
     result
 }
 
-fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (String, String)> {
+pub fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (String, String)> {
     let mut map = HashMap::new();
     for (username_lower, account) in resolved {
         let url = account.url.clone();
@@ -1389,7 +1389,7 @@ fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (String,
     map
 }
 
-async fn store_status_tags(state: &AppState, status_id: i64, hashtags: &[String]) -> AppResult<()> {
+pub async fn store_status_tags(state: &AppState, status_id: i64, hashtags: &[String]) -> AppResult<()> {
     sqlx::query!("DELETE FROM status_tags WHERE status_id = $1", status_id)
         .execute(&state.db)
         .await?;
@@ -1412,7 +1412,7 @@ async fn store_status_tags(state: &AppState, status_id: i64, hashtags: &[String]
     Ok(())
 }
 
-async fn store_status_mentions(
+pub async fn store_status_mentions(
     state: &AppState,
     status_id: i64,
     resolved: &[(String, Account)],

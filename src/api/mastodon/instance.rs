@@ -1,7 +1,11 @@
-use axum::{extract::Extension, Json};
+use axum::{
+    extract::{Extension, State},
+    Json,
+};
 use crate::{
     error::AppResult,
     middleware::ResolvedInstance,
+    state::AppState,
 };
 use super::types::*;
 
@@ -64,6 +68,21 @@ pub async fn get_instance_v1(
             }).collect())
             .unwrap_or_default(),
     }))
+}
+
+// ── GET /api/v1/instance/peers ────────────────────────────────────────────
+
+pub async fn get_peers(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> AppResult<Json<Vec<String>>> {
+    let rows = sqlx::query_scalar!(
+        "SELECT DISTINCT domain FROM accounts WHERE instance_id = $1 AND domain IS NOT NULL ORDER BY domain",
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().flatten().collect()))
 }
 
 pub async fn get_instance_v2(
