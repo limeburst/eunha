@@ -3,7 +3,10 @@ use axum::{
     http::header,
     Json,
 };
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::Deserialize;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
@@ -15,10 +18,22 @@ use crate::{
     streaming::Event,
 };
 use super::{
-    accounts::{fetch_reblog_data, fetch_status_media},
-    convert::{account_from_db, status_from_db},
+    accounts::{build_status, fetch_reblog_data, fetch_status_media},
+    convert::account_from_db,
     types::{Status, StatusContext, StatusEdit, StatusSource},
 };
+
+static HASHTAG_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(^|[\s,.:;!?\(\[\{/])#([a-zA-Z][a-zA-Z0-9_]*)").unwrap()
+});
+
+static MENTION_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(^|[\s,.:;!?\(\[\{/])@([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9._:\-]+))?").unwrap()
+});
+
+static URL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new("https?://[^\\s<>&\"]+").unwrap()
+});
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PostStatusForm {
@@ -48,7 +63,12 @@ pub async fn post_status(
 
     let visibility = form.visibility.as_deref().unwrap_or("public");
     let in_reply_to_id = form.in_reply_to_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let content = render_markdown(&text);
+
+    let hashtags = extract_hashtags(&text);
+    let mention_handles = extract_mention_handles(&text);
+    let resolved = resolve_mention_accounts(&state, instance.id, &mention_handles).await;
+    let mention_map = build_mention_map(&resolved);
+    let content = render_content(&text, &instance.domain, &mention_map);
 
     let status = sqlx::query_as!(
         DbStatus,
@@ -80,6 +100,10 @@ pub async fn post_status(
     .execute(&state.db)
     .await?;
 
+    // Store tags and mentions
+    store_status_tags(&state, status.id, &hashtags).await?;
+    store_status_mentions(&state, status.id, &resolved).await?;
+
     // Increment statuses count
     sqlx::query!(
         "UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1",
@@ -107,7 +131,7 @@ pub async fn post_status(
     status.uri = Some(uri);
 
     let media = fetch_status_media(&state, status.id).await?;
-    let api_status = status_from_db(&status, &account, media, None, None);
+    let api_status = build_status(&state, &status, &account, media, None, None).await?;
 
     if matches!(visibility, "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {
@@ -250,7 +274,7 @@ pub async fn get_status(
         None
     };
 
-    Ok(Json(status_from_db(&status, &account, media, reblog, viewer_ctx)))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, viewer_ctx).await?))
 }
 
 // ── DELETE /api/v1/statuses/:id ────────────────────────────────────────────
@@ -286,7 +310,7 @@ pub async fn delete_status(
 
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
-    let mut s = status_from_db(&status, &account, media, reblog, None);
+    let mut s = build_status(&state, &status, &account, media, reblog, None).await?;
     s.text = Some(status.text.clone());
     Ok(Json(s))
 }
@@ -335,7 +359,7 @@ pub async fn favourite_status(
         account.avatar.clone().unwrap_or_default(),
     ).await;
 
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/unfavourite ─────────────────────────────────
@@ -365,7 +389,7 @@ pub async fn unfavourite_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/reblog ──────────────────────────────────────
@@ -419,7 +443,7 @@ pub async fn reblog_status(
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
     let media = fetch_status_media(&state, boost.id).await?;
     let reblog = fetch_reblog_data(&state, &boost).await?;
-    Ok(Json(status_from_db(&boost, &boost_account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?))
 }
 
 // ── GET /api/v1/statuses/:id/context ──────────────────────────────────────
@@ -474,7 +498,7 @@ pub async fn get_status_context(
         } else {
             None
         };
-        ancestors.push(status_from_db(s, &acct, media, reblog, ctx));
+        ancestors.push(build_status(&state, s, &acct, media, reblog, ctx).await?);
     }
 
     let mut descendants = Vec::with_capacity(descendant_rows.len());
@@ -487,7 +511,7 @@ pub async fn get_status_context(
         } else {
             None
         };
-        descendants.push(status_from_db(s, &acct, media, reblog, ctx));
+        descendants.push(build_status(&state, s, &acct, media, reblog, ctx).await?);
     }
 
     Ok(Json(StatusContext { ancestors, descendants }))
@@ -526,7 +550,7 @@ pub async fn unreblog_status(
     let media = fetch_status_media(&state, original_id).await?;
     let reblog = fetch_reblog_data(&state, &original).await?;
     let ctx = build_viewer_context(&state, auth.account_id, original_id).await?;
-    Ok(Json(status_from_db(&original, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &original, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/bookmark ────────────────────────────────────
@@ -549,7 +573,7 @@ pub async fn bookmark_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/unbookmark ──────────────────────────────────
@@ -572,7 +596,7 @@ pub async fn unbookmark_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/pin ─────────────────────────────────────────
@@ -595,7 +619,7 @@ pub async fn pin_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/unpin ───────────────────────────────────────
@@ -615,7 +639,7 @@ pub async fn unpin_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/mute ────────────────────────────────────────
@@ -635,7 +659,7 @@ pub async fn mute_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── POST /api/v1/statuses/:id/unmute ──────────────────────────────────────
@@ -655,7 +679,7 @@ pub async fn unmute_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── GET /api/v1/statuses/:id/favourited_by ────────────────────────────────
@@ -738,8 +762,19 @@ pub async fn edit_status(
     .execute(&state.db)
     .await?;
 
+    let instance_domain = sqlx::query_scalar!(
+        "SELECT domain FROM instances WHERE id = $1",
+        status.instance_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
     let new_text = form.status.unwrap_or_else(|| status.text.clone());
-    let new_content = render_markdown(&new_text);
+    let hashtags = extract_hashtags(&new_text);
+    let mention_handles = extract_mention_handles(&new_text);
+    let resolved = resolve_mention_accounts(&state, status.instance_id, &mention_handles).await;
+    let mention_map = build_mention_map(&resolved);
+    let new_content = render_content(&new_text, &instance_domain, &mention_map);
     let new_spoiler = form.spoiler_text.unwrap_or_else(|| status.spoiler_text.clone());
     let new_sensitive = form.sensitive.unwrap_or(status.sensitive);
     let new_language = form.language.or(status.language.clone());
@@ -751,11 +786,14 @@ pub async fn edit_status(
     .execute(&state.db)
     .await?;
 
+    store_status_tags(&state, id, &hashtags).await?;
+    store_status_mentions(&state, id, &resolved).await?;
+
     let (updated_status, _) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &updated_status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(status_from_db(&updated_status, &account, media, reblog, Some(ctx))))
+    Ok(Json(build_status(&state, &updated_status, &account, media, reblog, Some(ctx)).await?))
 }
 
 // ── GET /api/v1/statuses/:id/history ──────────────────────────────────────
@@ -1000,13 +1038,215 @@ async fn build_viewer_context(
     })
 }
 
-fn render_markdown(text: &str) -> String {
-    // Minimal rendering: wrap paragraphs in <p>, linkify mentions/hashtags/URLs
-    // A real implementation would use a proper parser
-    let escaped = ammonia::clean_text(text);
-    let paragraphs: Vec<String> = escaped
-        .split("\n\n")
-        .map(|p| format!("<p>{}</p>", p.replace('\n', "<br />")))
-        .collect();
-    paragraphs.join("")
+fn render_content(
+    text: &str,
+    domain: &str,
+    mention_map: &HashMap<String, (String, String)>,
+) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    text.split("\n\n")
+        .map(|para| {
+            let linked = linkify_entities(para, domain, mention_map);
+            format!("<p>{}</p>", linked.replace('\n', "<br />"))
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn linkify_entities(
+    text: &str,
+    domain: &str,
+    mention_map: &HashMap<String, (String, String)>,
+) -> String {
+    struct Entity {
+        start: usize,
+        end: usize,
+        html: String,
+    }
+
+    let mut entities: Vec<Entity> = Vec::new();
+
+    for cap in HASHTAG_RE.captures_iter(text) {
+        let full = cap.get(0).unwrap();
+        let prefix_len = cap.get(1).unwrap().as_str().len();
+        let tag_text = &cap[2];
+        let tag_lower = tag_text.to_lowercase();
+        let url = format!("https://{}/tags/{}", domain, urlencoding::encode(&tag_lower));
+        entities.push(Entity {
+            start: full.start() + prefix_len,
+            end: full.end(),
+            html: format!(
+                r#"<a href="{}" class="mention hashtag" rel="tag">#<span>{}</span></a>"#,
+                ammonia::clean_text(&url),
+                ammonia::clean_text(tag_text),
+            ),
+        });
+    }
+
+    for cap in MENTION_RE.captures_iter(text) {
+        let full = cap.get(0).unwrap();
+        let prefix_len = cap.get(1).unwrap().as_str().len();
+        let username = cap[2].to_lowercase();
+        let mention_domain = cap.get(3).map(|m| m.as_str().to_lowercase());
+        let key = match &mention_domain {
+            Some(d) => format!("{}@{}", username, d),
+            None => username.clone(),
+        };
+        if let Some((url, display)) = mention_map.get(&key) {
+            entities.push(Entity {
+                start: full.start() + prefix_len,
+                end: full.end(),
+                html: format!(
+                    r#"<span class="h-card" translate="no"><a href="{}" class="u-url mention">@<span>{}</span></a></span>"#,
+                    ammonia::clean_text(url),
+                    ammonia::clean_text(display),
+                ),
+            });
+        }
+    }
+
+    for m in URL_RE.find_iter(text) {
+        let url = m.as_str();
+        entities.push(Entity {
+            start: m.start(),
+            end: m.end(),
+            html: format!(
+                r#"<a href="{}" target="_blank" rel="nofollow noopener noreferrer">{}</a>"#,
+                ammonia::clean_text(url),
+                ammonia::clean_text(url),
+            ),
+        });
+    }
+
+    entities.sort_by_key(|e| e.start);
+
+    let mut result = String::with_capacity(text.len() * 2);
+    let mut last_end = 0usize;
+    for entity in &entities {
+        if entity.start < last_end {
+            continue;
+        }
+        result.push_str(&ammonia::clean_text(&text[last_end..entity.start]));
+        result.push_str(&entity.html);
+        last_end = entity.end;
+    }
+    result.push_str(&ammonia::clean_text(&text[last_end..]));
+    result
+}
+
+fn extract_hashtags(text: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    HASHTAG_RE.captures_iter(text)
+        .filter_map(|c| {
+            let tag = c[2].to_lowercase();
+            if seen.insert(tag.clone()) { Some(tag) } else { None }
+        })
+        .collect()
+}
+
+fn extract_mention_handles(text: &str) -> Vec<(String, Option<String>)> {
+    let mut seen = std::collections::HashSet::new();
+    MENTION_RE.captures_iter(text)
+        .filter_map(|c| {
+            let username = c[2].to_lowercase();
+            let domain = c.get(3).map(|m| m.as_str().to_lowercase());
+            let key = match &domain {
+                Some(d) => format!("{}@{}", username, d),
+                None => username.clone(),
+            };
+            if seen.insert(key) { Some((username, domain)) } else { None }
+        })
+        .collect()
+}
+
+async fn resolve_mention_accounts(
+    state: &AppState,
+    instance_id: Uuid,
+    handles: &[(String, Option<String>)],
+) -> Vec<(String, Account)> {
+    let mut result = Vec::new();
+    for (username, domain) in handles {
+        let account = if let Some(d) = domain {
+            sqlx::query_as!(
+                Account,
+                "SELECT * FROM accounts WHERE LOWER(username) = $1 AND domain = $2 LIMIT 1",
+                username, d,
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+        } else {
+            sqlx::query_as!(
+                Account,
+                "SELECT * FROM accounts WHERE instance_id = $1 AND LOWER(username) = $2 AND domain IS NULL LIMIT 1",
+                instance_id, username,
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+        };
+        if let Some(acct) = account {
+            result.push((username.clone(), acct));
+        }
+    }
+    result
+}
+
+fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (String, String)> {
+    let mut map = HashMap::new();
+    for (username_lower, account) in resolved {
+        let url = account.url.clone();
+        let display = account.acct();
+        map.insert(username_lower.clone(), (url.clone(), display.clone()));
+        if let Some(ref d) = account.domain {
+            map.insert(format!("{}@{}", username_lower, d.to_lowercase()), (url, display));
+        }
+    }
+    map
+}
+
+async fn store_status_tags(state: &AppState, status_id: i64, hashtags: &[String]) -> AppResult<()> {
+    sqlx::query!("DELETE FROM status_tags WHERE status_id = $1", status_id)
+        .execute(&state.db)
+        .await?;
+    for tag_name in hashtags {
+        let tag_id = sqlx::query_scalar!(
+            "INSERT INTO tags (name) VALUES ($1)
+             ON CONFLICT (name) DO UPDATE SET updated_at = now()
+             RETURNING id",
+            tag_name,
+        )
+        .fetch_one(&state.db)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO status_tags (status_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            status_id, tag_id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn store_status_mentions(
+    state: &AppState,
+    status_id: i64,
+    resolved: &[(String, Account)],
+) -> AppResult<()> {
+    sqlx::query!("DELETE FROM mentions WHERE status_id = $1", status_id)
+        .execute(&state.db)
+        .await?;
+    for (_, account) in resolved {
+        sqlx::query!(
+            "INSERT INTO mentions (status_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            status_id, account.id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+    Ok(())
 }

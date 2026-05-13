@@ -11,8 +11,8 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{fetch_reblog_data, fetch_status_media},
-    convert::{account_from_db, status_from_db},
+    accounts::{build_status, fetch_reblog_data, fetch_status_media},
+    convert::account_from_db,
     types::{
         Notification, NotificationGroup, NotificationGroupsResponse, NotificationPolicy,
         NotificationPolicySummary, PaginationParams,
@@ -175,7 +175,7 @@ pub async fn get_notifications_v2(
                 .await?;
                 let media = fetch_status_media(&state, s.id).await?;
                 let reblog = fetch_reblog_data(&state, &s).await?;
-                let api_status = status_from_db(&s, &saccount, media, reblog, None);
+                let api_status = build_status(&state, &s, &saccount, media, reblog, None).await?;
                 let sid_str = s.id.to_string();
                 statuses_map.insert(sid_str.clone(), api_status);
                 Some(sid_str)
@@ -288,7 +288,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
             .await?;
             let media = fetch_status_media(state, s.id).await?;
             let reblog = fetch_reblog_data(state, &s).await?;
-            Some(status_from_db(&s, &account, media, reblog, None))
+            Some(build_status(state, &s, &account, media, reblog, None).await?)
         } else {
             None
         }

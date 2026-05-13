@@ -127,7 +127,7 @@ pub struct Status {
     pub text: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StatusMention {
     pub id: String,
     pub username: String,
@@ -135,7 +135,7 @@ pub struct StatusMention {
     pub url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StatusTag {
     pub name: String,
     pub url: String,

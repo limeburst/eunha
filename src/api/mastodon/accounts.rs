@@ -154,6 +154,11 @@ pub async fn get_account_statuses(
         let pin_status_ids: Vec<i64> = pinned_statuses.iter().map(|s| s.id).collect();
         let pin_media_map = batch_status_media(&state, &pin_status_ids).await?;
         let pin_reblog_map = batch_reblog_data(&state, &pinned_statuses).await?;
+        let pin_reblog_ids: Vec<i64> = pin_reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+        let mut pin_enrich_ids = pin_status_ids.clone();
+        pin_enrich_ids.extend_from_slice(&pin_reblog_ids);
+        let pin_tags_map = batch_status_tags(&state, &pin_enrich_ids).await?;
+        let pin_mentions_map = batch_status_mentions(&state, &pin_enrich_ids).await?;
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
@@ -161,6 +166,13 @@ pub async fn get_account_statuses(
             let effective_id = s.reblog_of_id.unwrap_or(s.id);
             let ctx = pin_ctxs.get(&effective_id).cloned();
             let mut api_status = status_from_db(s, &account, media, reblog, ctx);
+            api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
+            api_status.mentions = pin_mentions_map.get(&s.id).cloned().unwrap_or_default();
+            if let Some(ref mut rb) = api_status.reblog {
+                let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
+                rb.mentions = pin_mentions_map.get(&rid).cloned().unwrap_or_default();
+            }
             api_status.pinned = Some(true);
             result.push(api_status);
         }
@@ -238,6 +250,11 @@ pub async fn get_account_statuses(
     let all_status_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
     let media_map = batch_status_media(&state, &all_status_ids).await?;
     let reblog_map = batch_reblog_data(&state, &statuses).await?;
+    let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+    let mut enrich_ids = all_status_ids.clone();
+    enrich_ids.extend_from_slice(&reblog_ids);
+    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
 
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
@@ -245,7 +262,15 @@ pub async fn get_account_statuses(
         let reblog = reblog_map.get(&s.id).cloned();
         let effective_id = s.reblog_of_id.unwrap_or(s.id);
         let ctx = ctxs.get(&effective_id).cloned();
-        result.push(status_from_db(s, &account, media, reblog, ctx));
+        let mut api = status_from_db(s, &account, media, reblog, ctx);
+        api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+        api.mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        if let Some(ref mut rb) = api.reblog {
+            let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = mentions_map.get(&rid).cloned().unwrap_or_default();
+        }
+        result.push(api);
     }
 
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
@@ -1362,4 +1387,135 @@ pub async fn get_account_lists(
         .collect();
 
     Ok(Json(lists))
+}
+
+// ── Tag / mention fetchers ─────────────────────────────────────────────────
+
+pub async fn fetch_status_tags(
+    state: &AppState,
+    status_id: i64,
+) -> AppResult<Vec<super::types::StatusTag>> {
+    let rows = sqlx::query!(
+        r#"SELECT t.name, i.domain
+           FROM tags t
+           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses s ON s.id = st.status_id
+           JOIN instances i ON i.id = s.instance_id
+           WHERE st.status_id = $1"#,
+        status_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows.into_iter().map(|r| {
+        let tag_lower = r.name.to_lowercase();
+        super::types::StatusTag {
+            url: format!("https://{}/tags/{}", r.domain, urlencoding::encode(&tag_lower)),
+            name: r.name,
+        }
+    }).collect())
+}
+
+pub async fn fetch_status_mentions(
+    state: &AppState,
+    status_id: i64,
+) -> AppResult<Vec<super::types::StatusMention>> {
+    let rows = sqlx::query!(
+        r#"SELECT a.id as account_id, a.username, a.domain, a.url
+           FROM accounts a
+           JOIN mentions m ON m.account_id = a.id
+           WHERE m.status_id = $1"#,
+        status_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows.into_iter().map(|r| super::types::StatusMention {
+        id: r.account_id.to_string(),
+        acct: match &r.domain {
+            Some(d) => format!("{}@{}", r.username, d),
+            None => r.username.clone(),
+        },
+        url: r.url,
+        username: r.username,
+    }).collect())
+}
+
+pub async fn batch_status_tags(
+    state: &AppState,
+    status_ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, Vec<super::types::StatusTag>>> {
+    if status_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows = sqlx::query!(
+        r#"SELECT st.status_id, t.name, i.domain
+           FROM tags t
+           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses s ON s.id = st.status_id
+           JOIN instances i ON i.id = s.instance_id
+           WHERE st.status_id = ANY($1::bigint[])"#,
+        status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let mut map: std::collections::HashMap<i64, Vec<super::types::StatusTag>> = std::collections::HashMap::new();
+    for r in rows {
+        let tag_lower = r.name.to_lowercase();
+        map.entry(r.status_id).or_default().push(super::types::StatusTag {
+            url: format!("https://{}/tags/{}", r.domain, urlencoding::encode(&tag_lower)),
+            name: r.name,
+        });
+    }
+    Ok(map)
+}
+
+pub async fn batch_status_mentions(
+    state: &AppState,
+    status_ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, Vec<super::types::StatusMention>>> {
+    if status_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows = sqlx::query!(
+        r#"SELECT m.status_id, a.id as account_id, a.username, a.domain, a.url
+           FROM accounts a
+           JOIN mentions m ON m.account_id = a.id
+           WHERE m.status_id = ANY($1::bigint[])"#,
+        status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let mut map: std::collections::HashMap<i64, Vec<super::types::StatusMention>> = std::collections::HashMap::new();
+    for r in rows {
+        map.entry(r.status_id).or_default().push(super::types::StatusMention {
+            id: r.account_id.to_string(),
+            acct: match &r.domain {
+                Some(d) => format!("{}@{}", r.username, d),
+                None => r.username.clone(),
+            },
+            url: r.url,
+            username: r.username,
+        });
+    }
+    Ok(map)
+}
+
+/// Builds a `Status` API object with tags and mentions populated from the DB.
+pub async fn build_status(
+    state: &AppState,
+    s: &crate::db::models::Status,
+    account: &Account,
+    media: Vec<crate::db::models::MediaAttachment>,
+    reblog: Option<(crate::db::models::Status, Account, Vec<crate::db::models::MediaAttachment>)>,
+    viewer_ctx: Option<super::convert::StatusViewerContext>,
+) -> AppResult<super::types::Status> {
+    let mut api = super::convert::status_from_db(s, account, media, reblog, viewer_ctx);
+    let id: i64 = api.id.parse().unwrap_or(0);
+    api.tags = fetch_status_tags(state, id).await?;
+    api.mentions = fetch_status_mentions(state, id).await?;
+    if let Some(ref mut rb) = api.reblog {
+        let rid: i64 = rb.id.parse().unwrap_or(0);
+        rb.tags = fetch_status_tags(state, rid).await?;
+        rb.mentions = fetch_status_mentions(state, rid).await?;
+    }
+    Ok(api)
 }
