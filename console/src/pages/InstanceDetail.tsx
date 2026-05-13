@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Trans, t } from '@lingui/macro'
 import { useLingui } from '@lingui/react'
-import { getInstance, updateInstance, deleteInstance, getInviteTree, createConsoleInvite, listApplications, approveApplication, rejectApplication } from '../api/endpoints'
-import type { Instance, InviteTree, ConsoleInvite, Application } from '../api/types'
+import { getInstance, updateInstance, uploadInstanceIcon, deleteInstance, getInviteTree, createConsoleInvite, listApplications, approveApplication, rejectApplication } from '../api/endpoints'
+import type { Instance, Rule, InviteTree, ConsoleInvite, Application } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 import { InviteListView } from '../components/InviteListView'
 
@@ -17,9 +17,16 @@ export function InstanceDetail() {
 
   const [title, setTitle] = useState('')
   const [customDomain, setCustomDomain] = useState('')
+  const [privacyPolicy, setPrivacyPolicy] = useState('')
+  const [rules, setRules] = useState<Rule[]>([])
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveMsgOk, setSaveMsgOk] = useState(false)
+
+  const [iconUploading, setIconUploading] = useState(false)
+  const [iconMsg, setIconMsg] = useState<string | null>(null)
+  const [iconMsgOk, setIconMsgOk] = useState(false)
+  const iconInputRef = useRef<HTMLInputElement>(null)
 
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleting, setDeleting] = useState(false)
@@ -35,7 +42,13 @@ export function InstanceDetail() {
   useEffect(() => {
     if (!domain) return
     getInstance(domain)
-      .then((inst) => { setInstance(inst); setTitle(inst.title); setCustomDomain(inst.custom_domain ?? '') })
+      .then((inst) => {
+        setInstance(inst)
+        setTitle(inst.title)
+        setCustomDomain(inst.custom_domain ?? '')
+        setPrivacyPolicy(inst.privacy_policy ?? '')
+        setRules(inst.rules ?? [])
+      })
       .catch(() => setError('err'))
       .finally(() => setLoading(false))
     getInviteTree(domain).then(setInviteTree).catch(() => {})
@@ -48,7 +61,7 @@ export function InstanceDetail() {
     setSaving(true)
     setSaveMsg(null)
     try {
-      const patch: Parameters<typeof updateInstance>[1] = { title }
+      const patch: Parameters<typeof updateInstance>[1] = { title, privacy_policy: privacyPolicy, rules }
       const normalised = customDomain.trim().toLowerCase()
       if (normalised !== (instance?.custom_domain ?? '')) {
         patch.custom_domain = normalised || null
@@ -56,6 +69,8 @@ export function InstanceDetail() {
       const updated = await updateInstance(domain, patch)
       setInstance(updated)
       setCustomDomain(updated.custom_domain ?? '')
+      setPrivacyPolicy(updated.privacy_policy ?? '')
+      setRules(updated.rules ?? [])
       setSaveMsg(t`Saved.`)
       setSaveMsgOk(true)
     } catch {
@@ -63,6 +78,25 @@ export function InstanceDetail() {
       setSaveMsgOk(false)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !domain || iconUploading) return
+    setIconUploading(true)
+    setIconMsg(null)
+    try {
+      const updated = await uploadInstanceIcon(domain, file)
+      setInstance(updated)
+      setIconMsg(t`Icon updated.`)
+      setIconMsgOk(true)
+    } catch {
+      setIconMsg(t`Failed to upload icon.`)
+      setIconMsgOk(false)
+    } finally {
+      setIconUploading(false)
+      if (iconInputRef.current) iconInputRef.current.value = ''
     }
   }
 
@@ -181,6 +215,40 @@ export function InstanceDetail() {
         <p className="text-xs text-muted uppercase tracking-widest border-b border-border pb-2">
           <Trans>Settings</Trans>
         </p>
+
+        <div className="space-y-2">
+          <label className="block text-xs text-muted"><Trans>Instance icon</Trans></label>
+          <div className="flex items-center gap-4">
+            {instance.icon_url ? (
+              <img src={instance.icon_url} alt="" className="w-12 h-12 object-cover border border-border" />
+            ) : (
+              <div className="w-12 h-12 border border-border bg-surface flex items-center justify-center text-muted/40 text-xs">
+                ?
+              </div>
+            )}
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => iconInputRef.current?.click()}
+                disabled={iconUploading}
+                className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {iconUploading ? <Trans>Uploading…</Trans> : <Trans>Upload icon</Trans>}
+              </button>
+              <input
+                ref={iconInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleIconUpload}
+              />
+              {iconMsg && (
+                <p className={`text-xs ${iconMsgOk ? 'text-success' : 'text-danger'}`}>{iconMsg}</p>
+              )}
+            </div>
+          </div>
+        </div>
+
         <form onSubmit={handleSave} className="space-y-3">
           <div>
             <label className="block text-xs text-muted mb-1"><Trans>Display name</Trans></label>
@@ -200,10 +268,60 @@ export function InstanceDetail() {
               className={inputCls}
             />
           </div>
+          <div>
+            <label className="block text-xs text-muted mb-1"><Trans>Privacy policy</Trans></label>
+            <textarea
+              value={privacyPolicy}
+              onChange={(e) => setPrivacyPolicy(e.target.value)}
+              rows={6}
+              placeholder={t`Enter your instance's privacy policy…`}
+              className="w-full bg-surface border border-border px-3 py-2 text-xs text-text placeholder:text-muted outline-none focus:border-text transition-colors resize-y"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-2"><Trans>Rules</Trans></label>
+            <div className="space-y-2">
+              {rules.map((rule, i) => (
+                <div key={i} className="border border-border p-2 space-y-1">
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs text-muted/60 mt-1.5 shrink-0 w-4">{i + 1}.</span>
+                    <div className="flex-1 space-y-1">
+                      <input
+                        value={rule.text}
+                        onChange={(e) => setRules(rules.map((r, j) => j === i ? { ...r, text: e.target.value } : r))}
+                        placeholder={t`Rule text`}
+                        className={inputCls}
+                      />
+                      <input
+                        value={rule.hint}
+                        onChange={(e) => setRules(rules.map((r, j) => j === i ? { ...r, hint: e.target.value } : r))}
+                        placeholder={t`Hint (optional)`}
+                        className={inputCls}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRules(rules.filter((_, j) => j !== i))}
+                      className="text-xs text-muted hover:text-danger transition-colors mt-1 shrink-0"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setRules([...rules, { text: '', hint: '' }])}
+                className="text-xs text-muted hover:text-text transition-colors"
+              >
+                + <Trans>Add rule</Trans>
+              </button>
+            </div>
+          </div>
           <div className="flex items-center gap-3">
             <button
               type="submit"
-              disabled={saving || (title === instance.title && customDomain.trim().toLowerCase() === (instance.custom_domain ?? ''))}
+              disabled={saving}
               className="px-3 py-1.5 text-xs border border-border text-muted hover:text-text hover:border-text transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {saving ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}

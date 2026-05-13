@@ -37,6 +37,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(instances::invite_tree).post(instances::create_console_invite),
         )
         .route(
+            "/api/console/instances/{domain}/icon",
+            post(instances::upload_icon),
+        )
+        .route(
             "/api/console/instances/{domain}/applications",
             get(instances::list_applications),
         )

@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { User, Instance, CreateInstanceRequest, InviteTree, ConsoleInvite, Application } from './types'
+import type { User, Instance, Rule, CreateInstanceRequest, InviteTree, ConsoleInvite, Application } from './types'
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
@@ -35,8 +35,14 @@ export const getInstance = (domain: string) =>
 export const createInstance = (req: CreateInstanceRequest) =>
   api.post<Instance>('/api/console/instances', req)
 
-export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'title' | 'custom_domain' | 'registrations_open' | 'approval_required'>>) =>
+export const updateInstance = (domain: string, patch: Partial<Pick<Instance, 'title' | 'custom_domain' | 'registrations_open' | 'approval_required' | 'privacy_policy'> & { rules?: Rule[] }>) =>
   api.patch<Instance>(`/api/console/instances/${domain}`, patch)
+
+export const uploadInstanceIcon = (domain: string, file: File) => {
+  const form = new FormData()
+  form.append('icon', file)
+  return api.postForm<Instance>(`/api/console/instances/${domain}/icon`, form)
+}
 
 export const deleteInstance = (domain: string) =>
   api.delete<void>(`/api/console/instances/${domain}`)

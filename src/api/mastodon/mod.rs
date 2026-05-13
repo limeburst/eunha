@@ -194,6 +194,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Instance info
         .route("/api/v1/instance", get(instance::get_instance_v1))
         .route("/api/v1/instance/extended_description", get(instance::get_extended_description))
+        .route("/api/v1/instance/privacy_policy", get(instance::get_privacy_policy))
         .route("/api/v1/instance/translation_languages", get(instance::get_translation_languages))
         .route("/api/v2/instance", get(instance::get_instance_v2))
         // App credentials

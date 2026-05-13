@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     http::StatusCode,
     Json,
 };
@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::{
     db::models::Instance,
     error::{AppError, AppResult},
+    media,
     state::AppState,
 };
 use super::ConsoleAuth;
@@ -24,6 +25,9 @@ pub struct InstanceResponse {
     pub region: String,
     pub registrations_open: bool,
     pub approval_required: bool,
+    pub icon_url: Option<String>,
+    pub privacy_policy: String,
+    pub rules: serde_json::Value,
     pub created_at: String,
     pub admin_account: Option<String>,
 }
@@ -40,6 +44,9 @@ impl InstanceResponse {
             region: "default".to_string(),
             registrations_open: instance.registrations_open,
             approval_required: instance.approval_required,
+            icon_url: instance.icon_url.clone(),
+            privacy_policy: instance.privacy_policy.clone(),
+            rules: instance.rules.clone(),
             created_at: instance.created_at.to_rfc3339(),
             admin_account: admin,
         }
@@ -213,6 +220,8 @@ pub struct UpdateInstanceRequest {
     pub custom_domain: MaybeAbsent<Option<String>>,
     pub registrations_open: Option<bool>,
     pub approval_required: Option<bool>,
+    pub privacy_policy: Option<String>,
+    pub rules: Option<serde_json::Value>,
 }
 
 /// Represents a JSON field that may be absent vs explicitly null/present.
@@ -307,6 +316,67 @@ pub async fn update(
         .execute(&state.db)
         .await?;
     }
+
+    if let Some(privacy_policy) = &body.privacy_policy {
+        sqlx::query!(
+            "UPDATE instances SET privacy_policy = $1, updated_at = now() WHERE id = $2",
+            privacy_policy,
+            instance.id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    if let Some(rules) = &body.rules {
+        sqlx::query!(
+            "UPDATE instances SET rules = $1, updated_at = now() WHERE id = $2",
+            rules,
+            instance.id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
+
+    let updated = sqlx::query_as!(Instance, "SELECT * FROM instances WHERE id = $1", instance.id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let admin = first_admin_username(&state, updated.id).await?;
+    Ok(Json(InstanceResponse::from_instance(&updated, admin)))
+}
+
+pub async fn upload_icon(
+    State(state): State<AppState>,
+    ConsoleAuth(user): ConsoleAuth,
+    Path(domain): Path<String>,
+    mut multipart: Multipart,
+) -> AppResult<Json<InstanceResponse>> {
+    let instance = instance_for_user(&state, &domain, user.id).await?;
+
+    let storage = &state.storage;
+
+    let mut icon_data: Option<(Vec<u8>, String)> = None;
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::Unprocessable(e.to_string()))? {
+        if field.name() == Some("icon") {
+            let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+            let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+            icon_data = Some((data.to_vec(), content_type));
+        }
+    }
+
+    let (data, content_type) = icon_data.ok_or_else(|| AppError::Unprocessable("missing icon field".into()))?;
+
+    let key = media::instance_icon_key(instance.id, &content_type);
+    storage.store(&data, &key, &content_type).await?;
+    let url = storage.public_url(&key);
+
+    sqlx::query!(
+        "UPDATE instances SET icon_url = $1, updated_at = now() WHERE id = $2",
+        url,
+        instance.id,
+    )
+    .execute(&state.db)
+    .await?;
 
     let updated = sqlx::query_as!(Instance, "SELECT * FROM instances WHERE id = $1", instance.id)
         .fetch_one(&state.db)

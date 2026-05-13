@@ -8,6 +8,11 @@ export interface User {
 
 export type InstanceStatus = 'provisioning' | 'running' | 'stopped' | 'error'
 
+export interface Rule {
+  text: string
+  hint: string
+}
+
 export interface Instance {
   id: string
   domain: string
@@ -18,6 +23,9 @@ export interface Instance {
   region: string
   registrations_open: boolean
   approval_required: boolean
+  icon_url?: string | null
+  privacy_policy: string
+  rules: Rule[]
   created_at: string
   admin_account?: string
 }

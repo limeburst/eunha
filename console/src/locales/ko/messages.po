@@ -13,7 +13,7 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
-#: src/pages/InstanceDetail.tsx:351
+#: src/pages/InstanceDetail.tsx:469
 #: src/pages/NewInstance.tsx:63
 msgid "← dashboard"
 msgstr "← 대시보드"
@@ -22,7 +22,7 @@ msgstr "← 대시보드"
 #~ msgid "← instances"
 #~ msgstr "← 인스턴스"
 
-#: src/pages/InstanceDetail.tsx:299
+#: src/pages/InstanceDetail.tsx:417
 msgid "+ Generate link"
 msgstr "+ 링크 생성"
 
@@ -34,11 +34,15 @@ msgstr "+ 새로 만들기"
 msgid "Account"
 msgstr "계정"
 
+#: src/pages/InstanceDetail.tsx:317
+msgid "Add rule"
+msgstr "규칙 추가"
+
 #: src/pages/NewInstance.tsx:127
 msgid "Admin account"
 msgstr "관리자 계정"
 
-#: src/pages/InstanceDetail.tsx:222
+#: src/pages/InstanceDetail.tsx:340
 msgid "Allow new users to sign up"
 msgstr "새 사용자 가입 허용"
 
@@ -54,11 +58,11 @@ msgstr "이미 계정이 있으신가요?"
 #~ msgid "An account with that email already exists."
 #~ msgstr "이미 등록된 이메일입니다."
 
-#: src/pages/InstanceDetail.tsx:238
+#: src/pages/InstanceDetail.tsx:356
 msgid "Applications"
 msgstr "가입 신청"
 
-#: src/pages/InstanceDetail.tsx:260
+#: src/pages/InstanceDetail.tsx:378
 msgid "Approve"
 msgstr "승인"
 
@@ -130,24 +134,24 @@ msgstr "현재 비밀번호"
 msgid "Current password is incorrect."
 msgstr "현재 비밀번호가 올바르지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:195
+#: src/pages/InstanceDetail.tsx:263
 #: src/pages/NewInstance.tsx:96
 msgid "Custom domain"
 msgstr "커스텀 도메인"
 
-#: src/pages/InstanceDetail.tsx:320
+#: src/pages/InstanceDetail.tsx:438
 msgid "Danger zone"
 msgstr "위험 구역"
 
-#: src/pages/InstanceDetail.tsx:340
+#: src/pages/InstanceDetail.tsx:458
 msgid "Delete instance"
 msgstr "인스턴스 삭제"
 
-#: src/pages/InstanceDetail.tsx:340
+#: src/pages/InstanceDetail.tsx:458
 msgid "Deleting…"
 msgstr "삭제 중…"
 
-#: src/pages/InstanceDetail.tsx:186
+#: src/pages/InstanceDetail.tsx:254
 #: src/pages/NewInstance.tsx:114
 msgid "Display name"
 msgstr "표시 이름"
@@ -162,6 +166,10 @@ msgstr "도메인"
 msgid "Email"
 msgstr "이메일"
 
+#: src/pages/InstanceDetail.tsx:277
+msgid "Enter your instance's privacy policy…"
+msgstr "인스턴스 개인정보 처리방침을 입력하세요…"
+
 #: src/components/StatusBadge.tsx:11
 msgid "error"
 msgstr "오류"
@@ -175,7 +183,7 @@ msgid "Failed to create instance."
 msgstr "인스턴스 생성에 실패했습니다."
 
 #: src/pages/Dashboard.tsx:90
-#: src/pages/InstanceDetail.tsx:147
+#: src/pages/InstanceDetail.tsx:181
 msgid "Failed to load instances."
 msgstr "인스턴스를 불러오지 못했습니다."
 
@@ -183,9 +191,13 @@ msgstr "인스턴스를 불러오지 못했습니다."
 msgid "Failed to save password."
 msgstr "비밀번호 저장에 실패했습니다."
 
-#: src/pages/InstanceDetail.tsx:62
+#: src/pages/InstanceDetail.tsx:77
 msgid "Failed to save."
 msgstr "저장에 실패했습니다."
+
+#: src/pages/InstanceDetail.tsx:95
+msgid "Failed to upload icon."
+msgstr "아이콘 업로드에 실패했습니다."
 
 #: src/pages/InstanceUserHome.tsx:44
 #~ msgid "Failed. Check your current password."
@@ -195,13 +207,21 @@ msgstr "저장에 실패했습니다."
 msgid "fediverse instance hosting"
 msgstr "페디버스 인스턴스 호스팅"
 
-#: src/pages/InstanceDetail.tsx:299
+#: src/pages/InstanceDetail.tsx:417
 msgid "Generating…"
 msgstr "생성 중…"
 
 #: src/pages/Landing.tsx:17
 msgid "Go to console"
 msgstr "콘솔로 이동"
+
+#: src/pages/InstanceDetail.tsx:298
+msgid "Hint (optional)"
+msgstr "힌트 (선택 사항)"
+
+#: src/pages/InstanceDetail.tsx:92
+msgid "Icon updated."
+msgstr "아이콘이 업데이트되었습니다."
 
 #: src/pages/NewInstance.tsx:111
 msgid "Instance"
@@ -210,6 +230,10 @@ msgstr "인스턴스"
 #: src/pages/InstanceUserLogin.tsx:51
 #~ msgid "Instance domain"
 #~ msgstr "인스턴스 도메인"
+
+#: src/pages/InstanceDetail.tsx:220
+msgid "Instance icon"
+msgstr "인스턴스 아이콘"
 
 #: src/pages/Dashboard.tsx:80
 msgid "Instances"
@@ -227,7 +251,7 @@ msgstr "인스턴스"
 msgid "Invalid email or password."
 msgstr "이메일 또는 비밀번호가 올바르지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:284
+#: src/pages/InstanceDetail.tsx:402
 msgid "Invites"
 msgstr "초대"
 
@@ -236,7 +260,7 @@ msgid "Language"
 msgstr "언어"
 
 #: src/pages/Dashboard.tsx:89
-#: src/pages/InstanceDetail.tsx:140
+#: src/pages/InstanceDetail.tsx:174
 msgid "Loading…"
 msgstr "불러오는 중…"
 
@@ -264,7 +288,7 @@ msgstr "새 인스턴스"
 msgid "New password"
 msgstr "새 비밀번호"
 
-#: src/pages/InstanceDetail.tsx:228
+#: src/pages/InstanceDetail.tsx:346
 msgid "New sign-ups must be approved before they can log in"
 msgstr "새 가입자는 로그인 전 승인이 필요합니다"
 
@@ -280,15 +304,15 @@ msgstr "인스턴스가 없습니다."
 msgid "No members yet."
 msgstr "아직 멤버가 없습니다."
 
-#: src/pages/InstanceDetail.tsx:244
+#: src/pages/InstanceDetail.tsx:362
 msgid "No pending applications."
 msgstr "대기 중인 신청이 없습니다."
 
-#: src/pages/InstanceDetail.tsx:147
+#: src/pages/InstanceDetail.tsx:181
 msgid "Not found."
 msgstr "찾을 수 없습니다."
 
-#: src/pages/InstanceDetail.tsx:221
+#: src/pages/InstanceDetail.tsx:339
 msgid "Open registrations"
 msgstr "공개 가입"
 
@@ -310,36 +334,48 @@ msgstr "비밀번호가 저장되었습니다."
 msgid "Passwords do not match."
 msgstr "비밀번호가 일치하지 않습니다."
 
-#: src/pages/InstanceDetail.tsx:323
+#: src/pages/InstanceDetail.tsx:441
 msgid "Permanently delete this instance and all its data."
 msgstr "이 인스턴스와 모든 데이터를 영구적으로 삭제합니다."
+
+#: src/pages/InstanceDetail.tsx:272
+msgid "Privacy policy"
+msgstr "개인정보 처리방침"
 
 #: src/components/StatusBadge.tsx:8
 msgid "provisioning"
 msgstr "준비 중"
 
-#: src/pages/InstanceDetail.tsx:267
+#: src/pages/InstanceDetail.tsx:385
 msgid "Reject"
 msgstr "거절"
 
-#: src/pages/InstanceDetail.tsx:227
+#: src/pages/InstanceDetail.tsx:345
 msgid "Require approval"
 msgstr "승인 필요"
+
+#: src/pages/InstanceDetail.tsx:292
+msgid "Rule text"
+msgstr "규칙 내용"
+
+#: src/pages/InstanceDetail.tsx:282
+msgid "Rules"
+msgstr "규칙"
 
 #: src/components/StatusBadge.tsx:9
 msgid "running"
 msgstr "실행 중"
 
-#: src/pages/InstanceDetail.tsx:209
+#: src/pages/InstanceDetail.tsx:327
 msgid "Save"
 msgstr "저장"
 
-#: src/pages/InstanceDetail.tsx:59
+#: src/pages/InstanceDetail.tsx:74
 msgid "Saved."
 msgstr "저장되었습니다."
 
 #: src/pages/Dashboard.tsx:204
-#: src/pages/InstanceDetail.tsx:209
+#: src/pages/InstanceDetail.tsx:327
 msgid "Saving…"
 msgstr "저장 중…"
 
@@ -357,7 +393,7 @@ msgstr "비밀번호 설정"
 #~ msgid "Set your password"
 #~ msgstr "비밀번호 설정"
 
-#: src/pages/InstanceDetail.tsx:182
+#: src/pages/InstanceDetail.tsx:216
 msgid "Settings"
 msgstr "설정"
 
@@ -409,17 +445,25 @@ msgstr "유효하지 않거나 이미 사용된 인증 코드입니다."
 #~ msgid "This confirmation link is invalid or has already been used."
 #~ msgstr "유효하지 않거나 이미 사용된 인증 링크입니다."
 
-#: src/pages/InstanceDetail.tsx:73
+#: src/pages/InstanceDetail.tsx:107
 msgid "Turning off approval will immediately approve all {0} pending application(s). Continue?"
 msgstr "승인 요건을 끄면 대기 중인 신청 {0}건이 즉시 승인됩니다. 계속하시겠습니까?"
 
-#: src/pages/InstanceDetail.tsx:327
+#: src/pages/InstanceDetail.tsx:445
 msgid "Type <0>{0}</0> to confirm"
 msgstr "<0>{0}</0>을(를) 입력하여 확인"
 
-#: src/pages/InstanceDetail.tsx:291
+#: src/pages/InstanceDetail.tsx:409
 msgid "unlimited"
 msgstr "무제한"
+
+#: src/pages/InstanceDetail.tsx:236
+msgid "Upload icon"
+msgstr "아이콘 업로드"
+
+#: src/pages/InstanceDetail.tsx:236
+msgid "Uploading…"
+msgstr "업로드 중…"
 
 #: src/pages/InstanceUserLogin.tsx:46
 #~ msgid "Use your Fediverse account credentials."

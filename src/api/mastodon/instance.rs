@@ -12,6 +12,17 @@ pub async fn get_translation_languages() -> Json<serde_json::Value> {
     Json(serde_json::json!({}))
 }
 
+// ── GET /api/v1/instance/privacy_policy ──────────────────────────────────
+
+pub async fn get_privacy_policy(
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> AppResult<Json<ExtendedDescription>> {
+    Ok(Json(ExtendedDescription {
+        updated_at: instance.updated_at.to_rfc3339(),
+        content: instance.privacy_policy.clone(),
+    }))
+}
+
 // ── GET /api/v1/instance/extended_description ────────────────────────────
 
 pub async fn get_extended_description(
@@ -45,7 +56,13 @@ pub async fn get_instance_v1(
         },
         languages: vec!["en".to_string()],
         contact_account: None,
-        rules: vec![],
+        rules: instance.rules.as_array()
+            .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
+                id: (i + 1).to_string(),
+                text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            }).collect())
+            .unwrap_or_default(),
     }))
 }
 
@@ -65,18 +82,20 @@ pub async fn get_instance_v2(
             users: InstanceUsageUsers { active_month: 0 },
         },
         thumbnail: InstanceThumbnail {
-            url: format!("{base_url}/instance-thumbnail.png"),
+            url: instance.icon_url.clone().unwrap_or_else(|| format!("{base_url}/instance-thumbnail.png")),
             blurhash: None,
             versions: None,
         },
-        icon: vec![],
+        icon: instance.icon_url.as_ref().map(|url| {
+            vec![serde_json::json!({ "src": url })]
+        }).unwrap_or_default(),
         languages: vec!["en".to_string()],
         configuration: InstanceConfiguration {
             urls: InstanceUrls {
                 streaming: streaming_url,
                 status: None,
                 about: Some(format!("{base_url}/about")),
-                privacy_policy: None,
+                privacy_policy: if instance.privacy_policy.is_empty() { None } else { Some(format!("{base_url}/api/v1/instance/privacy_policy")) },
                 terms_of_service: None,
             },
             vapid: VapidConfiguration { public_key: instance.vapid_public_key.clone() },
@@ -152,7 +171,13 @@ pub async fn get_instance_v2(
             email: instance.contact_email.clone().unwrap_or_default(),
             account: None,
         },
-        rules: vec![],
+        rules: instance.rules.as_array()
+            .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
+                id: (i + 1).to_string(),
+                text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            }).collect())
+            .unwrap_or_default(),
         api_versions: serde_json::json!({ "mastodon": 2 }),
     }))
 }

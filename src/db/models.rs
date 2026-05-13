@@ -18,6 +18,9 @@ pub struct Instance {
     pub console_user_id: Option<Uuid>,
     pub vapid_private_key: String,
     pub vapid_public_key: String,
+    pub icon_url: Option<String>,
+    pub privacy_policy: String,
+    pub rules: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

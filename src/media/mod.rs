@@ -52,6 +52,16 @@ impl Storage {
 
 // ── Key generation ────────────────────────────────────────────────────────
 
+pub fn instance_icon_key(instance_id: Uuid, content_type: &str) -> String {
+    let ext = ext_for(content_type);
+    format!(
+        "{}/instance/icon/{}.{}",
+        instance_id,
+        random_hex(),
+        ext,
+    )
+}
+
 pub fn account_avatar_key(instance_id: Uuid, account_id: Uuid, content_type: &str) -> String {
     let ext = ext_for(content_type);
     format!(
