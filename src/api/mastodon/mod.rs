@@ -180,6 +180,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/admin/domain_allows", get(admin::list_domain_allows).post(admin::create_domain_allow))
         .route("/api/v1/admin/domain_allows/{id}", delete(admin::delete_domain_allow))
         // Suggestions
+        .route("/api/v1/directory", get(accounts::get_directory))
         .route("/api/v1/suggestions", get(accounts::get_suggestions))
         .route("/api/v1/suggestions/{id}", delete(accounts::dismiss_suggestion))
         .route("/api/v2/suggestions", get(accounts::get_suggestions_v2))

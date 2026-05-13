@@ -1405,6 +1405,68 @@ pub async fn get_familiar_followers(
     Ok(Json(result))
 }
 
+// ── GET /api/v1/directory ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DirectoryQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub order: Option<String>,
+    pub local: Option<bool>,
+}
+
+pub async fn get_directory(
+    State(state): State<AppState>,
+    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+    Query(q): Query<DirectoryQuery>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    let limit = q.limit.unwrap_or(40).min(80).max(1);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let local_only = q.local.unwrap_or(true);
+    let order = q.order.as_deref().unwrap_or("active");
+
+    let accounts = if order == "new" {
+        sqlx::query_as!(
+            Account,
+            r#"SELECT * FROM accounts
+               WHERE instance_id = $1
+                 AND discoverable = true
+                 AND suspended_at IS NULL
+                 AND (NOT $2::bool OR domain IS NULL)
+                 AND (domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM domain_blocks db WHERE db.domain = domain
+                 ))
+               ORDER BY created_at DESC
+               LIMIT $3 OFFSET $4"#,
+            instance.id, local_only, limit, offset,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            Account,
+            r#"SELECT a.* FROM accounts a
+               WHERE a.instance_id = $1
+                 AND a.discoverable = true
+                 AND a.suspended_at IS NULL
+                 AND (NOT $2::bool OR a.domain IS NULL)
+                 AND (a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+                 ))
+               ORDER BY (
+                   SELECT MAX(s.created_at) FROM statuses s
+                   WHERE s.account_id = a.id AND s.deleted_at IS NULL
+               ) DESC NULLS LAST
+               LIMIT $3 OFFSET $4"#,
+            instance.id, local_only, limit, offset,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
+
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
 // ── GET /api/v1/accounts (batch lookup) ──────────────────────────────────
 
 #[derive(Debug, serde::Deserialize)]
