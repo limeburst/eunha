@@ -1,11 +1,56 @@
-use axum::{extract::{Extension, State}, Json};
+use axum::{
+    extract::{Extension, Path, State},
+    http::StatusCode,
+    Json,
+};
+use serde::Deserialize;
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     middleware::AuthenticatedUser,
     state::AppState,
 };
 use super::types::{Filter, FilterKeyword, FilterV1};
+
+// ── Shared helpers ─────────────────────────────────────────────────────────
+
+async fn fetch_filter(
+    state: &AppState,
+    filter_id: i64,
+    account_id: uuid::Uuid,
+) -> AppResult<Filter> {
+    let f = sqlx::query!(
+        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1 AND account_id = $2",
+        filter_id, account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let keywords = sqlx::query!(
+        "SELECT id, keyword, whole_word FROM custom_filter_keywords WHERE custom_filter_id = $1 ORDER BY id",
+        f.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Filter {
+        id: f.id.to_string(),
+        title: f.phrase.clone(),
+        context: f.context.clone(),
+        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        filter_action: f.action.clone(),
+        keywords: keywords
+            .into_iter()
+            .map(|k| FilterKeyword {
+                id: k.id.to_string(),
+                keyword: k.keyword,
+                whole_word: k.whole_word,
+            })
+            .collect(),
+        statuses: vec![],
+    })
+}
 
 // ── GET /api/v2/filters ───────────────────────────────────────────────────
 
@@ -14,7 +59,7 @@ pub async fn get_filters_v2(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Filter>>> {
     let filters = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE account_id = $1 ORDER BY id",
+        "SELECT id FROM custom_filters WHERE account_id = $1 ORDER BY id",
         auth.account_id,
     )
     .fetch_all(&state.db)
@@ -22,32 +67,338 @@ pub async fn get_filters_v2(
 
     let mut result = Vec::with_capacity(filters.len());
     for f in &filters {
-        let keywords = sqlx::query!(
-            "SELECT id, keyword, whole_word FROM custom_filter_keywords WHERE custom_filter_id = $1 ORDER BY id",
-            f.id,
-        )
-        .fetch_all(&state.db)
-        .await?;
+        result.push(fetch_filter(&state, f.id, auth.account_id).await?);
+    }
+    Ok(Json(result))
+}
 
-        result.push(Filter {
-            id: f.id.to_string(),
-            title: f.phrase.clone(),
-            context: f.context.clone(),
-            expires_at: f.expires_at.map(|t| t.to_rfc3339()),
-            filter_action: f.action.clone(),
-            keywords: keywords
-                .into_iter()
-                .map(|k| FilterKeyword {
-                    id: k.id.to_string(),
-                    keyword: k.keyword,
-                    whole_word: k.whole_word,
-                })
-                .collect(),
-            statuses: vec![],
-        });
+// ── GET /api/v2/filters/:id ───────────────────────────────────────────────
+
+pub async fn get_filter_v2(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Filter>> {
+    fetch_filter(&state, id, auth.account_id).await.map(Json)
+}
+
+// ── POST /api/v2/filters ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFilterForm {
+    pub title: String,
+    pub context: Vec<String>,
+    pub expires_in: Option<i64>,
+    pub filter_action: Option<String>,
+    pub keywords_attributes: Option<Vec<KeywordAttr>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KeywordAttr {
+    pub id: Option<i64>,
+    pub keyword: Option<String>,
+    pub whole_word: Option<bool>,
+    #[serde(rename = "_destroy")]
+    pub destroy: Option<bool>,
+}
+
+pub async fn create_filter_v2(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateFilterForm>,
+) -> AppResult<(StatusCode, Json<Filter>)> {
+    let action = form.filter_action.as_deref().unwrap_or("warn");
+    let filter_id = sqlx::query_scalar!(
+        r#"INSERT INTO custom_filters (account_id, phrase, context, action, expires_at)
+           VALUES ($1, $2, $3, $4,
+                  CASE WHEN $5::bigint IS NULL THEN NULL
+                       ELSE now() + ($5 * interval '1 second')
+                  END)
+           RETURNING id"#,
+        auth.account_id,
+        form.title,
+        &form.context,
+        action,
+        form.expires_in,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    if let Some(keywords) = form.keywords_attributes {
+        for kw in keywords {
+            if kw.destroy == Some(true) {
+                continue;
+            }
+            if let Some(keyword) = kw.keyword {
+                sqlx::query!(
+                    "INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word) VALUES ($1, $2, $3)",
+                    filter_id,
+                    keyword,
+                    kw.whole_word.unwrap_or(false),
+                )
+                .execute(&state.db)
+                .await?;
+            }
+        }
     }
 
-    Ok(Json(result))
+    let filter = fetch_filter(&state, filter_id, auth.account_id).await?;
+    Ok((StatusCode::OK, Json(filter)))
+}
+
+// ── PUT /api/v2/filters/:id ───────────────────────────────────────────────
+
+pub async fn update_filter_v2(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateFilterForm>,
+) -> AppResult<Json<Filter>> {
+    let action = form.filter_action.as_deref().unwrap_or("warn");
+    let updated = sqlx::query_scalar!(
+        r#"UPDATE custom_filters
+           SET phrase = $3,
+               context = $4,
+               action = $5,
+               expires_at = CASE WHEN $6::bigint IS NULL THEN NULL
+                                 ELSE now() + ($6 * interval '1 second')
+                            END,
+               updated_at = now()
+           WHERE id = $1 AND account_id = $2
+           RETURNING id"#,
+        id,
+        auth.account_id,
+        form.title,
+        &form.context,
+        action,
+        form.expires_in,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if updated.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    if let Some(keywords) = form.keywords_attributes {
+        for kw in keywords {
+            match (kw.id, kw.destroy) {
+                (Some(kid), Some(true)) => {
+                    sqlx::query!(
+                        "DELETE FROM custom_filter_keywords WHERE id = $1 AND custom_filter_id = $2",
+                        kid, id,
+                    )
+                    .execute(&state.db)
+                    .await?;
+                }
+                (Some(kid), _) => {
+                    if let Some(keyword) = kw.keyword {
+                        sqlx::query!(
+                            "UPDATE custom_filter_keywords SET keyword = $1, whole_word = $2, updated_at = now() WHERE id = $3 AND custom_filter_id = $4",
+                            keyword,
+                            kw.whole_word.unwrap_or(false),
+                            kid,
+                            id,
+                        )
+                        .execute(&state.db)
+                        .await?;
+                    }
+                }
+                (None, _) => {
+                    if let Some(keyword) = kw.keyword {
+                        if kw.destroy != Some(true) {
+                            sqlx::query!(
+                                "INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word) VALUES ($1, $2, $3)",
+                                id,
+                                keyword,
+                                kw.whole_word.unwrap_or(false),
+                            )
+                            .execute(&state.db)
+                            .await?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fetch_filter(&state, id, auth.account_id).await.map(Json)
+}
+
+// ── DELETE /api/v2/filters/:id ────────────────────────────────────────────
+
+pub async fn delete_filter_v2(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    let deleted = sqlx::query_scalar!(
+        "DELETE FROM custom_filters WHERE id = $1 AND account_id = $2 RETURNING id",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v2/filters/:id/keywords ─────────────────────────────────────
+
+pub async fn get_filter_keywords(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<FilterKeyword>>> {
+    let exists = sqlx::query_scalar!(
+        "SELECT 1 FROM custom_filters WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let keywords = sqlx::query!(
+        "SELECT id, keyword, whole_word FROM custom_filter_keywords WHERE custom_filter_id = $1 ORDER BY id",
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|k| FilterKeyword {
+        id: k.id.to_string(),
+        keyword: k.keyword,
+        whole_word: k.whole_word,
+    })
+    .collect();
+
+    Ok(Json(keywords))
+}
+
+// ── POST /api/v2/filters/:id/keywords ────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKeywordForm {
+    pub keyword: String,
+    pub whole_word: Option<bool>,
+}
+
+pub async fn create_filter_keyword(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateKeywordForm>,
+) -> AppResult<(StatusCode, Json<FilterKeyword>)> {
+    let exists = sqlx::query_scalar!(
+        "SELECT 1 FROM custom_filters WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let kid = sqlx::query_scalar!(
+        "INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word) VALUES ($1, $2, $3) RETURNING id",
+        id,
+        form.keyword,
+        form.whole_word.unwrap_or(false),
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok((StatusCode::OK, Json(FilterKeyword {
+        id: kid.to_string(),
+        keyword: form.keyword,
+        whole_word: form.whole_word.unwrap_or(false),
+    })))
+}
+
+// ── GET /api/v2/filter_keywords/:id ──────────────────────────────────────
+
+pub async fn get_filter_keyword(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<FilterKeyword>> {
+    let kw = sqlx::query!(
+        r#"SELECT fk.id, fk.keyword, fk.whole_word
+           FROM custom_filter_keywords fk
+           JOIN custom_filters f ON f.id = fk.custom_filter_id
+           WHERE fk.id = $1 AND f.account_id = $2"#,
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(FilterKeyword {
+        id: kw.id.to_string(),
+        keyword: kw.keyword,
+        whole_word: kw.whole_word,
+    }))
+}
+
+// ── PUT /api/v2/filter_keywords/:id ──────────────────────────────────────
+
+pub async fn update_filter_keyword(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateKeywordForm>,
+) -> AppResult<Json<FilterKeyword>> {
+    let updated = sqlx::query!(
+        r#"UPDATE custom_filter_keywords fk
+           SET keyword = $2, whole_word = $3, updated_at = now()
+           FROM custom_filters f
+           WHERE fk.id = $1 AND fk.custom_filter_id = f.id AND f.account_id = $4
+           RETURNING fk.id, fk.keyword, fk.whole_word"#,
+        id,
+        form.keyword,
+        form.whole_word.unwrap_or(false),
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(FilterKeyword {
+        id: updated.id.to_string(),
+        keyword: updated.keyword,
+        whole_word: updated.whole_word,
+    }))
+}
+
+// ── DELETE /api/v2/filter_keywords/:id ───────────────────────────────────
+
+pub async fn delete_filter_keyword(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    let deleted = sqlx::query_scalar!(
+        r#"DELETE FROM custom_filter_keywords fk
+           USING custom_filters f
+           WHERE fk.id = $1 AND fk.custom_filter_id = f.id AND f.account_id = $2
+           RETURNING fk.id"#,
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({})))
 }
 
 // ── GET /api/v1/filters ───────────────────────────────────────────────────
@@ -76,4 +427,160 @@ pub async fn get_filters_v1(
         .collect();
 
     Ok(Json(result))
+}
+
+// ── GET /api/v1/filters/:id ───────────────────────────────────────────────
+
+pub async fn get_filter_v1(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<FilterV1>> {
+    let f = sqlx::query!(
+        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(FilterV1 {
+        id: f.id.to_string(),
+        phrase: f.phrase,
+        context: f.context,
+        whole_word: true,
+        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        irreversible: f.action == "hide",
+    }))
+}
+
+// ── POST /api/v1/filters ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFilterV1Form {
+    pub phrase: String,
+    pub context: Vec<String>,
+    pub irreversible: Option<bool>,
+    pub whole_word: Option<bool>,
+    pub expires_in: Option<i64>,
+}
+
+pub async fn create_filter_v1(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateFilterV1Form>,
+) -> AppResult<(StatusCode, Json<FilterV1>)> {
+    let action = if form.irreversible == Some(true) { "hide" } else { "warn" };
+    let filter_id = sqlx::query_scalar!(
+        r#"INSERT INTO custom_filters (account_id, phrase, context, action, expires_at)
+           VALUES ($1, $2, $3, $4,
+                  CASE WHEN $5::bigint IS NULL THEN NULL
+                       ELSE now() + ($5 * interval '1 second')
+                  END)
+           RETURNING id"#,
+        auth.account_id,
+        form.phrase,
+        &form.context,
+        action,
+        form.expires_in,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let whole_word = form.whole_word.unwrap_or(false);
+    sqlx::query!(
+        "INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word) VALUES ($1, $2, $3)",
+        filter_id, form.phrase, whole_word,
+    )
+    .execute(&state.db)
+    .await?;
+
+    let f = sqlx::query!(
+        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1",
+        filter_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok((StatusCode::OK, Json(FilterV1 {
+        id: f.id.to_string(),
+        phrase: f.phrase,
+        context: f.context,
+        whole_word,
+        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        irreversible: f.action == "hide",
+    })))
+}
+
+// ── PUT /api/v1/filters/:id ───────────────────────────────────────────────
+
+pub async fn update_filter_v1(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateFilterV1Form>,
+) -> AppResult<Json<FilterV1>> {
+    let action = if form.irreversible == Some(true) { "hide" } else { "warn" };
+    let updated = sqlx::query_scalar!(
+        r#"UPDATE custom_filters
+           SET phrase = $3, context = $4, action = $5,
+               expires_at = CASE WHEN $6::bigint IS NULL THEN NULL
+                                 ELSE now() + ($6 * interval '1 second')
+                            END,
+               updated_at = now()
+           WHERE id = $1 AND account_id = $2
+           RETURNING id"#,
+        id, auth.account_id, form.phrase, &form.context, action, form.expires_in,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if updated.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let whole_word = form.whole_word.unwrap_or(false);
+    sqlx::query!(
+        "UPDATE custom_filter_keywords SET keyword = $2, whole_word = $3, updated_at = now() WHERE custom_filter_id = $1",
+        id, form.phrase, whole_word,
+    )
+    .execute(&state.db)
+    .await?;
+
+    let f = sqlx::query!(
+        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1",
+        id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(FilterV1 {
+        id: f.id.to_string(),
+        phrase: f.phrase,
+        context: f.context,
+        whole_word,
+        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        irreversible: f.action == "hide",
+    }))
+}
+
+// ── DELETE /api/v1/filters/:id ────────────────────────────────────────────
+
+pub async fn delete_filter_v1(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    let deleted = sqlx::query_scalar!(
+        "DELETE FROM custom_filters WHERE id = $1 AND account_id = $2 RETURNING id",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({})))
 }

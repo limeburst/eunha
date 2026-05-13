@@ -164,9 +164,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/featured_tags", get(featured_tags::list_featured_tags).post(featured_tags::feature_tag))
         .route("/api/v1/featured_tags/suggestions", get(featured_tags::featured_tag_suggestions))
         .route("/api/v1/featured_tags/{id}", delete(featured_tags::unfeature_tag))
-        // Filters
-        .route("/api/v1/filters", get(filters::get_filters_v1))
-        .route("/api/v2/filters", get(filters::get_filters_v2))
+        // Filters v1
+        .route("/api/v1/filters", get(filters::get_filters_v1).post(filters::create_filter_v1))
+        .route("/api/v1/filters/{id}", get(filters::get_filter_v1).put(filters::update_filter_v1).delete(filters::delete_filter_v1))
+        // Filters v2
+        .route("/api/v2/filters", get(filters::get_filters_v2).post(filters::create_filter_v2))
+        .route("/api/v2/filters/{id}", get(filters::get_filter_v2).put(filters::update_filter_v2).delete(filters::delete_filter_v2))
+        .route("/api/v2/filters/{id}/keywords", get(filters::get_filter_keywords).post(filters::create_filter_keyword))
+        .route("/api/v2/filter_keywords/{id}", get(filters::get_filter_keyword).put(filters::update_filter_keyword).delete(filters::delete_filter_keyword))
         // Domain blocks (user-level)
         .route("/api/v1/domain_blocks", get(domain_blocks::get_domain_blocks).post(domain_blocks::block_domain).delete(domain_blocks::unblock_domain))
         // Reports

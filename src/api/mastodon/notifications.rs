@@ -38,20 +38,27 @@ pub async fn get_notifications(
     let limit = q.pagination.limit_clamped(15, 30);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let types = q.types.as_deref();
+    let exclude_types = q.exclude_types.as_deref();
 
-    let notifications = sqlx::query_as!(
-        DbNotification,
+    let notifications = sqlx::query_as(
         r#"SELECT * FROM notifications
            WHERE account_id = $1
              AND ($2::bigint IS NULL OR id < $2)
              AND ($3::bigint IS NULL OR id > $3)
+             AND ($5::text[] IS NULL OR notification_type = ANY($5))
+             AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+             AND ($7::uuid IS NULL OR from_account_id = $7)
            ORDER BY id DESC
            LIMIT $4"#,
-        auth.account_id,
-        max_id,
-        since_id,
-        limit,
     )
+    .bind(auth.account_id)
+    .bind(max_id)
+    .bind(since_id)
+    .bind(limit)
+    .bind(types)
+    .bind(exclude_types)
+    .bind(q.account_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -124,19 +131,27 @@ pub async fn get_notifications_v2(
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let notifications = sqlx::query_as!(
-        DbNotification,
+    let types = q.types.as_deref();
+    let exclude_types = q.exclude_types.as_deref();
+
+    let notifications: Vec<DbNotification> = sqlx::query_as(
         r#"SELECT * FROM notifications
            WHERE account_id = $1
              AND ($2::bigint IS NULL OR id < $2)
              AND ($3::bigint IS NULL OR id > $3)
+             AND ($5::text[] IS NULL OR notification_type = ANY($5))
+             AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+             AND ($7::uuid IS NULL OR from_account_id = $7)
            ORDER BY id DESC
            LIMIT $4"#,
-        auth.account_id,
-        max_id,
-        since_id,
-        limit,
     )
+    .bind(auth.account_id)
+    .bind(max_id)
+    .bind(since_id)
+    .bind(limit)
+    .bind(types)
+    .bind(exclude_types)
+    .bind(q.account_id)
     .fetch_all(&state.db)
     .await?;
 

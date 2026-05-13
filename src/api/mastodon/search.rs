@@ -10,8 +10,8 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::fetch_status_media,
-    convert::{account_from_db, status_from_db},
+    accounts::{build_status, fetch_reblog_data, fetch_status_media},
+    convert::account_from_db,
     types::{SearchResults, Status, Tag},
 };
 
@@ -83,6 +83,7 @@ pub async fn search(
             .fetch_one(&state.db)
             .await?;
             let media = fetch_status_media(&state, s.id).await?;
+            let reblog = fetch_reblog_data(&state, s).await?;
             let ctx = if let Some(vid) = viewer_id {
                 let favourited = sqlx::query!(
                     "SELECT 1 as e FROM favourites WHERE account_id = $1 AND status_id = $2",
@@ -109,7 +110,7 @@ pub async fn search(
             } else {
                 None
             };
-            result.push(status_from_db(s, &account, media, None, ctx));
+            result.push(build_status(&state, s, &account, media, reblog, ctx).await?);
         }
         result
     } else {
