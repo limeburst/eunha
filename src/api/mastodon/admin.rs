@@ -1314,7 +1314,6 @@ pub async fn delete_domain_allow(
 }
 
 fn md5_bytes(s: &str) -> [u8; 16] {
-    use std::hash::Hasher;
     // Simple deterministic digest (not security-sensitive — Mastodon uses it for obfuscation display)
     let mut h: u128 = 0x9e3779b97f4a7c15;
     for b in s.bytes() {
