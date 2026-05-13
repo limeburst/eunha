@@ -589,6 +589,16 @@ pub struct FeaturedTag {
     pub last_status_at: Option<String>,
 }
 
+// ── Conversation ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct Conversation {
+    pub id: String,
+    pub unread: bool,
+    pub accounts: Vec<Account>,
+    pub last_status: Option<Status>,
+}
+
 // ── Report ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

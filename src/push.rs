@@ -293,6 +293,14 @@ pub async fn create_and_push(
         }
     };
 
+    // Publish to the streaming API synchronously — it's just an in-process broadcast.
+    if let Some(payload) = build_notification_payload(state, notification_id, notification_type, from_account_id, status_id).await {
+        state.streaming.publish(crate::streaming::Event::Notification {
+            for_account_id: recipient_id,
+            payload: std::sync::Arc::new(payload),
+        });
+    }
+
     let state_clone = state.clone();
     let icon_s = icon;
     let title_s = title;
@@ -309,4 +317,83 @@ pub async fn create_and_push(
         )
         .await;
     });
+}
+
+async fn build_notification_payload(
+    state: &AppState,
+    notification_id: i64,
+    notification_type: &str,
+    from_account_id: Uuid,
+    status_id: Option<i64>,
+) -> Option<String> {
+    use crate::api::mastodon::convert::account_from_db;
+    use crate::api::mastodon::accounts::{build_status, fetch_reblog_data, fetch_status_media};
+
+    let created_at = sqlx::query_scalar!(
+        "SELECT created_at FROM notifications WHERE id = $1",
+        notification_id
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let from_account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        from_account_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let api_account = account_from_db(&from_account);
+
+    let status_json = if let Some(sid) = status_id {
+        let s = sqlx::query_as!(
+            crate::db::models::Status,
+            "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            sid,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(s) = s {
+            let saccount = sqlx::query_as!(
+                crate::db::models::Account,
+                "SELECT * FROM accounts WHERE id = $1",
+                s.account_id,
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()?;
+
+            let media = fetch_status_media(state, s.id).await.unwrap_or_default();
+            let reblog = fetch_reblog_data(state, &s).await.unwrap_or(None);
+            build_status(state, &s, &saccount, media, reblog, None)
+                .await
+                .ok()
+                .and_then(|st| serde_json::to_value(st).ok())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let payload = serde_json::json!({
+        "id": notification_id.to_string(),
+        "type": notification_type,
+        "created_at": created_at.to_rfc3339(),
+        "group_key": format!("ungrouped-{}", notification_id),
+        "account": serde_json::to_value(api_account).ok(),
+        "status": status_json,
+        "filtered": null,
+    });
+
+    serde_json::to_string(&payload).ok()
 }

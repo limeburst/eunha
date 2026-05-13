@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod bookmarks;
+pub mod conversations;
 pub mod convert;
 pub mod domain_blocks;
 pub mod emojis;
@@ -243,7 +244,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/custom_emojis", get(emojis::list_custom_emojis))
         // Announcements / conversations — not yet implemented
         .route("/api/v1/announcements", get(empty_array))
-        .route("/api/v1/conversations", get(empty_array))
+        .route("/api/v1/conversations", get(conversations::get_conversations))
+        .route("/api/v1/conversations/{id}", delete(conversations::delete_conversation))
+        .route("/api/v1/conversations/{id}/read", post(conversations::mark_conversation_read))
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
         .route("/api/{server}/login", post(oauth::elk_login))

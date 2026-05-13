@@ -896,7 +896,7 @@ pub async fn reject_follow_request(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
+pub async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
     sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = $1", id)
         .fetch_optional(&state.db)
         .await?

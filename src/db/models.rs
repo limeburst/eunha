@@ -134,6 +134,7 @@ pub struct Status {
     pub deleted_at: Option<DateTime<Utc>>,
     pub edited_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub conversation_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, FromRow)]

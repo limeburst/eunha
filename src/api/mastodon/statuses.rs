@@ -104,6 +104,68 @@ pub async fn post_status(
     store_status_tags(&state, status.id, &hashtags).await?;
     store_status_mentions(&state, status.id, &resolved).await?;
 
+    // Manage conversation for direct messages
+    if visibility == "direct" {
+        let conv_id = if let Some(parent_id) = in_reply_to_id {
+            sqlx::query_scalar!(
+                "SELECT conversation_id FROM statuses WHERE id = $1",
+                parent_id
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+        } else {
+            None
+        };
+
+        let conv_id = if let Some(cid) = conv_id {
+            cid
+        } else {
+            sqlx::query_scalar!(
+                "INSERT INTO conversations (instance_id) VALUES ($1) RETURNING id",
+                instance.id
+            )
+            .fetch_one(&state.db)
+            .await?
+        };
+
+        sqlx::query!(
+            "UPDATE statuses SET conversation_id = $1 WHERE id = $2",
+            conv_id, status.id
+        )
+        .execute(&state.db)
+        .await?;
+
+        sqlx::query!(
+            "UPDATE conversations SET updated_at = now() WHERE id = $1",
+            conv_id
+        )
+        .execute(&state.db)
+        .await?;
+
+        sqlx::query!(
+            "INSERT INTO conversation_participants (conversation_id, account_id, unread)
+             VALUES ($1, $2, false)
+             ON CONFLICT (conversation_id, account_id) DO UPDATE SET unread = false",
+            conv_id, account.id
+        )
+        .execute(&state.db)
+        .await?;
+
+        for (_, mentioned) in &resolved {
+            sqlx::query!(
+                "INSERT INTO conversation_participants (conversation_id, account_id, unread)
+                 VALUES ($1, $2, true)
+                 ON CONFLICT (conversation_id, account_id) DO UPDATE SET unread = true",
+                conv_id, mentioned.id
+            )
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
     // Increment statuses count
     sqlx::query!(
         "UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1",
@@ -463,7 +525,19 @@ pub async fn reblog_status(
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
     let media = fetch_status_media(&state, boost.id).await?;
     let reblog = fetch_reblog_data(&state, &boost).await?;
-    Ok(Json(build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?))
+    let api_boost = build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?;
+
+    if let Ok(payload) = serde_json::to_string(&api_boost) {
+        state.streaming.publish(Event::NewStatus {
+            instance_id: instance.id,
+            author_id: boost_account.id,
+            is_public: original.visibility == "public",
+            status_id: boost.id,
+            payload: std::sync::Arc::new(payload),
+        });
+    }
+
+    Ok(Json(api_boost))
 }
 
 // ── GET /api/v1/statuses/:id/context ──────────────────────────────────────
@@ -1004,7 +1078,7 @@ pub(super) async fn batch_viewer_contexts(
     Ok(result)
 }
 
-async fn build_viewer_context(
+pub async fn build_viewer_context(
     state: &AppState,
     viewer_id: Uuid,
     status_id: i64,
