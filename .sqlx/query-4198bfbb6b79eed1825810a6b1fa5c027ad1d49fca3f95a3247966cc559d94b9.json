@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM accounts\n               WHERE instance_id = $1\n                 AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)\n               ORDER BY username LIMIT $3",
+  "query": "SELECT * FROM accounts\n               WHERE instance_id = $1\n                 AND suspended_at IS NULL\n                 AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)\n               ORDER BY followers_count DESC LIMIT $3",
   "describe": {
     "columns": [
       {
@@ -200,5 +200,5 @@
       false
     ]
   },
-  "hash": "2ba0774d65bdfb88427c8c5a17ce79d9d6ab6b2b06aa358a269f7427f48ef3d7"
+  "hash": "4198bfbb6b79eed1825810a6b1fa5c027ad1d49fca3f95a3247966cc559d94b9"
 }

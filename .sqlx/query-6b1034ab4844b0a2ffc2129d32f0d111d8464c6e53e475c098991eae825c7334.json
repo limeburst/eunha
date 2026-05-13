@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.*\n           FROM statuses s\n           JOIN accounts a ON a.id = s.account_id\n           WHERE s.visibility = 'public'\n             AND s.deleted_at IS NULL\n             AND s.reblog_of_id IS NULL\n             AND s.instance_id = $2\n             AND (NOT $1::bool OR a.domain IS NULL)\n             AND ($3::bigint IS NULL OR s.id < $3)\n             AND ($4::bigint IS NULL OR s.id > $4)\n             AND (s.text != '' OR s.content != ''\n                  OR s.reblog_of_id IS NOT NULL\n                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $5",
+  "query": "SELECT s.*\n           FROM statuses s\n           JOIN accounts a ON a.id = s.account_id\n           WHERE s.visibility = 'public'\n             AND s.deleted_at IS NULL\n             AND s.reblog_of_id IS NULL\n             AND s.instance_id = $2\n             AND (NOT $1::bool OR a.domain IS NULL)\n             AND a.suspended_at IS NULL\n             AND (a.domain IS NULL OR NOT EXISTS (\n                 SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain\n             ))\n             AND ($3::bigint IS NULL OR s.id < $3)\n             AND ($4::bigint IS NULL OR s.id > $4)\n             AND (s.text != '' OR s.content != ''\n                  OR s.reblog_of_id IS NOT NULL\n                  OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "04983139cfe5da0b75b878f7bcee0be77bb1d3dd2aeb2231bb4aa1f897acae25"
+  "hash": "6b1034ab4844b0a2ffc2129d32f0d111d8464c6e53e475c098991eae825c7334"
 }

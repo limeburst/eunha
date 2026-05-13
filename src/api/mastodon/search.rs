@@ -45,6 +45,7 @@ pub async fn search(
             crate::db::models::Account,
             r#"SELECT * FROM accounts
                WHERE instance_id = $1
+                 AND suspended_at IS NULL
                  AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
                ORDER BY followers_count DESC LIMIT $3"#,
             instance.id, pattern, limit
@@ -60,15 +61,22 @@ pub async fn search(
 
     let statuses = if (search_type.is_none() || search_type == Some("statuses")) && auth.is_some() {
         let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+        let fts_query = q.q.trim().to_string();
         let rows = sqlx::query_as!(
             crate::db::models::Status,
-            r#"SELECT * FROM statuses
-               WHERE instance_id = $1
-                 AND deleted_at IS NULL
-                 AND visibility IN ('public', 'unlisted')
-                 AND lower(content) LIKE $2
-               ORDER BY id DESC LIMIT $3"#,
-            instance.id, pattern, limit
+            r#"SELECT s.* FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.instance_id = $1
+                 AND s.deleted_at IS NULL
+                 AND s.visibility IN ('public', 'unlisted')
+                 AND a.suspended_at IS NULL
+                 AND (a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+                 ))
+                 AND to_tsvector('simple', coalesce(s.content, '') || ' ' || coalesce(s.text, ''))
+                     @@ websearch_to_tsquery('simple', $2)
+               ORDER BY s.id DESC LIMIT $3"#,
+            instance.id, fts_query, limit
         )
         .fetch_all(&state.db)
         .await?;

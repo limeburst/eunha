@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM statuses\n               WHERE instance_id = $1\n                 AND deleted_at IS NULL\n                 AND visibility IN ('public', 'unlisted')\n                 AND lower(content) LIKE $2\n               ORDER BY id DESC LIMIT $3",
+  "query": "SELECT s.* FROM statuses s\n               JOIN accounts a ON a.id = s.account_id\n               WHERE s.instance_id = $1\n                 AND s.deleted_at IS NULL\n                 AND s.visibility IN ('public', 'unlisted')\n                 AND a.suspended_at IS NULL\n                 AND (a.domain IS NULL OR NOT EXISTS (\n                     SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain\n                 ))\n                 AND to_tsvector('simple', coalesce(s.content, '') || ' ' || coalesce(s.text, ''))\n                     @@ websearch_to_tsquery('simple', $2)\n               ORDER BY s.id DESC LIMIT $3",
   "describe": {
     "columns": [
       {
@@ -140,5 +140,5 @@
       true
     ]
   },
-  "hash": "906595095c2635789737fb7ed52ef4fc8ce75a7a9998faf606fce43adc19c0bf"
+  "hash": "bb6cc3d8d3b784b175e9c28bcb31f43c05cedf9dda2574e5981a99183f4573b4"
 }

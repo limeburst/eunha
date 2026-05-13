@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT a.* FROM accounts a\n                   JOIN follows f ON f.target_account_id = a.id\n                   WHERE f.account_id = $1 AND f.state = 'accepted'\n                     AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)\n                   ORDER BY a.username LIMIT $3",
+  "query": "SELECT a.* FROM accounts a\n                   JOIN follows f ON f.target_account_id = a.id\n                   WHERE f.account_id = $1 AND f.state = 'accepted'\n                     AND a.suspended_at IS NULL\n                     AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)\n                   ORDER BY a.username LIMIT $3",
   "describe": {
     "columns": [
       {
@@ -200,5 +200,5 @@
       false
     ]
   },
-  "hash": "bb4b168e119728be3d4f063520574378f3d47e21e516bbd0634603790e3354e9"
+  "hash": "b9b9e54559991d2c196543b1c9ff252e262f1f3c9ca9cf135f244f0cda5c3720"
 }

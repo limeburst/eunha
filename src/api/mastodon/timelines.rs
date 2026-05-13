@@ -51,6 +51,10 @@ pub async fn public_timeline(
              AND s.reblog_of_id IS NULL
              AND s.instance_id = $2
              AND (NOT $1::bool OR a.domain IS NULL)
+             AND a.suspended_at IS NULL
+             AND (a.domain IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+             ))
              AND ($3::bigint IS NULL OR s.id < $3)
              AND ($4::bigint IS NULL OR s.id > $4)
              AND (s.text != '' OR s.content != ''
@@ -89,12 +93,17 @@ pub async fn home_timeline(
         DbStatus,
         r#"SELECT s.*
            FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
            WHERE s.account_id IN (
                SELECT target_account_id FROM follows
                WHERE account_id = $1 AND state = 'accepted'
                UNION ALL SELECT $1
            )
            AND s.deleted_at IS NULL
+           AND a.suspended_at IS NULL
+           AND (a.domain IS NULL OR NOT EXISTS (
+               SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+           ))
            AND ($2::bigint IS NULL OR s.id < $2)
            AND ($3::bigint IS NULL OR s.id > $3)
            AND (s.text != '' OR s.content != ''

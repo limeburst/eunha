@@ -518,6 +518,7 @@ pub async fn search_accounts(
                 r#"SELECT a.* FROM accounts a
                    JOIN follows f ON f.target_account_id = a.id
                    WHERE f.account_id = $1 AND f.state = 'accepted'
+                     AND a.suspended_at IS NULL
                      AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
                    ORDER BY a.username LIMIT $3"#,
                 auth.account_id, pattern, limit
@@ -532,6 +533,7 @@ pub async fn search_accounts(
             Account,
             r#"SELECT * FROM accounts
                WHERE instance_id = $1
+                 AND suspended_at IS NULL
                  AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
                ORDER BY username LIMIT $3"#,
             instance.id, pattern, limit

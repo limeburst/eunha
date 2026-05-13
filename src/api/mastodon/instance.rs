@@ -41,9 +41,11 @@ pub async fn get_extended_description(
 // ── GET /api/v1/instance ──────────────────────────────────────────────────
 
 pub async fn get_instance_v1(
+    State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV1>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
+    let (user_count, status_count, domain_count) = fetch_stats(&state, instance.id).await;
 
     Ok(Json(InstanceV1 {
         uri: instance.domain.clone(),
@@ -54,9 +56,9 @@ pub async fn get_instance_v1(
         version: "0.0.1".to_string(),
         urls: InstanceV1Urls { streaming_api: streaming_url },
         stats: InstanceV1Stats {
-            user_count: 0,
-            status_count: 0,
-            domain_count: 0,
+            user_count,
+            status_count,
+            domain_count,
         },
         languages: vec!["en".to_string()],
         contact_account: None,
@@ -86,10 +88,24 @@ pub async fn get_peers(
 }
 
 pub async fn get_instance_v2(
+    State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV2>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
     let base_url = format!("https://{}", instance.domain);
+    let (_, _, _) = fetch_stats(&state, instance.id).await;
+    let active_month = sqlx::query_scalar!(
+        r#"SELECT COUNT(DISTINCT s.account_id)
+           FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE a.instance_id = $1 AND a.domain IS NULL
+             AND s.created_at > now() - interval '30 days'"#,
+        instance.id,
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(Some(0))
+    .unwrap_or(0);
 
     Ok(Json(InstanceV2 {
         domain: instance.domain.clone(),
@@ -98,7 +114,7 @@ pub async fn get_instance_v2(
         source_url: "https://github.com/limeburst/eunha".to_string(),
         description: instance.description.clone(),
         usage: InstanceUsage {
-            users: InstanceUsageUsers { active_month: 0 },
+            users: InstanceUsageUsers { active_month },
         },
         thumbnail: InstanceThumbnail {
             url: instance.icon_url.clone().unwrap_or_else(|| format!("{base_url}/instance-thumbnail.png")),
@@ -199,4 +215,37 @@ pub async fn get_instance_v2(
             .unwrap_or_default(),
         api_versions: serde_json::json!({ "mastodon": 2 }),
     }))
+}
+
+async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i64) {
+    let user_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND suspended_at IS NULL",
+        instance_id,
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(Some(0))
+    .unwrap_or(0);
+
+    let status_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL"#,
+        instance_id,
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(Some(0))
+    .unwrap_or(0);
+
+    let domain_count = sqlx::query_scalar!(
+        "SELECT COUNT(DISTINCT domain) FROM accounts WHERE instance_id = $1 AND domain IS NOT NULL",
+        instance_id,
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(Some(0))
+    .unwrap_or(0);
+
+    (user_count, status_count, domain_count)
 }

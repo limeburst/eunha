@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.*\n           FROM statuses s\n           WHERE s.account_id IN (\n               SELECT target_account_id FROM follows\n               WHERE account_id = $1 AND state = 'accepted'\n               UNION ALL SELECT $1\n           )\n           AND s.deleted_at IS NULL\n           AND ($2::bigint IS NULL OR s.id < $2)\n           AND ($3::bigint IS NULL OR s.id > $3)\n           AND (s.text != '' OR s.content != ''\n                OR s.reblog_of_id IS NOT NULL\n                OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $4",
+  "query": "SELECT s.*\n           FROM statuses s\n           JOIN accounts a ON a.id = s.account_id\n           WHERE s.account_id IN (\n               SELECT target_account_id FROM follows\n               WHERE account_id = $1 AND state = 'accepted'\n               UNION ALL SELECT $1\n           )\n           AND s.deleted_at IS NULL\n           AND a.suspended_at IS NULL\n           AND (a.domain IS NULL OR NOT EXISTS (\n               SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain\n           ))\n           AND ($2::bigint IS NULL OR s.id < $2)\n           AND ($3::bigint IS NULL OR s.id > $3)\n           AND (s.text != '' OR s.content != ''\n                OR s.reblog_of_id IS NOT NULL\n                OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))\n           ORDER BY s.id DESC\n           LIMIT $4",
   "describe": {
     "columns": [
       {
@@ -141,5 +141,5 @@
       true
     ]
   },
-  "hash": "12224db90ee00f49ab562c17f343bc60c6c361584632cb901eb7f15129bf0ca4"
+  "hash": "aa0d70bfe409cc3833e5487f863a5303656a3d4b5fe0580066d52c000b5f4092"
 }
