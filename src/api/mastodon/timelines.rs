@@ -13,7 +13,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{fetch_reblog_data, fetch_status_media},
+    accounts::{batch_reblog_data, batch_status_media},
     convert::status_from_db,
     types::{PaginationParams, Status},
 };
@@ -216,20 +216,39 @@ async fn build_status_list(
         std::collections::HashMap::new()
     };
 
+    if statuses.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let account_ids: Vec<uuid::Uuid> = statuses.iter()
+        .map(|s| s.account_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let accounts = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::uuid[])",
+        &account_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let account_map: std::collections::HashMap<uuid::Uuid, Account> = accounts
+        .into_iter()
+        .map(|a| (a.id, a))
+        .collect();
+
+    let all_status_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+    let media_map = batch_status_media(state, &all_status_ids).await?;
+    let reblog_map = batch_reblog_data(state, &statuses).await?;
+
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
-        let account = sqlx::query_as!(
-            Account,
-            "SELECT * FROM accounts WHERE id = $1",
-            s.account_id
-        )
-        .fetch_one(&state.db)
-        .await?;
-        let media = fetch_status_media(state, s.id).await?;
-        let reblog = fetch_reblog_data(state, s).await?;
+        let account = account_map.get(&s.account_id).ok_or(AppError::NotFound)?;
+        let media = media_map.get(&s.id).cloned().unwrap_or_default();
+        let reblog = reblog_map.get(&s.id).cloned();
         let effective_id = s.reblog_of_id.unwrap_or(s.id);
         let ctx = ctxs.get(&effective_id).cloned();
-        result.push(status_from_db(s, &account, media, reblog, ctx));
+        result.push(status_from_db(s, account, media, reblog, ctx));
     }
     Ok(result)
 }

@@ -151,10 +151,13 @@ pub async fn get_account_statuses(
         } else {
             std::collections::HashMap::new()
         };
+        let pin_status_ids: Vec<i64> = pinned_statuses.iter().map(|s| s.id).collect();
+        let pin_media_map = batch_status_media(&state, &pin_status_ids).await?;
+        let pin_reblog_map = batch_reblog_data(&state, &pinned_statuses).await?;
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
-            let media = fetch_status_media(&state, s.id).await?;
-            let reblog = fetch_reblog_data(&state, s).await?;
+            let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
+            let reblog = pin_reblog_map.get(&s.id).cloned();
             let effective_id = s.reblog_of_id.unwrap_or(s.id);
             let ctx = pin_ctxs.get(&effective_id).cloned();
             let mut api_status = status_from_db(s, &account, media, reblog, ctx);
@@ -227,10 +230,14 @@ pub async fn get_account_statuses(
         std::collections::HashMap::new()
     };
 
+    let all_status_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+    let media_map = batch_status_media(&state, &all_status_ids).await?;
+    let reblog_map = batch_reblog_data(&state, &statuses).await?;
+
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
-        let media = fetch_status_media(&state, s.id).await?;
-        let reblog = fetch_reblog_data(&state, s).await?;
+        let media = media_map.get(&s.id).cloned().unwrap_or_default();
+        let reblog = reblog_map.get(&s.id).cloned();
         let effective_id = s.reblog_of_id.unwrap_or(s.id);
         let ctx = ctxs.get(&effective_id).cloned();
         result.push(status_from_db(s, &account, media, reblog, ctx));
@@ -864,6 +871,94 @@ async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
         .fetch_optional(&state.db)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+pub async fn batch_status_media(
+    state: &AppState,
+    status_ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, Vec<crate::db::models::MediaAttachment>>> {
+    if status_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows = sqlx::query_as!(
+        crate::db::models::MediaAttachment,
+        "SELECT * FROM media_attachments WHERE status_id = ANY($1::bigint[]) ORDER BY id",
+        status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let mut map: std::collections::HashMap<i64, Vec<_>> = std::collections::HashMap::new();
+    for m in rows {
+        if let Some(sid) = m.status_id {
+            map.entry(sid).or_default().push(m);
+        }
+    }
+    Ok(map)
+}
+
+pub async fn batch_reblog_data(
+    state: &AppState,
+    statuses: &[crate::db::models::Status],
+) -> AppResult<std::collections::HashMap<i64, (crate::db::models::Status, crate::db::models::Account, Vec<crate::db::models::MediaAttachment>)>> {
+    use std::collections::{HashMap, HashSet};
+
+    let reblog_ids: Vec<i64> = statuses.iter()
+        .filter_map(|s| s.reblog_of_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    if reblog_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let reblog_statuses = sqlx::query_as!(
+        crate::db::models::Status,
+        "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
+        &reblog_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let reblog_account_ids: Vec<Uuid> = reblog_statuses.iter()
+        .map(|s| s.account_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let reblog_accounts = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::uuid[])",
+        &reblog_account_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let reblog_account_map: HashMap<Uuid, Account> = reblog_accounts
+        .into_iter()
+        .map(|a| (a.id, a))
+        .collect();
+
+    let reblog_status_ids: Vec<i64> = reblog_statuses.iter().map(|s| s.id).collect();
+    let reblog_media = batch_status_media(state, &reblog_status_ids).await?;
+
+    let reblog_status_map: HashMap<i64, crate::db::models::Status> = reblog_statuses
+        .into_iter()
+        .map(|s| (s.id, s))
+        .collect();
+
+    let mut result = HashMap::new();
+    for s in statuses {
+        if let Some(reblog_id) = s.reblog_of_id {
+            if let Some(rs) = reblog_status_map.get(&reblog_id) {
+                if let Some(ra) = reblog_account_map.get(&rs.account_id) {
+                    let media = reblog_media.get(&reblog_id).cloned().unwrap_or_default();
+                    result.insert(s.id, (rs.clone(), ra.clone(), media));
+                }
+            }
+        }
+    }
+    Ok(result)
 }
 
 pub async fn fetch_status_media(
