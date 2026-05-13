@@ -525,6 +525,114 @@ pub async fn confirm_email(
     Html("<h1>Email confirmed!</h1><p>Your account is now active. You can sign in.</p>".to_string()).into_response()
 }
 
+// ── POST /auth/password  (request reset) ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PasswordResetRequestForm {
+    pub email: Option<String>,
+}
+
+pub async fn request_password_reset(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Form(form): Form<PasswordResetRequestForm>,
+) -> impl IntoResponse {
+    // Always return 200 to avoid email enumeration
+    let email = match form.email {
+        Some(e) if !e.is_empty() => e.trim().to_lowercase(),
+        _ => return StatusCode::OK.into_response(),
+    };
+
+    let row = sqlx::query!(
+        "SELECT u.id, u.email, a.username FROM users u
+         JOIN accounts a ON a.id = u.account_id
+         WHERE u.email_normalized = $1 AND u.instance_id = $2 AND u.confirmed_at IS NOT NULL",
+        email, instance.id,
+    )
+    .fetch_optional(&state.db)
+    .await;
+
+    let Ok(Some(row)) = row else {
+        return StatusCode::OK.into_response();
+    };
+
+    let token = crypto::generate_token(32);
+    let _ = sqlx::query!(
+        "UPDATE users SET password_reset_token = $1, password_reset_sent_at = now() WHERE id = $2",
+        token, row.id,
+    )
+    .execute(&state.db)
+    .await;
+
+    if let Some(ref resend) = state.config.resend {
+        let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+        let reset_url = format!("https://{}/auth/password/reset?token={}", domain, token);
+        let http = state.http.clone();
+        let api_key = resend.api_key.clone();
+        let from = resend.from.clone();
+        let to = row.email.clone();
+        let name = row.username.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::email::send_password_reset(
+                &http, &api_key, &from, &to, &name, &reset_url, "en",
+            ).await {
+                tracing::error!(error = %e, "failed to send password reset email");
+            }
+        });
+    }
+
+    StatusCode::OK.into_response()
+}
+
+// ── PUT /auth/password  (apply reset) ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PasswordResetForm {
+    pub token: Option<String>,
+    pub password: Option<String>,
+}
+
+pub async fn apply_password_reset(
+    State(state): State<AppState>,
+    Form(form): Form<PasswordResetForm>,
+) -> impl IntoResponse {
+    let token = match form.token {
+        Some(t) if !t.is_empty() => t,
+        _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Missing token").into_response(),
+    };
+    let password = match form.password {
+        Some(p) if p.len() >= 8 => p,
+        _ => return (StatusCode::UNPROCESSABLE_ENTITY, "Password must be at least 8 characters").into_response(),
+    };
+
+    let row = sqlx::query!(
+        r#"SELECT id FROM users
+           WHERE password_reset_token = $1
+             AND password_reset_sent_at > now() - interval '1 hour'"#,
+        token,
+    )
+    .fetch_optional(&state.db)
+    .await;
+
+    let Ok(Some(row)) = row else {
+        return (StatusCode::UNPROCESSABLE_ENTITY, "Invalid or expired token").into_response();
+    };
+
+    let hash = match crypto::hash_password(&password) {
+        Ok(h) => h,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response(),
+    };
+
+    let _ = sqlx::query!(
+        "UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_sent_at = NULL WHERE id = $2",
+        hash, row.id,
+    )
+    .execute(&state.db)
+    .await;
+
+    StatusCode::OK.into_response()
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 async fn extract_app_from_bearer(state: &AppState, headers: &HeaderMap) -> Option<Uuid> {

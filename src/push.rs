@@ -301,6 +301,57 @@ pub async fn create_and_push(
         });
     }
 
+    // Send email notification if Resend is configured
+    if matches!(notification_type, "mention" | "follow" | "favourite" | "reblog") {
+        if let Some(ref resend) = state.config.resend {
+            let email_info = sqlx::query!(
+                r#"SELECT u.email, a.username, a.display_name, i.domain, i.custom_domain
+                   FROM users u
+                   JOIN accounts a ON a.id = u.account_id
+                   JOIN instances i ON i.id = u.instance_id
+                   WHERE u.account_id = $1 AND u.confirmed_at IS NOT NULL"#,
+                recipient_id,
+            )
+            .fetch_optional(&state.db)
+            .await;
+            if let Ok(Some(row)) = email_info {
+                let actor_info = sqlx::query!(
+                    "SELECT username, display_name FROM accounts WHERE id = $1",
+                    from_account_id,
+                )
+                .fetch_optional(&state.db)
+                .await;
+                if let Ok(Some(actor)) = actor_info {
+                    let actor_name = if actor.display_name.is_empty() {
+                        format!("@{}", actor.username)
+                    } else {
+                        actor.display_name.clone()
+                    };
+                    let instance_domain = row.custom_domain.as_deref().unwrap_or(&row.domain);
+                    let instance_url = format!("https://{}", instance_domain);
+                    let recipient_name = if row.display_name.is_empty() {
+                        row.username.clone()
+                    } else {
+                        row.display_name.clone()
+                    };
+                    let http = state.http.clone();
+                    let api_key = resend.api_key.clone();
+                    let from_addr = resend.from.clone();
+                    let to_addr = row.email.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::email::send_notification(
+                            &http, &api_key, &from_addr, &to_addr,
+                            &recipient_name, notification_type, &actor_name,
+                            &instance_url, "en",
+                        ).await {
+                            tracing::debug!(error = %e, "notification email failed (non-fatal)");
+                        }
+                    });
+                }
+            }
+        }
+    }
+
     let state_clone = state.clone();
     let icon_s = icon;
     let title_s = title;

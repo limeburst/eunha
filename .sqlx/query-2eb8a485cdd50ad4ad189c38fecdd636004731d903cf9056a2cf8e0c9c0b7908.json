@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.id, u.email, a.username FROM users u\n         JOIN accounts a ON a.id = u.account_id\n         WHERE u.email_normalized = $1 AND u.instance_id = $2 AND u.confirmed_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2eb8a485cdd50ad4ad189c38fecdd636004731d903cf9056a2cf8e0c9c0b7908"
+}

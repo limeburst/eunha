@@ -171,6 +171,12 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/admin/dimensions", post(admin::get_dimensions))
         .route("/api/v1/admin/measures", post(admin::get_measures))
         .route("/api/v1/admin/retention", post(admin::get_retention))
+        .route("/api/v1/admin/custom_emojis", get(admin::list_admin_custom_emojis).post(admin::create_admin_custom_emoji))
+        .route("/api/v1/admin/custom_emojis/{id}", patch(admin::update_admin_custom_emoji).delete(admin::delete_admin_custom_emoji))
+        .route("/api/v1/admin/domain_blocks", get(admin::list_domain_blocks).post(admin::create_domain_block))
+        .route("/api/v1/admin/domain_blocks/{id}", delete(admin::delete_domain_block))
+        .route("/api/v1/admin/domain_allows", get(admin::list_domain_allows).post(admin::create_domain_allow))
+        .route("/api/v1/admin/domain_allows/{id}", delete(admin::delete_domain_allow))
         // Suggestions
         .route("/api/v1/suggestions", get(accounts::get_suggestions))
         .route("/api/v1/suggestions/{id}", delete(accounts::dismiss_suggestion))
@@ -255,6 +261,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
         // Email confirmation
         .route("/auth/confirm", get(signup::confirm_email))
+        // Password reset
+        .route("/auth/password", axum::routing::post(signup::request_password_reset))
+        .route("/auth/password/reset", axum::routing::put(signup::apply_password_reset))
         // Tags (public)
         .route("/api/v1/tags/{name}", get(tags::get_tag))
         // Trends — no analytics data; always empty

@@ -1,3 +1,30 @@
+async fn send(
+    http: &reqwest::Client,
+    api_key: &str,
+    from: &str,
+    to: &str,
+    subject: &str,
+    html: &str,
+) -> anyhow::Result<()> {
+    let payload = serde_json::json!({
+        "from": from,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    });
+    let resp = http
+        .post("https://api.resend.com/emails")
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Resend API error: {text}");
+    }
+    Ok(())
+}
+
 /// Send an account confirmation email.
 ///
 /// `code` — when non-empty, displayed prominently for manual entry (console flow).
@@ -22,7 +49,7 @@ pub async fn send_confirmation(
 
     let (subject, body) = if locale == "ko" {
         (
-            "이메일 주소를 인증해 주세요",
+            "이메일 주소를 인증해 주세요".to_string(),
             format!(
                 "<p>안녕하세요 {name},</p>\
                  {code_block}\
@@ -32,7 +59,7 @@ pub async fn send_confirmation(
         )
     } else {
         (
-            "Confirm your email address",
+            "Confirm your email address".to_string(),
             format!(
                 "<p>Hi {name},</p>\
                  {code_block}\
@@ -42,24 +69,91 @@ pub async fn send_confirmation(
         )
     };
 
-    let payload = serde_json::json!({
-        "from": from,
-        "to": [to],
-        "subject": subject,
-        "html": body,
-    });
+    send(http, api_key, from, to, &subject, &body).await
+}
 
-    let resp = http
-        .post("https://api.resend.com/emails")
-        .bearer_auth(api_key)
-        .json(&payload)
-        .send()
-        .await?;
+/// Send a password reset email.
+pub async fn send_password_reset(
+    http: &reqwest::Client,
+    api_key: &str,
+    from: &str,
+    to: &str,
+    name: &str,
+    reset_url: &str,
+    locale: &str,
+) -> anyhow::Result<()> {
+    let (subject, body) = if locale == "ko" {
+        (
+            "비밀번호 재설정".to_string(),
+            format!(
+                "<p>안녕하세요 {name},</p>\
+                 <p>아래 링크를 클릭하여 비밀번호를 재설정하세요. 이 링크는 1시간 동안 유효합니다.</p>\
+                 <p><a href=\"{reset_url}\">{reset_url}</a></p>\
+                 <p>비밀번호 재설정을 요청하지 않으셨다면 이 메일을 무시하세요.</p>"
+            ),
+        )
+    } else {
+        (
+            "Reset your password".to_string(),
+            format!(
+                "<p>Hi {name},</p>\
+                 <p>Click the link below to reset your password. This link expires in 1 hour.</p>\
+                 <p><a href=\"{reset_url}\">{reset_url}</a></p>\
+                 <p>If you did not request a password reset, ignore this email.</p>"
+            ),
+        )
+    };
 
-    if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Resend API error: {text}");
-    }
+    send(http, api_key, from, to, &subject, &body).await
+}
 
-    Ok(())
+/// Send a notification email (mention, follow, etc.)
+pub async fn send_notification(
+    http: &reqwest::Client,
+    api_key: &str,
+    from: &str,
+    to: &str,
+    name: &str,
+    notification_type: &str,
+    actor: &str,
+    instance_url: &str,
+    locale: &str,
+) -> anyhow::Result<()> {
+    let (subject, body) = match (locale, notification_type) {
+        ("ko", "mention") => (
+            format!("{actor}님이 회원님을 멘션했습니다"),
+            format!("<p>안녕하세요 {name},</p><p><strong>{actor}</strong>님이 게시물에서 회원님을 멘션했습니다.</p><p><a href=\"{instance_url}\">{instance_url}</a>에서 확인하세요.</p>"),
+        ),
+        ("ko", "follow") => (
+            format!("{actor}님이 회원님을 팔로우했습니다"),
+            format!("<p>안녕하세요 {name},</p><p><strong>{actor}</strong>님이 회원님을 팔로우하기 시작했습니다.</p><p><a href=\"{instance_url}\">{instance_url}</a>에서 확인하세요.</p>"),
+        ),
+        ("ko", "favourite") => (
+            format!("{actor}님이 회원님의 게시물을 좋아합니다"),
+            format!("<p>안녕하세요 {name},</p><p><strong>{actor}</strong>님이 회원님의 게시물을 즐겨찾기했습니다.</p><p><a href=\"{instance_url}\">{instance_url}</a>에서 확인하세요.</p>"),
+        ),
+        ("ko", "reblog") => (
+            format!("{actor}님이 회원님의 게시물을 부스트했습니다"),
+            format!("<p>안녕하세요 {name},</p><p><strong>{actor}</strong>님이 회원님의 게시물을 부스트했습니다.</p><p><a href=\"{instance_url}\">{instance_url}</a>에서 확인하세요.</p>"),
+        ),
+        (_, "mention") => (
+            format!("{actor} mentioned you"),
+            format!("<p>Hi {name},</p><p><strong>{actor}</strong> mentioned you in a post.</p><p>Visit <a href=\"{instance_url}\">{instance_url}</a> to see it.</p>"),
+        ),
+        (_, "follow") => (
+            format!("{actor} followed you"),
+            format!("<p>Hi {name},</p><p><strong>{actor}</strong> started following you.</p><p>Visit <a href=\"{instance_url}\">{instance_url}</a> to see their profile.</p>"),
+        ),
+        (_, "favourite") => (
+            format!("{actor} liked your post"),
+            format!("<p>Hi {name},</p><p><strong>{actor}</strong> favourited your post.</p><p>Visit <a href=\"{instance_url}\">{instance_url}</a> to see it.</p>"),
+        ),
+        (_, "reblog") => (
+            format!("{actor} boosted your post"),
+            format!("<p>Hi {name},</p><p><strong>{actor}</strong> boosted your post.</p><p>Visit <a href=\"{instance_url}\">{instance_url}</a> to see it.</p>"),
+        ),
+        _ => return Ok(()),
+    };
+
+    send(http, api_key, from, to, &subject, &body).await
 }

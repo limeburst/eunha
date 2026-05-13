@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Multipart, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -582,3 +582,368 @@ pub async fn reopen_report(
 pub async fn get_dimensions() -> Json<Vec<serde_json::Value>> { Json(vec![]) }
 pub async fn get_measures() -> Json<Vec<serde_json::Value>> { Json(vec![]) }
 pub async fn get_retention() -> Json<serde_json::Value> { Json(serde_json::json!({"data": []})) }
+
+// ── Admin CustomEmoji type ────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AdminCustomEmoji {
+    pub id: String,
+    pub shortcode: String,
+    pub url: String,
+    pub static_url: String,
+    pub visible_in_picker: bool,
+    pub disabled: bool,
+    pub category: Option<String>,
+}
+
+// ── GET /api/v1/admin/custom_emojis ──────────────────────────────────────
+
+pub async fn list_admin_custom_emojis(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AdminCustomEmoji>>> {
+    require_admin(&state, auth.account_id).await?;
+    let instance_id = sqlx::query_scalar!(
+        "SELECT instance_id FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let rows = sqlx::query!(
+        "SELECT id, shortcode, image_url, static_image_url, visible_in_picker, disabled
+         FROM custom_emojis WHERE instance_id = $1 AND domain IS NULL ORDER BY shortcode",
+        instance_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(rows.into_iter().map(|r| AdminCustomEmoji {
+        id: r.id.to_string(),
+        shortcode: r.shortcode.clone(),
+        url: r.image_url.clone(),
+        static_url: r.static_image_url.unwrap_or_else(|| r.image_url.clone()),
+        visible_in_picker: r.visible_in_picker,
+        disabled: r.disabled,
+        category: None,
+    }).collect()))
+}
+
+// ── POST /api/v1/admin/custom_emojis ─────────────────────────────────────
+
+pub async fn create_admin_custom_emoji(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    mut multipart: Multipart,
+) -> AppResult<Json<AdminCustomEmoji>> {
+    require_admin(&state, auth.account_id).await?;
+
+    let instance_id = sqlx::query_scalar!(
+        "SELECT instance_id FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let mut shortcode = String::new();
+    let mut image_bytes: Option<Vec<u8>> = None;
+    let mut content_type = "image/png".to_string();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "shortcode" => {
+                shortcode = field.text().await.unwrap_or_default();
+            }
+            "image" => {
+                content_type = field.content_type().unwrap_or("image/png").to_string();
+                image_bytes = field.bytes().await.ok().map(|b| b.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    if shortcode.is_empty() {
+        return Err(AppError::Unprocessable("shortcode is required".into()));
+    }
+    let image_data = image_bytes.ok_or_else(|| AppError::Unprocessable("image is required".into()))?;
+
+    // Upload to storage
+    let ext = match content_type.as_str() {
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "png",
+    };
+    let key = format!("{}/emoji/{}.{}", instance_id, shortcode, ext);
+    state.storage.store(&image_data, &key, &content_type).await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("storage: {e}")))?;
+    let url = state.storage.public_url(&key);
+
+    let row = sqlx::query!(
+        r#"INSERT INTO custom_emojis (instance_id, shortcode, image_url, static_image_url, visible_in_picker)
+           VALUES ($1, $2, $3, $3, true)
+           ON CONFLICT (instance_id, shortcode)
+           DO UPDATE SET image_url = $3, static_image_url = $3, disabled = false
+           RETURNING id, shortcode, image_url, static_image_url, visible_in_picker, disabled"#,
+        instance_id, shortcode, url,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(AdminCustomEmoji {
+        id: row.id.to_string(),
+        shortcode: row.shortcode.clone(),
+        url: row.image_url.clone(),
+        static_url: row.static_image_url.unwrap_or_else(|| row.image_url.clone()),
+        visible_in_picker: row.visible_in_picker,
+        disabled: row.disabled,
+        category: None,
+    }))
+}
+
+// ── DELETE /api/v1/admin/custom_emojis/:id ───────────────────────────────
+
+pub async fn delete_admin_custom_emoji(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<uuid::Uuid>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!(
+        "DELETE FROM custom_emojis WHERE id = $1",
+        id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(StatusCode::OK)
+}
+
+// ── PATCH /api/v1/admin/custom_emojis/:id ────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PatchEmojiForm {
+    pub shortcode: Option<String>,
+    pub visible_in_picker: Option<bool>,
+    pub disabled: Option<bool>,
+}
+
+pub async fn update_admin_custom_emoji(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<uuid::Uuid>,
+    Json(form): Json<PatchEmojiForm>,
+) -> AppResult<Json<AdminCustomEmoji>> {
+    require_admin(&state, auth.account_id).await?;
+    if let Some(sc) = &form.shortcode {
+        sqlx::query!("UPDATE custom_emojis SET shortcode = $1 WHERE id = $2", sc, id)
+            .execute(&state.db).await?;
+    }
+    if let Some(v) = form.visible_in_picker {
+        sqlx::query!("UPDATE custom_emojis SET visible_in_picker = $1 WHERE id = $2", v, id)
+            .execute(&state.db).await?;
+    }
+    if let Some(d) = form.disabled {
+        sqlx::query!("UPDATE custom_emojis SET disabled = $1 WHERE id = $2", d, id)
+            .execute(&state.db).await?;
+    }
+    let row = sqlx::query!(
+        "SELECT id, shortcode, image_url, static_image_url, visible_in_picker, disabled FROM custom_emojis WHERE id = $1",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminCustomEmoji {
+        id: row.id.to_string(),
+        shortcode: row.shortcode.clone(),
+        url: row.image_url.clone(),
+        static_url: row.static_image_url.unwrap_or_else(|| row.image_url.clone()),
+        visible_in_picker: row.visible_in_picker,
+        disabled: row.disabled,
+        category: None,
+    }))
+}
+
+// ── Admin DomainBlock / DomainAllow types ─────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AdminDomainBlock {
+    pub id: String,
+    pub domain: String,
+    pub digest: String,
+    pub created_at: String,
+    pub severity: String,
+    pub reject_media: bool,
+    pub reject_reports: bool,
+    pub private_comment: Option<String>,
+    pub public_comment: Option<String>,
+    pub obfuscate: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminDomainAllow {
+    pub id: String,
+    pub domain: String,
+    pub created_at: String,
+}
+
+// ── GET /api/v1/admin/domain_blocks ──────────────────────────────────────
+
+pub async fn list_domain_blocks(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AdminDomainBlock>>> {
+    require_admin(&state, auth.account_id).await?;
+    let rows = sqlx::query!(
+        "SELECT id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at
+         FROM domain_blocks ORDER BY domain",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| AdminDomainBlock {
+        id: r.id.to_string(),
+        digest: hex::encode(md5_bytes(&r.domain)),
+        domain: r.domain,
+        created_at: r.created_at.to_rfc3339(),
+        severity: r.severity,
+        reject_media: r.reject_media,
+        reject_reports: r.reject_reports,
+        private_comment: r.private_comment,
+        public_comment: r.public_comment,
+        obfuscate: r.obfuscate,
+    }).collect()))
+}
+
+// ── POST /api/v1/admin/domain_blocks ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDomainBlockForm {
+    pub domain: String,
+    pub severity: Option<String>,
+    pub reject_media: Option<bool>,
+    pub reject_reports: Option<bool>,
+    pub private_comment: Option<String>,
+    pub public_comment: Option<String>,
+    pub obfuscate: Option<bool>,
+}
+
+pub async fn create_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateDomainBlockForm>,
+) -> AppResult<Json<AdminDomainBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let severity = form.severity.as_deref().unwrap_or("silence");
+    let row = sqlx::query!(
+        r#"INSERT INTO domain_blocks (domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (domain) DO UPDATE SET severity = $2, reject_media = $3, reject_reports = $4,
+             private_comment = $5, public_comment = $6, obfuscate = $7, updated_at = now()
+           RETURNING id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at"#,
+        form.domain, severity,
+        form.reject_media.unwrap_or(false),
+        form.reject_reports.unwrap_or(false),
+        form.private_comment,
+        form.public_comment,
+        form.obfuscate.unwrap_or(false),
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(AdminDomainBlock {
+        id: row.id.to_string(),
+        digest: hex::encode(md5_bytes(&row.domain)),
+        domain: row.domain,
+        created_at: row.created_at.to_rfc3339(),
+        severity: row.severity,
+        reject_media: row.reject_media,
+        reject_reports: row.reject_reports,
+        private_comment: row.private_comment,
+        public_comment: row.public_comment,
+        obfuscate: row.obfuscate,
+    }))
+}
+
+// ── DELETE /api/v1/admin/domain_blocks/:id ───────────────────────────────
+
+pub async fn delete_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!("DELETE FROM domain_blocks WHERE id = $1", id)
+        .execute(&state.db)
+        .await?;
+    Ok(StatusCode::OK)
+}
+
+// ── GET /api/v1/admin/domain_allows ──────────────────────────────────────
+
+pub async fn list_domain_allows(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AdminDomainAllow>>> {
+    require_admin(&state, auth.account_id).await?;
+    let rows = sqlx::query!(
+        "SELECT id, domain, created_at FROM domain_allows ORDER BY domain",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| AdminDomainAllow {
+        id: r.id.to_string(),
+        domain: r.domain,
+        created_at: r.created_at.to_rfc3339(),
+    }).collect()))
+}
+
+// ── POST /api/v1/admin/domain_allows ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDomainAllowForm {
+    pub domain: String,
+}
+
+pub async fn create_domain_allow(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateDomainAllowForm>,
+) -> AppResult<Json<AdminDomainAllow>> {
+    require_admin(&state, auth.account_id).await?;
+    let row = sqlx::query!(
+        r#"INSERT INTO domain_allows (domain) VALUES ($1)
+           ON CONFLICT (domain) DO UPDATE SET updated_at = now()
+           RETURNING id, domain, created_at"#,
+        form.domain,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(AdminDomainAllow {
+        id: row.id.to_string(),
+        domain: row.domain,
+        created_at: row.created_at.to_rfc3339(),
+    }))
+}
+
+// ── DELETE /api/v1/admin/domain_allows/:id ───────────────────────────────
+
+pub async fn delete_domain_allow(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!("DELETE FROM domain_allows WHERE id = $1", id)
+        .execute(&state.db)
+        .await?;
+    Ok(StatusCode::OK)
+}
+
+fn md5_bytes(s: &str) -> [u8; 16] {
+    use std::hash::Hasher;
+    // Simple deterministic digest (not security-sensitive — Mastodon uses it for obfuscation display)
+    let mut h: u128 = 0x9e3779b97f4a7c15;
+    for b in s.bytes() {
+        h = h.wrapping_mul(0x6c62272e07bb0142).wrapping_add(b as u128);
+    }
+    h.to_le_bytes()
+}
