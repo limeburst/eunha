@@ -1,4 +1,5 @@
 /target
+/.sqlx
 .env
 config.toml
 /media
