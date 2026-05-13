@@ -67,7 +67,7 @@ pub async fn post_status(
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
     let resolved = resolve_mention_accounts(&state, instance.id, &mention_handles).await;
-    let mention_map = build_mention_map(&resolved);
+    let mention_map = build_mention_map(&resolved, &instance.domain);
     let content = render_content(&text, &instance.domain, &mention_map);
 
     let status = sqlx::query_as!(
@@ -773,7 +773,7 @@ pub async fn edit_status(
     let hashtags = extract_hashtags(&new_text);
     let mention_handles = extract_mention_handles(&new_text);
     let resolved = resolve_mention_accounts(&state, status.instance_id, &mention_handles).await;
-    let mention_map = build_mention_map(&resolved);
+    let mention_map = build_mention_map(&resolved, &instance_domain);
     let new_content = render_content(&new_text, &instance_domain, &mention_map);
     let new_spoiler = form.spoiler_text.unwrap_or_else(|| status.spoiler_text.clone());
     let new_sensitive = form.sensitive.unwrap_or(status.sensitive);
@@ -1196,10 +1196,17 @@ async fn resolve_mention_accounts(
     result
 }
 
-fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (String, String)> {
+fn build_mention_map(
+    resolved: &[(String, Account)],
+    instance_domain: &str,
+) -> HashMap<String, (String, String)> {
     let mut map = HashMap::new();
     for (username_lower, account) in resolved {
-        let url = account.url.clone();
+        let url = if account.url.is_empty() {
+            format!("https://{}/@{}", instance_domain, account.username)
+        } else {
+            account.url.clone()
+        };
         let display = account.acct();
         map.insert(username_lower.clone(), (url.clone(), display.clone()));
         if let Some(ref d) = account.domain {

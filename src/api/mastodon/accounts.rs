@@ -1420,9 +1420,14 @@ pub async fn fetch_status_mentions(
     status_id: i64,
 ) -> AppResult<Vec<super::types::StatusMention>> {
     let rows = sqlx::query!(
-        r#"SELECT a.id as account_id, a.username, a.domain, a.url
+        r#"SELECT a.id as account_id, a.username, a.domain,
+                  CASE WHEN a.url != '' THEN a.url
+                       ELSE 'https://' || i.domain || '/@' || a.username
+                  END as "url!"
            FROM accounts a
            JOIN mentions m ON m.account_id = a.id
+           JOIN statuses s ON s.id = m.status_id
+           JOIN instances i ON i.id = s.instance_id
            WHERE m.status_id = $1"#,
         status_id,
     )
@@ -1476,9 +1481,14 @@ pub async fn batch_status_mentions(
         return Ok(std::collections::HashMap::new());
     }
     let rows = sqlx::query!(
-        r#"SELECT m.status_id, a.id as account_id, a.username, a.domain, a.url
+        r#"SELECT m.status_id, a.id as account_id, a.username, a.domain,
+                  CASE WHEN a.url != '' THEN a.url
+                       ELSE 'https://' || i.domain || '/@' || a.username
+                  END as "url!"
            FROM accounts a
            JOIN mentions m ON m.account_id = a.id
+           JOIN statuses s ON s.id = m.status_id
+           JOIN instances i ON i.id = s.instance_id
            WHERE m.status_id = ANY($1::bigint[])"#,
         status_ids,
     )
