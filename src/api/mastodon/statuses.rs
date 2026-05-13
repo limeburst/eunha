@@ -146,6 +146,7 @@ pub async fn post_status(
     }
 
     // Notify the author of the parent status if this is a reply
+    let mut notified = std::collections::HashSet::new();
     if let Some(parent_id) = in_reply_to_id {
         if let Ok(Some(parent)) = sqlx::query!(
             "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
@@ -164,7 +165,26 @@ pub async fn post_status(
                 account.acct().clone(),
                 account.avatar.clone().unwrap_or_default(),
             ).await;
+            notified.insert(parent.account_id);
         }
+    }
+
+    // Notify each mentioned account not already notified above
+    for (_, mentioned) in &resolved {
+        if mentioned.id == account.id || notified.contains(&mentioned.id) {
+            continue;
+        }
+        push::create_and_push(
+            &state,
+            mentioned.id,
+            account.id,
+            "mention",
+            Some(status.id),
+            format!("{} mentioned you", account.display_name),
+            account.acct().clone(),
+            account.avatar.clone().unwrap_or_default(),
+        ).await;
+        notified.insert(mentioned.id);
     }
 
     Ok(Json(api_status))
