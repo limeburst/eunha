@@ -588,11 +588,12 @@ async fn migrate_media(
         let description: Option<String> = row.try_get("description").ok().flatten();
         let blurhash: Option<String> = row.try_get("blurhash").ok().flatten();
         let remote_url: Option<String> = row.try_get("remote_url").ok().flatten();
+        let meta: Option<serde_json::Value> = row.try_get("file_meta").ok().flatten();
         let created_at = get_ts(&row, "created_at")?;
 
         sqlx::query(
-            r#"INSERT INTO media_attachments (account_id, status_id, media_type, remote_url, description, blurhash, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)"#,
+            r#"INSERT INTO media_attachments (account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
         )
         .bind(account_id)
         .bind(status_id)
@@ -600,6 +601,7 @@ async fn migrate_media(
         .bind(&remote_url)
         .bind(&description)
         .bind(&blurhash)
+        .bind(&meta)
         .bind(created_at)
         .execute(&mut *dst)
         .await?;
