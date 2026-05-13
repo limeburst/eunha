@@ -159,7 +159,7 @@ fn collect_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         let path = entry?.path();
         if path.is_dir() {
             collect_files_inner(&path, out)?;
-        } else {
+        } else if path.file_name().and_then(|n| n.to_str()).map(|n| !n.starts_with('.')).unwrap_or(false) {
             out.push(path);
         }
     }
@@ -224,10 +224,12 @@ async fn patch_media_attachments(
     prefix: &str,
 ) -> Result<()> {
     let masto_rows = sqlx::query(
-        r#"SELECT id, account_id, status_id, file_file_name
-           FROM media_attachments
-           WHERE file_file_name IS NOT NULL AND file_file_name != ''
-           ORDER BY COALESCE(status_id, 0), id"#,
+        r#"SELECT ma.id, ma.account_id, ma.status_id, ma.file_file_name
+           FROM media_attachments ma
+           JOIN accounts a ON a.id = ma.account_id
+           WHERE ma.file_file_name IS NOT NULL AND ma.file_file_name != ''
+             AND a.domain IS NULL
+           ORDER BY COALESCE(ma.status_id, 0), ma.id"#,
     )
     .fetch_all(src).await?;
 
@@ -288,7 +290,7 @@ async fn patch_account_media(
     prefix: &str,
 ) -> Result<()> {
     let rows = sqlx::query(
-        "SELECT id, avatar_file_name, header_file_name FROM accounts WHERE avatar_file_name IS NOT NULL OR header_file_name IS NOT NULL",
+        "SELECT id, avatar_file_name, header_file_name FROM accounts WHERE (avatar_file_name IS NOT NULL OR header_file_name IS NOT NULL) AND domain IS NULL",
     )
     .fetch_all(src).await?;
 

@@ -67,7 +67,8 @@ pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
     types::MediaAttachment {
         id: m.id.to_string(),
         media_type: m.media_type.clone(),
-        url: m.file_url.clone(),
+        url: m.file_url.clone()
+            .or_else(|| m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
         preview_url: m.preview_url.clone(),
         remote_url: m.remote_url.clone(),
         preview_remote_url: None,
