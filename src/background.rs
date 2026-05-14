@@ -169,9 +169,10 @@ async fn publish_one(
     }
 
     // Publish to streaming
-    use crate::api::mastodon::accounts::{build_status, fetch_status_media};
+    use crate::api::mastodon::accounts::{build_status, fetch_status_media, spawn_card_fetch};
     let mut status_with_uri = status.clone();
     status_with_uri.uri = Some(uri);
+    spawn_card_fetch(state, status_with_uri.id, status_with_uri.content.clone());
     if let Ok(media) = fetch_status_media(state, status_with_uri.id).await {
         if let Ok(api_status) = build_status(state, &status_with_uri, &account, media, None, None).await {
             if matches!(visibility, "public" | "unlisted" | "private") {

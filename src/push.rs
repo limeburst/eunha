@@ -254,6 +254,12 @@ pub async fn create_and_push(
         return;
     }
 
+    // Check notification policy: route to notification_requests if filtered
+    if should_filter_notification(&db, recipient_id, from_account_id, notification_type, status_id).await {
+        route_to_request(&db, recipient_id, from_account_id, status_id).await;
+        return;
+    }
+
     // Dedup: don't insert the same (account, from, type, status) twice
     let existing = sqlx::query_scalar!(
         r#"SELECT 1 FROM notifications
@@ -368,6 +374,143 @@ pub async fn create_and_push(
         )
         .await;
     });
+}
+
+/// Returns true if the notification should be routed to notification_requests
+/// instead of the main notifications feed, based on the recipient's policy.
+async fn should_filter_notification(
+    db: &sqlx::PgPool,
+    recipient_id: Uuid,
+    from_account_id: Uuid,
+    notification_type: &str,
+    status_id: Option<i64>,
+) -> bool {
+    // Only filter certain notification types (not polls or admin actions)
+    if !matches!(notification_type, "follow" | "follow_request" | "mention" | "favourite" | "reblog") {
+        return false;
+    }
+
+    let policy = sqlx::query!(
+        r#"SELECT notif_filter_not_following, notif_filter_not_followers,
+                  notif_filter_new_accounts, notif_filter_private_mentions
+           FROM users WHERE account_id = $1"#,
+        recipient_id,
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(policy) = policy else {
+        return false; // No user row = remote account, don't filter
+    };
+
+    if !policy.notif_filter_not_following
+        && !policy.notif_filter_not_followers
+        && !policy.notif_filter_new_accounts
+        && !policy.notif_filter_private_mentions
+    {
+        return false; // All filters off
+    }
+
+    // filter_not_following: sender is not followed by recipient
+    if policy.notif_filter_not_following {
+        let follows = sqlx::query_scalar!(
+            "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+            recipient_id, from_account_id,
+        )
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if !follows {
+            return true;
+        }
+    }
+
+    // filter_not_followers: sender does not follow recipient
+    if policy.notif_filter_not_followers {
+        let is_follower = sqlx::query_scalar!(
+            "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+            from_account_id, recipient_id,
+        )
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if !is_follower {
+            return true;
+        }
+    }
+
+    // filter_new_accounts: sender account is less than 30 days old
+    if policy.notif_filter_new_accounts {
+        let is_new = sqlx::query_scalar!(
+            "SELECT 1 FROM accounts WHERE id = $1 AND created_at > now() - interval '30 days'",
+            from_account_id,
+        )
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if is_new {
+            return true;
+        }
+    }
+
+    // filter_private_mentions: unsolicited DM (direct mention, not a reply to own status)
+    if policy.notif_filter_private_mentions && notification_type == "mention" {
+        if let Some(sid) = status_id {
+            let is_private_unsolicited = sqlx::query_scalar!(
+                r#"SELECT 1 FROM statuses s
+                   WHERE s.id = $1
+                     AND s.visibility = 'direct'
+                     AND (s.in_reply_to_id IS NULL OR NOT EXISTS (
+                       SELECT 1 FROM statuses parent
+                       WHERE parent.id = s.in_reply_to_id
+                         AND parent.account_id = $2
+                     ))"#,
+                sid, recipient_id,
+            )
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+            if is_private_unsolicited {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Upsert into notification_requests for a filtered notification.
+async fn route_to_request(
+    db: &sqlx::PgPool,
+    recipient_id: Uuid,
+    from_account_id: Uuid,
+    status_id: Option<i64>,
+) {
+    let _ = sqlx::query!(
+        r#"INSERT INTO notification_requests
+               (account_id, from_account_id, last_status_id, notifications_count)
+           VALUES ($1, $2, $3, 1)
+           ON CONFLICT (account_id, from_account_id) DO UPDATE
+             SET notifications_count = notification_requests.notifications_count + 1,
+                 last_status_id = COALESCE($3, notification_requests.last_status_id),
+                 dismissed = false,
+                 updated_at = now()"#,
+        recipient_id,
+        from_account_id,
+        status_id,
+    )
+    .execute(db)
+    .await;
 }
 
 async fn build_notification_payload(

@@ -18,7 +18,7 @@ use crate::{
     streaming::Event,
 };
 use super::{
-    accounts::{build_status, fetch_reblog_data, fetch_status_media},
+    accounts::{build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch},
     convert::account_from_db,
     types::{Status, StatusContext, StatusEdit, StatusSource},
 };
@@ -262,6 +262,8 @@ pub async fn post_status(
 
     let media = fetch_status_media(&state, status.id).await?;
     let api_status = build_status(&state, &status, &account, media, None, None).await?;
+
+    spawn_card_fetch(&state, status.id, status.content.clone());
 
     if matches!(visibility, "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {

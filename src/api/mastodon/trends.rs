@@ -166,6 +166,54 @@ pub async fn trending_statuses(
 
 // ── GET /api/v1/trends/links ──────────────────────────────────────────────
 
-pub async fn trending_links() -> Json<Vec<serde_json::Value>> {
-    Json(vec![])
+pub async fn trending_links(
+    State(state): State<AppState>,
+    Query(params): Query<TrendParams>,
+) -> AppResult<Json<Vec<super::types::PreviewCard>>> {
+    let limit = params.limit.unwrap_or(10).min(40).max(1) as i64;
+    let offset = params.offset.unwrap_or(0).max(0) as i64;
+
+    let rows = sqlx::query!(
+        r#"SELECT pc.url, pc.title, pc.description, pc.card_type,
+                  pc.image_url, pc.author_name, pc.author_url,
+                  pc.provider_name, pc.provider_url, pc.html,
+                  pc.width, pc.height, pc.embed_url, pc.blurhash,
+                  COUNT(spc.status_id) AS uses
+           FROM preview_cards pc
+           JOIN status_preview_cards spc ON spc.card_id = pc.id
+           JOIN statuses s ON s.id = spc.status_id
+           WHERE s.deleted_at IS NULL
+             AND s.created_at > now() - interval '2 days'
+             AND s.visibility = 'public'
+           GROUP BY pc.id
+           ORDER BY uses DESC
+           LIMIT $1 OFFSET $2"#,
+        limit,
+        offset,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let cards = rows.into_iter().map(|r| super::types::PreviewCard {
+        url: r.url,
+        title: r.title,
+        description: r.description,
+        language: None,
+        card_type: r.card_type,
+        author_name: r.author_name,
+        author_url: r.author_url,
+        provider_name: r.provider_name,
+        provider_url: r.provider_url,
+        html: r.html,
+        width: r.width,
+        height: r.height,
+        embed_url: r.embed_url,
+        image: r.image_url,
+        image_description: String::new(),
+        blurhash: r.blurhash,
+        published_at: None,
+        authors: vec![],
+    }).collect();
+
+    Ok(Json(cards))
 }

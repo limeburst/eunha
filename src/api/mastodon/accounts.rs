@@ -2129,25 +2129,24 @@ pub async fn build_status(
     api.tags = fetch_status_tags(state, id).await?;
     api.mentions = fetch_status_mentions(state, id).await?;
     api.poll = fetch_status_poll(state, id, viewer_account_id).await?;
-    api.card = fetch_status_card(state, id, &api.content).await;
+    api.card = fetch_status_card(state, id).await;
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
         rb.tags = fetch_status_tags(state, rid).await?;
         rb.mentions = fetch_status_mentions(state, rid).await?;
         rb.poll = fetch_status_poll(state, rid, None).await?;
-        rb.card = fetch_status_card(state, rid, &rb.content).await;
+        rb.card = fetch_status_card(state, rid).await;
     }
     Ok(api)
 }
 
+/// Look up an already-cached preview card for a status. Never does network I/O.
 async fn fetch_status_card(
     state: &AppState,
     status_id: i64,
-    content: &str,
 ) -> Option<super::types::PreviewCard> {
-    // Check for already-linked card first
-    let existing = sqlx::query!(
-        r#"SELECT pc.id, pc.url, pc.title, pc.description, pc.card_type,
+    let r = sqlx::query!(
+        r#"SELECT pc.url, pc.title, pc.description, pc.card_type,
                   pc.image_url, pc.author_name, pc.author_url,
                   pc.provider_name, pc.provider_url, pc.html, pc.width, pc.height,
                   pc.embed_url, pc.blurhash
@@ -2160,53 +2159,7 @@ async fn fetch_status_card(
     .fetch_optional(&state.db)
     .await
     .ok()
-    .flatten();
-
-    if let Some(r) = existing {
-        return Some(super::types::PreviewCard {
-            url: r.url,
-            title: r.title,
-            description: r.description,
-            language: None,
-            card_type: r.card_type,
-            author_name: r.author_name,
-            author_url: r.author_url,
-            provider_name: r.provider_name,
-            provider_url: r.provider_url,
-            html: r.html,
-            width: r.width,
-            height: r.height,
-            embed_url: r.embed_url,
-            image: r.image_url,
-            image_description: String::new(),
-            blurhash: r.blurhash,
-            published_at: None,
-            authors: vec![],
-        });
-    }
-
-    // Extract URLs from status content and fetch the first one
-    let urls = crate::preview_card::extract_urls_from_content(content);
-    let url = urls.into_iter().next()?;
-
-    let card_id = crate::preview_card::fetch_and_store(&state.db, &state.http, &url).await?;
-
-    // Link card to status
-    let _ = sqlx::query!(
-        "INSERT INTO status_preview_cards (status_id, card_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        status_id, card_id,
-    )
-    .execute(&state.db)
-    .await;
-
-    // Re-fetch and return
-    let r = sqlx::query!(
-        "SELECT url, title, description, card_type, image_url, author_name, author_url, provider_name, provider_url, html, width, height, embed_url, blurhash FROM preview_cards WHERE id = $1",
-        card_id,
-    )
-    .fetch_one(&state.db)
-    .await
-    .ok()?;
+    .flatten()?;
 
     Some(super::types::PreviewCard {
         url: r.url,
@@ -2228,6 +2181,30 @@ async fn fetch_status_card(
         published_at: None,
         authors: vec![],
     })
+}
+
+/// Spawn a background task to fetch a preview card for a newly-created status.
+/// Only fetches the first external URL found in the HTML content.
+pub fn spawn_card_fetch(state: &AppState, status_id: i64, content: String) {
+    let urls = crate::preview_card::extract_urls_from_content(&content);
+    let url = match urls.into_iter().next() {
+        Some(u) => u,
+        None => return,
+    };
+    let state = state.clone();
+    tokio::spawn(async move {
+        let Some(card_id) = crate::preview_card::fetch_and_store(&state.db, &state.http, &url).await
+        else {
+            return;
+        };
+        let _ = sqlx::query!(
+            "INSERT INTO status_preview_cards (status_id, card_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            status_id,
+            card_id,
+        )
+        .execute(&state.db)
+        .await;
+    });
 }
 
 // ── DELETE /api/v1/accounts ────────────────────────────────────────────────
