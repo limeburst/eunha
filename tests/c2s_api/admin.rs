@@ -317,3 +317,69 @@ async fn test_admin_get_role_by_id() {
     assert_eq!(role["id"].as_str(), Some("1"), "expected role id 1 (Admin)");
     assert_eq!(role["name"].as_str(), Some("Admin"));
 }
+
+/// POST /api/v1/admin/measures returns an array of measure objects.
+#[tokio::test]
+async fn test_admin_measures() {
+    let ctx = TestContext::new("admin-measures").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/admin/measures",
+        Some(&ctx.alice_token),
+        &json!({
+            "keys": ["new_users", "active_users"],
+            "start_at": "2020-01-01T00:00:00Z",
+            "end_at": "2099-01-01T00:00:00Z"
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let measures: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(measures.len(), 2, "expected 2 measure objects");
+    for m in &measures {
+        assert!(m["key"].as_str().is_some(), "measure missing key: {m}");
+        assert!(m["total"].as_str().is_some(), "measure missing total: {m}");
+    }
+}
+
+/// POST /api/v1/admin/dimensions returns an array of dimension objects.
+#[tokio::test]
+async fn test_admin_dimensions() {
+    let ctx = TestContext::new("admin-dimensions").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/admin/dimensions",
+        Some(&ctx.alice_token),
+        &json!({
+            "keys": ["sources"],
+            "start_at": "2020-01-01T00:00:00Z",
+            "end_at": "2099-01-01T00:00:00Z"
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let dims: Vec<Value> = resp.json().await.unwrap();
+    // Even with no data, should return an array.
+    for d in &dims {
+        assert!(d["key"].as_str().is_some(), "dimension missing key: {d}");
+    }
+}
+
+/// POST /api/v1/admin/retention returns an array.
+#[tokio::test]
+async fn test_admin_retention() {
+    let ctx = TestContext::new("admin-retention").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/admin/retention",
+        Some(&ctx.alice_token),
+        &json!({
+            "start_at": "2020-01-01T00:00:00Z",
+            "end_at": "2099-01-01T00:00:00Z",
+            "frequency": "month"
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _: Vec<Value> = resp.json().await.unwrap();
+}
