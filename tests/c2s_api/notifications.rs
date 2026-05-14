@@ -357,6 +357,76 @@ async fn test_notification_requests_empty_by_default() {
     assert!(list.is_empty(), "expected empty notification requests");
 }
 
+/// Notification requests are created when policy filters a notification, and can be dismissed.
+#[tokio::test]
+async fn test_notification_request_dismiss_and_accept() {
+    let ctx = TestContext::new("notif-req-dismiss").await;
+
+    // Alice sets filter_not_following=true so bob's actions route to requests.
+    // Alice does not follow bob, so bob's notifications will be filtered.
+    ctx.api.http
+        .patch(ctx.api.url("/api/v2/notifications/policy"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"filter_not_following": true}))
+        .send()
+        .await
+        .unwrap();
+
+    // Bob follows alice → should create a notification request (not a notification).
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let requests: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!requests.is_empty(), "expected a notification request from bob");
+    let req_id = requests[0]["id"].as_str().unwrap();
+    assert_eq!(
+        requests[0]["account"]["id"].as_str(),
+        Some(ctx.bob_id.as_str()),
+        "notification request should be from bob",
+    );
+
+    // GET /api/v1/notifications/requests/:id returns the single request.
+    let single_resp = ctx.api.get(
+        &format!("/api/v1/notifications/requests/{req_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(single_resp.status(), StatusCode::OK);
+    let single: Value = single_resp.json().await.unwrap();
+    assert_eq!(single["id"].as_str(), Some(req_id));
+
+    // Dismiss the request.
+    let dismiss_resp = ctx.api.post_json(
+        &format!("/api/v1/notifications/requests/{req_id}/dismiss"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(dismiss_resp.status(), StatusCode::OK);
+
+    // After dismissal the request no longer appears in the list.
+    let after_dismiss: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !after_dismiss.iter().any(|r| r["id"].as_str() == Some(req_id)),
+        "dismissed request still appears in list",
+    );
+
+    // Accept re-surfaces it (dismissed = false).
+    let accept_resp = ctx.api.post_json(
+        &format!("/api/v1/notifications/requests/{req_id}/accept"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(accept_resp.status(), StatusCode::OK);
+
+    let after_accept: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        after_accept.iter().any(|r| r["id"].as_str() == Some(req_id)),
+        "accepted request should reappear in list",
+    );
+}
+
 /// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
 #[tokio::test]
 async fn test_notifications_limit_80_is_accepted() {

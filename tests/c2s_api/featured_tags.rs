@@ -144,6 +144,55 @@ async fn test_featured_tags_scoped_to_user() {
     );
 }
 
+/// GET /api/v1/accounts/:id/featured_tags returns that account's featured tags without auth.
+#[tokio::test]
+async fn test_account_featured_tags_visible_to_public() {
+    let ctx = TestContext::new("ftag-acct-pub").await;
+
+    // Alice features a tag.
+    ctx.api.post_json(
+        "/api/v1/featured_tags",
+        Some(&ctx.alice_token),
+        &json!({"name": "publicfeature"}),
+    ).await;
+
+    // Fetch via the public per-account endpoint (no auth).
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/featured_tags", ctx.alice_id),
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(
+        list.iter().any(|t| t["name"].as_str() == Some("publicfeature")),
+        "alice's featured tag not returned by account endpoint: {list:?}",
+    );
+}
+
+/// GET /api/v1/accounts/:id/featured_tags does not include another user's tags.
+#[tokio::test]
+async fn test_account_featured_tags_scoped_to_account() {
+    let ctx = TestContext::new("ftag-acct-scope").await;
+
+    ctx.api.post_json(
+        "/api/v1/featured_tags",
+        Some(&ctx.alice_token),
+        &json!({"name": "alicetag"}),
+    ).await;
+
+    // Bob's featured tags should not include alice's tag.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/featured_tags", ctx.bob_id),
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(
+        !list.iter().any(|t| t["name"].as_str() == Some("alicetag")),
+        "alice's tag appeared in bob's account featured_tags: {list:?}",
+    );
+}
+
 /// GET /api/v1/featured_tags/suggestions returns a JSON array.
 #[tokio::test]
 async fn test_featured_tag_suggestions() {
