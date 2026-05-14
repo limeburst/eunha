@@ -1446,3 +1446,54 @@ async fn test_delete_account_wrong_password_is_401() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+// ── GET /api/v1/accounts (batch) ─────────────────────────────────────────────
+
+/// GET /api/v1/accounts?id[]=...&id[]=... returns the requested accounts.
+#[tokio::test]
+async fn test_get_accounts_batch() {
+    let ctx = TestContext::new("acct-batch").await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts?id[]={}&id[]={}", ctx.alice_id, ctx.bob_id),
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp.json().await.unwrap();
+    let ids: Vec<&str> = accounts.iter().filter_map(|a| a["id"].as_str()).collect();
+    assert!(ids.contains(&ctx.alice_id.as_str()), "alice missing from batch");
+    assert!(ids.contains(&ctx.bob_id.as_str()), "bob missing from batch");
+}
+
+/// GET /api/v1/accounts?id[]= with empty list returns empty array.
+#[tokio::test]
+async fn test_get_accounts_batch_empty() {
+    let ctx = TestContext::new("acct-batch-empty").await;
+
+    let resp = ctx.api.get("/api/v1/accounts", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp.json().await.unwrap();
+    assert!(accounts.is_empty(), "expected empty array for no ids: {accounts:?}");
+}
+
+// ── GET /api/v1/apps/verify_credentials ──────────────────────────────────────
+
+/// GET /api/v1/apps/verify_credentials with a valid token returns the app name.
+#[tokio::test]
+async fn test_verify_app_credentials() {
+    let ctx = TestContext::new("app-verify").await;
+
+    let resp = ctx.api.get("/api/v1/apps/verify_credentials", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["name"].as_str().is_some(), "app name missing: {body}");
+}
+
+/// GET /api/v1/apps/verify_credentials without a token returns 401.
+#[tokio::test]
+async fn test_verify_app_credentials_without_token_is_401() {
+    let ctx = TestContext::new("app-verify-unauth").await;
+
+    let resp = ctx.api.get("/api/v1/apps/verify_credentials", None).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
