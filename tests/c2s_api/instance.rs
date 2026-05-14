@@ -1,5 +1,6 @@
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use super::helpers::TestContext;
 
@@ -137,4 +138,69 @@ async fn test_trending_links() {
     let resp = ctx.api.get("/api/v1/trends/links", None).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let _: Vec<Value> = resp.json().await.unwrap();
+}
+
+/// POST /api/v1/emails/confirmations returns 200 (no-op stub).
+#[tokio::test]
+async fn test_email_confirmations_endpoint() {
+    let ctx = TestContext::new("email-confirm").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/emails/confirmations",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// GET /api/v1/announcements returns read=false before dismissal, read=true after.
+#[tokio::test]
+async fn test_announcement_dismiss() {
+    use sqlx::postgres::PgPoolOptions;
+
+    let ctx = TestContext::new("ann-dismiss").await;
+
+    // Insert a published announcement via direct DB write.
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+
+    let instance_id: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM instances WHERE domain = $1",
+        ctx.domain,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let ann_id: i64 = sqlx::query_scalar!(
+        r#"INSERT INTO announcements (instance_id, text, published, all_day, published_at, created_at, updated_at)
+           VALUES ($1, 'test announcement', true, false, now(), now(), now())
+           RETURNING id"#,
+        instance_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Get announcements — should appear as unread.
+    let before: Vec<Value> = ctx.api.get("/api/v1/announcements", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let ann = before.iter().find(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()) == Some(ann_id));
+    assert!(ann.is_some(), "announcement should appear in list");
+    assert_eq!(ann.unwrap()["read"].as_bool(), Some(false), "should be unread initially");
+
+    // Dismiss it.
+    let dismiss_resp = ctx.api.post_json(
+        &format!("/api/v1/announcements/{ann_id}/dismiss"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(dismiss_resp.status(), StatusCode::OK);
+
+    // After dismissal it should appear as read.
+    let after: Vec<Value> = ctx.api.get("/api/v1/announcements", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let ann2 = after.iter().find(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()) == Some(ann_id));
+    assert!(ann2.is_some(), "announcement should still appear after dismiss");
+    assert_eq!(ann2.unwrap()["read"].as_bool(), Some(true), "should be read after dismiss");
 }
