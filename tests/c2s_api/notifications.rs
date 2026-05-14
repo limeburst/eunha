@@ -208,6 +208,99 @@ async fn test_notifications_limit_param_respected() {
     assert!(notifs.len() <= 1, "limit=1 should return at most 1 notification");
 }
 
+/// GET /api/v1/notifications/:id returns the notification for the authenticated user.
+#[tokio::test]
+async fn test_get_notification_by_id() {
+    let ctx = TestContext::new("notif-get-id").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!notifs.is_empty(), "expected a follow notification");
+    let notif_id = notifs[0]["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/notifications/{notif_id}"),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"].as_str(), Some(notif_id));
+}
+
+/// GET /api/v1/notifications/:id returns 404 for another user's notification.
+#[tokio::test]
+async fn test_get_notification_other_users_is_404() {
+    let ctx = TestContext::new("notif-get-other").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let bob_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!bob_notifs.is_empty());
+    let bob_notif_id = bob_notifs[0]["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/notifications/{bob_notif_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// POST /api/v1/notifications/:id/dismiss returns 404 for another user's notification.
+#[tokio::test]
+async fn test_dismiss_notification_other_users_is_404() {
+    let ctx = TestContext::new("notif-dismiss-other").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let bob_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!bob_notifs.is_empty());
+    let bob_notif_id = bob_notifs[0]["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/notifications/{bob_notif_id}/dismiss"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/notifications?account_id=X returns only notifications from account X.
+#[tokio::test]
+async fn test_notification_filter_by_account_id() {
+    let ctx = TestContext::new("notif-acct-filter").await;
+
+    // Alice follows Bob → Bob gets a follow notification from Alice.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Also generate a favourite notification for Bob from Alice.
+    let status = ctx.api.post_status(&ctx.bob_token, "bob filterable", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Filter by alice's id: all notifications should be from alice.
+    let notifs: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/notifications?account_id={}", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(!notifs.is_empty(), "expected at least one notification from alice");
+    for n in &notifs {
+        assert_eq!(
+            n["account"]["id"].as_str(),
+            Some(ctx.alice_id.as_str()),
+            "notification from unexpected account: {n}",
+        );
+    }
+}
+
 /// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
 #[tokio::test]
 async fn test_notifications_limit_80_is_accepted() {

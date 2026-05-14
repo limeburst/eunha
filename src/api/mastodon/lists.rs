@@ -54,12 +54,23 @@ pub struct ListForm {
     pub exclusive: Option<bool>,
 }
 
+const VALID_REPLIES_POLICIES: &[&str] = &["followed", "list", "none"];
+
 pub async fn create_list(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListForm>,
 ) -> AppResult<Json<List>> {
     auth.require_scope("write:lists")?;
+    if form.title.trim().is_empty() {
+        return Err(AppError::Unprocessable("Title can't be blank".into()));
+    }
+    let replies_policy = form.replies_policy.as_deref().unwrap_or("list");
+    if !VALID_REPLIES_POLICIES.contains(&replies_policy) {
+        return Err(AppError::Unprocessable(
+            format!("Replies policy is not included in the list: {replies_policy}"),
+        ));
+    }
     let list = sqlx::query_as!(
         models::List,
         r#"INSERT INTO lists (account_id, title, replies_policy, exclusive)
@@ -67,7 +78,7 @@ pub async fn create_list(
            RETURNING *"#,
         auth.account_id,
         form.title,
-        form.replies_policy.as_deref().unwrap_or("list"),
+        replies_policy,
         form.exclusive.unwrap_or(false),
     )
     .fetch_one(&state.db)

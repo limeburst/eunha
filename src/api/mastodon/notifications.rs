@@ -108,12 +108,15 @@ pub async fn dismiss_notification(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
-    sqlx::query!(
+    let deleted = sqlx::query!(
         "DELETE FROM notifications WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
     )
     .execute(&state.db)
     .await?;
+    if deleted.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
     Ok(Json(serde_json::json!({})))
 }
 

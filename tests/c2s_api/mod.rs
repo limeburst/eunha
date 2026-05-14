@@ -23,6 +23,7 @@ mod bookmarks;
 mod conversations;
 mod domain_blocks;
 mod favourites;
+mod featured_tags;
 mod filters;
 mod follow_requests;
 mod instance;
