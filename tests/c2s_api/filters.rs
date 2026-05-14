@@ -221,6 +221,53 @@ async fn test_filter_statuses_crud() {
     assert!(!after.iter().any(|s| s["status_id"].as_str() == Some(status_id)));
 }
 
+/// GET /api/v2/filters/:id returns 404 for a filter belonging to another user.
+#[tokio::test]
+async fn test_get_filter_v2_other_user_is_404() {
+    let ctx = TestContext::new("filter-v2-other").await;
+
+    // Alice creates a filter.
+    let filter: Value = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Alice's filter",
+            "context": ["home"],
+            "filter_action": "warn"
+        }),
+    ).await.json().await.unwrap();
+    let filter_id = filter["id"].as_str().unwrap();
+
+    // Bob tries to access it.
+    let resp = ctx.api.get(
+        &format!("/api/v2/filters/{filter_id}"),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/filters/:id returns 404 for a filter belonging to another user.
+#[tokio::test]
+async fn test_get_filter_v1_other_user_is_404() {
+    let ctx = TestContext::new("filter-v1-other").await;
+
+    let filter: Value = ctx.api.post_json(
+        "/api/v1/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "phrase": "alice_private_word",
+            "context": ["home"]
+        }),
+    ).await.json().await.unwrap();
+    let filter_id = filter["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/filters/{filter_id}"),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 /// GET /api/v2/filter_statuses/:id for unknown id returns 404.
 #[tokio::test]
 async fn test_get_filter_status_not_found() {
