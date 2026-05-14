@@ -487,6 +487,17 @@ async fn test_admin_update_ip_block() {
     ctx.api.delete(&format!("/api/v1/admin/ip_blocks/{block_id}"), &ctx.alice_token).await;
 }
 
+/// GET /api/v1/admin/custom_emojis returns a JSON array (may be empty).
+#[tokio::test]
+async fn test_admin_list_custom_emojis() {
+    let ctx = TestContext::new("admin-emojis").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v1/admin/custom_emojis", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _: Vec<Value> = resp.json().await.unwrap();
+}
+
 /// POST /api/v1/admin/accounts/:id/reject returns 200 (suspends account).
 #[tokio::test]
 async fn test_admin_reject_account() {
