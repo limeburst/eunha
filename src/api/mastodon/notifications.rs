@@ -28,6 +28,7 @@ pub async fn get_notifications(
     RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Notification>>> {
+    auth.require_scope("read:notifications")?;
     let limit = pagination.limit_clamped(40, 80);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -69,6 +70,7 @@ pub async fn get_notification(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Notification>> {
+    auth.require_scope("read:notifications")?;
     let n = sqlx::query_as!(
         DbNotification,
         "SELECT * FROM notifications WHERE id = $1 AND account_id = $2",
@@ -88,6 +90,7 @@ pub async fn clear_notifications(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
     sqlx::query!(
         "DELETE FROM notifications WHERE account_id = $1",
         auth.account_id
@@ -104,6 +107,7 @@ pub async fn dismiss_notification(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
     sqlx::query!(
         "DELETE FROM notifications WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -121,6 +125,7 @@ pub async fn get_notifications_v2(
     RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationGroupsResponse>> {
+    auth.require_scope("read:notifications")?;
     let limit = pagination.limit_clamped(40, 80);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -221,6 +226,7 @@ pub async fn get_notification_policy(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationPolicy>> {
+    auth.require_scope("read:notifications")?;
     let user = sqlx::query!(
         r#"SELECT notif_filter_not_following, notif_filter_not_followers,
                   notif_filter_new_accounts, notif_filter_private_mentions
@@ -281,6 +287,7 @@ pub async fn update_notification_policy(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<UpdateNotificationPolicyForm>,
 ) -> AppResult<Json<NotificationPolicy>> {
+    auth.require_scope("write:notifications")?;
     sqlx::query!(
         r#"UPDATE users SET
                notif_filter_not_following    = COALESCE($2, notif_filter_not_following),
@@ -308,6 +315,7 @@ pub async fn get_notification_requests(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(pagination): Query<NotificationPagination>,
 ) -> AppResult<Json<Vec<NotificationRequest>>> {
+    auth.require_scope("read:notifications")?;
     let limit = pagination.limit.unwrap_or(40).min(80).max(1) as i64;
     let rows = sqlx::query!(
         r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
@@ -383,6 +391,7 @@ pub async fn accept_notification_request(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
     sqlx::query!(
         "UPDATE notification_requests SET dismissed = false WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -399,6 +408,7 @@ pub async fn dismiss_notification_request(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
     sqlx::query!(
         "UPDATE notification_requests SET dismissed = true WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -415,6 +425,7 @@ pub async fn get_notification_request(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<NotificationRequest>> {
+    auth.require_scope("read:notifications")?;
     let r = sqlx::query!(
         r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
                   a.username, a.domain, a.display_name, a.avatar, a.avatar_static,

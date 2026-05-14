@@ -66,6 +66,7 @@ pub async fn post_status(
     request: axum::extract::Request,
 ) -> AppResult<axum::response::Response> {
     use axum::response::IntoResponse;
+    auth.require_scope("write:statuses")?;
     let form = extract_post_status_form(request).await?;
     let account = fetch_account(&state, auth.account_id).await?;
     let text = form.status.clone().unwrap_or_default();
@@ -457,6 +458,7 @@ pub async fn delete_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:statuses")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     if status.account_id != auth.account_id {
         return Err(AppError::Forbidden);
@@ -495,6 +497,7 @@ pub async fn favourite_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:favourites")?;
     fetch_status_with_account(&state, id).await?;
 
     sqlx::query!(
@@ -542,6 +545,7 @@ pub async fn unfavourite_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:favourites")?;
     let (_, account) = fetch_status_with_account(&state, id).await?;
 
     sqlx::query!(
@@ -573,6 +577,7 @@ pub async fn reblog_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:statuses")?;
     let (original, _) = fetch_status_with_account(&state, id).await?;
     if original.visibility == "private" || original.visibility == "direct" {
         return Err(AppError::Forbidden);
@@ -725,6 +730,7 @@ pub async fn unreblog_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:statuses")?;
     let (status_raw, _) = fetch_status_with_account(&state, id).await?;
 
     // Accept both the original status ID and the reblog's own ID.
@@ -761,6 +767,7 @@ pub async fn bookmark_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:bookmarks")?;
     let (_, account) = fetch_status_with_account(&state, id).await?;
 
     sqlx::query!(
@@ -784,6 +791,7 @@ pub async fn unbookmark_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:bookmarks")?;
     let (_, account) = fetch_status_with_account(&state, id).await?;
 
     sqlx::query!(
@@ -807,6 +815,7 @@ pub async fn pin_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:accounts")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     if status.account_id != auth.account_id {
         return Err(AppError::Forbidden);
@@ -830,6 +839,7 @@ pub async fn unpin_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:accounts")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     sqlx::query!(
         "DELETE FROM status_pins WHERE account_id = $1 AND status_id = $2",
@@ -850,6 +860,7 @@ pub async fn mute_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:mutes")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     sqlx::query!(
         "INSERT INTO conversation_mutes (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -870,6 +881,7 @@ pub async fn unmute_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:mutes")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     sqlx::query!(
         "DELETE FROM conversation_mutes WHERE account_id = $1 AND status_id = $2",
@@ -949,6 +961,7 @@ pub async fn edit_status(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<EditStatusForm>,
 ) -> AppResult<Json<Status>> {
+    auth.require_scope("write:statuses")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     if status.account_id != auth.account_id {
         return Err(AppError::Forbidden);
@@ -1062,6 +1075,7 @@ pub async fn get_status_source(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<StatusSource>> {
+    auth.require_scope("read:statuses")?;
     let status = sqlx::query_as!(
         DbStatus,
         "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",

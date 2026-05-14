@@ -70,6 +70,41 @@ pub struct AuthenticatedUser {
     pub scopes: Vec<String>,
 }
 
+impl AuthenticatedUser {
+    /// Returns `Err(AppError::Forbidden)` if the token does not cover `required`.
+    ///
+    /// Scope hierarchy:
+    /// - `"read"` covers every `"read:*"` sub-scope.
+    /// - `"write"` covers every `"write:*"` sub-scope.
+    /// - `"follow"` covers `"write:follows"`, `"write:blocks"`, and `"write:mutes"`.
+    pub fn require_scope(&self, required: &str) -> crate::error::AppResult<()> {
+        if self.has_scope(required) {
+            Ok(())
+        } else {
+            Err(crate::error::AppError::Forbidden)
+        }
+    }
+
+    fn has_scope(&self, required: &str) -> bool {
+        if self.scopes.iter().any(|s| s == required) {
+            return true;
+        }
+        // Parent scope covers child: "read" → "read:*", "write" → "write:*"
+        if let Some(parent) = required.split(':').next() {
+            if self.scopes.iter().any(|s| s == parent) {
+                return true;
+            }
+        }
+        // "follow" covers social-graph write operations
+        if matches!(required, "write:follows" | "write:blocks" | "write:mutes") {
+            if self.scopes.iter().any(|s| s == "follow") {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Bearer token authentication. Attaches `AuthenticatedUser` if a valid token
 /// is present; passes through unauthenticated requests so endpoints can decide
 /// whether auth is required.

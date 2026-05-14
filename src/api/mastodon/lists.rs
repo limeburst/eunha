@@ -21,6 +21,7 @@ pub async fn get_lists(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<List>>> {
+    auth.require_scope("read:lists")?;
     let lists = sqlx::query_as!(
         models::List,
         "SELECT * FROM lists WHERE account_id = $1 ORDER BY id ASC",
@@ -39,6 +40,7 @@ pub async fn get_list(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<List>> {
+    auth.require_scope("read:lists")?;
     let list = fetch_list(&state, id, auth.account_id).await?;
     Ok(Json(list_from_db(&list)))
 }
@@ -57,6 +59,7 @@ pub async fn create_list(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListForm>,
 ) -> AppResult<Json<List>> {
+    auth.require_scope("write:lists")?;
     let list = sqlx::query_as!(
         models::List,
         r#"INSERT INTO lists (account_id, title, replies_policy, exclusive)
@@ -81,6 +84,7 @@ pub async fn update_list(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListForm>,
 ) -> AppResult<Json<List>> {
+    auth.require_scope("write:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
 
     let list = sqlx::query_as!(
@@ -107,6 +111,7 @@ pub async fn delete_list(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
     sqlx::query!(
         "DELETE FROM lists WHERE id = $1 AND account_id = $2",
@@ -124,6 +129,7 @@ pub async fn get_list_accounts(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Account>>> {
+    auth.require_scope("read:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
 
     let accounts = sqlx::query_as!(
@@ -153,6 +159,7 @@ pub async fn add_list_accounts(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListAccountsForm>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
 
     for id_str in &form.account_ids {
@@ -177,6 +184,7 @@ pub async fn remove_list_accounts(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListAccountsForm>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
 
     for id_str in &form.account_ids {

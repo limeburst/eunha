@@ -58,6 +58,7 @@ pub async fn get_filters_v2(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Filter>>> {
+    auth.require_scope("read:filters")?;
     let filters = sqlx::query!(
         "SELECT id FROM custom_filters WHERE account_id = $1 ORDER BY id",
         auth.account_id,
@@ -79,6 +80,7 @@ pub async fn get_filter_v2(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Filter>> {
+    auth.require_scope("read:filters")?;
     fetch_filter(&state, id, auth.account_id).await.map(Json)
 }
 
@@ -107,6 +109,7 @@ pub async fn create_filter_v2(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterForm>,
 ) -> AppResult<(StatusCode, Json<Filter>)> {
+    auth.require_scope("write:filters")?;
     let action = form.filter_action.as_deref().unwrap_or("warn");
     let filter_id = sqlx::query_scalar!(
         r#"INSERT INTO custom_filters (account_id, phrase, context, action, expires_at)
@@ -154,6 +157,7 @@ pub async fn update_filter_v2(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterForm>,
 ) -> AppResult<Json<Filter>> {
+    auth.require_scope("write:filters")?;
     let action = form.filter_action.as_deref().unwrap_or("warn");
     let updated = sqlx::query_scalar!(
         r#"UPDATE custom_filters
@@ -232,6 +236,7 @@ pub async fn delete_filter_v2(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:filters")?;
     let deleted = sqlx::query_scalar!(
         "DELETE FROM custom_filters WHERE id = $1 AND account_id = $2 RETURNING id",
         id, auth.account_id,
@@ -253,6 +258,7 @@ pub async fn get_filter_keywords(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterKeyword>>> {
+    auth.require_scope("read:filters")?;
     let exists = sqlx::query_scalar!(
         "SELECT 1 FROM custom_filters WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -295,6 +301,7 @@ pub async fn create_filter_keyword(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateKeywordForm>,
 ) -> AppResult<(StatusCode, Json<FilterKeyword>)> {
+    auth.require_scope("write:filters")?;
     let exists = sqlx::query_scalar!(
         "SELECT 1 FROM custom_filters WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -329,6 +336,7 @@ pub async fn get_filter_keyword(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterKeyword>> {
+    auth.require_scope("read:filters")?;
     let kw = sqlx::query!(
         r#"SELECT fk.id, fk.keyword, fk.whole_word
            FROM custom_filter_keywords fk
@@ -355,6 +363,7 @@ pub async fn update_filter_keyword(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateKeywordForm>,
 ) -> AppResult<Json<FilterKeyword>> {
+    auth.require_scope("write:filters")?;
     let updated = sqlx::query!(
         r#"UPDATE custom_filter_keywords fk
            SET keyword = $2, whole_word = $3, updated_at = now()
@@ -407,6 +416,7 @@ pub async fn get_filters_v1(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterV1>>> {
+    auth.require_scope("read:filters")?;
     let filters = sqlx::query!(
         r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at, cf.action,
                   COALESCE(
@@ -444,6 +454,7 @@ pub async fn get_filter_v1(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterV1>> {
+    auth.require_scope("read:filters")?;
     let f = sqlx::query!(
         r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at, cf.action,
                   COALESCE(
@@ -485,6 +496,7 @@ pub async fn create_filter_v1(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterV1Form>,
 ) -> AppResult<(StatusCode, Json<FilterV1>)> {
+    auth.require_scope("write:filters")?;
     let action = if form.irreversible == Some(true) { "hide" } else { "warn" };
     let filter_id = sqlx::query_scalar!(
         r#"INSERT INTO custom_filters (account_id, phrase, context, action, expires_at)
@@ -535,6 +547,7 @@ pub async fn update_filter_v1(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterV1Form>,
 ) -> AppResult<Json<FilterV1>> {
+    auth.require_scope("write:filters")?;
     let action = if form.irreversible == Some(true) { "hide" } else { "warn" };
     let updated = sqlx::query_scalar!(
         r#"UPDATE custom_filters
@@ -586,6 +599,7 @@ pub async fn delete_filter_v1(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:filters")?;
     let deleted = sqlx::query_scalar!(
         "DELETE FROM custom_filters WHERE id = $1 AND account_id = $2 RETURNING id",
         id, auth.account_id,

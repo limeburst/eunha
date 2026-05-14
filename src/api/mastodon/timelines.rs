@@ -120,6 +120,7 @@ pub async fn home_timeline(
     Query(q): Query<PaginationParams>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<impl IntoResponse> {
+    auth.require_scope("read:statuses")?;
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -200,6 +201,7 @@ pub async fn list_timeline(
     req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
 ) -> AppResult<impl IntoResponse> {
+    auth.require_scope("read:statuses")?;
     sqlx::query!(
         "SELECT id FROM lists WHERE id = $1 AND account_id = $2",
         list_id, auth.account_id,

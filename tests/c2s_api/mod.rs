@@ -32,6 +32,7 @@ mod markers;
 mod mutes;
 mod notifications;
 mod reports;
+mod scope;
 mod search;
 mod statuses;
 mod tags;

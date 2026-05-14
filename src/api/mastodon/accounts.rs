@@ -26,6 +26,7 @@ pub async fn verify_credentials(
     Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<ApiAccount>> {
+    auth.require_scope("read:accounts")?;
     let account = fetch_account(&state, auth.account_id).await?;
     let mut api_account = account_from_db(&account);
 
@@ -351,6 +352,7 @@ pub async fn get_relationships(
     RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Relationship>>> {
+    auth.require_scope("read:follows")?;
     // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
     // Parse with form_urlencoded which correctly returns each pair separately.
     let ids: Vec<Uuid> = url::form_urlencoded::parse(
@@ -382,6 +384,7 @@ pub async fn follow_account(
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<FollowParams>>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:follows")?;
     if auth.account_id == target_id {
         return Err(AppError::Unprocessable("Cannot follow yourself".into()));
     }
@@ -475,6 +478,7 @@ pub async fn unfollow_account(
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:follows")?;
     let deleted = sqlx::query!(
         "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 RETURNING state",
         auth.account_id,
@@ -720,6 +724,7 @@ pub async fn update_credentials(
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiAccount>> {
+    auth.require_scope("write:accounts")?;
     let mut display_name: Option<String> = None;
     let mut note: Option<String> = None;
     let mut locked: Option<bool> = None;
@@ -946,6 +951,7 @@ pub async fn mute_account(
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<MuteParams>>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:mutes")?;
     let params = body.map(|Json(p)| p).unwrap_or_default();
     let hide_notifications = params.notifications.unwrap_or(true);
     let expires_at: Option<chrono::DateTime<chrono::Utc>> = params.duration
@@ -973,6 +979,7 @@ pub async fn unmute_account(
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:mutes")?;
     sqlx::query!(
         "DELETE FROM mutes WHERE account_id = $1 AND target_account_id = $2",
         auth.account_id, target_id
@@ -990,6 +997,7 @@ pub async fn block_account(
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:blocks")?;
     sqlx::query!(
         r#"INSERT INTO blocks (account_id, target_account_id) VALUES ($1, $2)
            ON CONFLICT (account_id, target_account_id) DO NOTHING"#,
@@ -1016,6 +1024,7 @@ pub async fn unblock_account(
     Path(target_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:blocks")?;
     sqlx::query!(
         "DELETE FROM blocks WHERE account_id = $1 AND target_account_id = $2",
         auth.account_id, target_id
@@ -1033,6 +1042,7 @@ pub async fn get_blocks(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
+    auth.require_scope("read:blocks")?;
     let limit = q.limit_clamped(40, 80);
     let accounts = sqlx::query_as!(
         Account,
@@ -1054,6 +1064,7 @@ pub async fn get_mutes(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
+    auth.require_scope("read:mutes")?;
     let limit = q.limit_clamped(40, 80);
     let accounts = sqlx::query_as!(
         Account,
@@ -1074,6 +1085,7 @@ pub async fn get_preferences(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Preferences>> {
+    auth.require_scope("read:accounts")?;
     let user = sqlx::query!(
         "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
         auth.account_id,
@@ -1102,6 +1114,7 @@ pub async fn get_follow_requests(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
+    auth.require_scope("read:follows")?;
     let limit = q.limit_clamped(40, 80);
     let accounts = sqlx::query_as!(
         Account,
@@ -1124,6 +1137,7 @@ pub async fn authorize_follow_request(
     Path(requester_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:follows")?;
     sqlx::query!(
         "UPDATE follows SET state = 'accepted' WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
         requester_id, auth.account_id
@@ -1167,6 +1181,7 @@ pub async fn reject_follow_request(
     Path(requester_id): Path<Uuid>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:follows")?;
     sqlx::query!(
         "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
         requester_id, auth.account_id

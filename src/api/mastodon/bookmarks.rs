@@ -9,8 +9,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{fetch_reblog_data, fetch_status_media},
-    convert::status_from_db,
+    accounts::{build_status, fetch_reblog_data, fetch_status_media},
     types::{PaginationParams, Status},
 };
 
@@ -21,6 +20,7 @@ pub async fn get_bookmarks(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<Status>>> {
+    auth.require_scope("read:bookmarks")?;
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -85,7 +85,7 @@ pub async fn get_bookmarks(
             bookmarked: true,
             pinned: false,
         };
-        result.push(status_from_db(&s, &account, media, reblog, Some(ctx)));
+        result.push(build_status(&state, &s, &account, media, reblog, Some(ctx)).await?);
     }
 
     Ok(Json(result))

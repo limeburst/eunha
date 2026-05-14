@@ -20,6 +20,7 @@ pub async fn get_domain_blocks(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
 ) -> AppResult<impl IntoResponse> {
+    auth.require_scope("read:blocks")?;
     let limit = q.limit_clamped(100, 200);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
@@ -63,6 +64,7 @@ pub async fn block_domain(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<DomainBlockForm>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:blocks")?;
     sqlx::query!(
         r#"INSERT INTO user_domain_blocks (account_id, domain) VALUES ($1, $2)
            ON CONFLICT (account_id, domain) DO NOTHING"#,
@@ -82,6 +84,7 @@ pub async fn unblock_domain(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<DomainBlockForm>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:blocks")?;
     sqlx::query!(
         "DELETE FROM user_domain_blocks WHERE account_id = $1 AND domain = $2",
         auth.account_id,

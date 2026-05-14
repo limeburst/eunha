@@ -20,6 +20,7 @@ pub async fn get_markers(
     uri: Uri,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<HashMap<String, MarkerInfo>>> {
+    auth.require_scope("read:statuses")?;
     let query = uri.query().unwrap_or("");
     let timelines: Vec<String> = query.split('&')
         .filter_map(|pair| {
@@ -61,6 +62,7 @@ pub async fn set_markers(
     Extension(auth): Extension<AuthenticatedUser>,
     body: Bytes,
 ) -> AppResult<Json<HashMap<String, MarkerInfo>>> {
+    auth.require_scope("write:statuses")?;
     let body_str = std::str::from_utf8(&body).unwrap_or("");
 
     // Parse bracket-notation form: home[last_read_id]=..., notifications[last_read_id]=...

@@ -227,6 +227,7 @@ pub struct TestContext {
     pub alice_id: String,
     pub bob_token: String,
     pub bob_id: String,
+    pub db: PgPool,
     /// Kept alive so the server task isn't dropped while tests run.
     pub _server: tokio::task::JoinHandle<()>,
 }
@@ -250,6 +251,14 @@ impl TestContext {
             seed_user(&db, &domain, "alice", "alice@test.invalid").await;
         let (bob_id, bob_token) =
             seed_user(&db, &domain, "bob", "bob@test.invalid").await;
+
+        // Keep a separate pool for test-side operations (seeding scoped tokens etc.)
+        // since `db` is moved into AppState below.
+        let test_db = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&db_url)
+            .await
+            .expect("failed to connect to test database (test_db)");
 
         let config = eunha::config::Config {
             database_url: db_url,
@@ -287,6 +296,7 @@ impl TestContext {
             alice_id: alice_id.to_string(),
             bob_token,
             bob_id: bob_id.to_string(),
+            db: test_db,
             _server: server,
         }
     }
@@ -391,4 +401,31 @@ pub fn hash_password(password: &str) -> String {
         .hash_password(password.as_bytes(), &salt)
         .unwrap()
         .to_string()
+}
+
+/// Create an additional access token for `account_id` with the given scopes.
+/// Use this to test scope enforcement (e.g. a read-only token trying a write endpoint).
+pub async fn seed_token_with_scopes(db: &PgPool, account_id: Uuid, scopes: &str) -> String {
+    let app_id: Uuid = sqlx::query_scalar!(
+        r#"SELECT application_id as "application_id!: Uuid" FROM oauth_access_tokens
+           WHERE account_id = $1 AND application_id IS NOT NULL LIMIT 1"#,
+        account_id,
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+
+    let token = Uuid::new_v4().to_string().replace("-", "");
+    sqlx::query!(
+        "INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes) VALUES ($1,$2,$3,$4)",
+        app_id,
+        account_id,
+        token,
+        scopes,
+    )
+    .execute(db)
+    .await
+    .unwrap();
+
+    token
 }
