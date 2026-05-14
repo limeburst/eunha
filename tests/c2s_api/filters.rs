@@ -230,6 +230,39 @@ async fn test_get_filter_status_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+// ── filter validation ─────────────────────────────────────────────────────────
+
+/// Creating a v1 filter with no phrase (required string field) returns 422.
+#[tokio::test]
+async fn test_filter_v1_missing_phrase_returns_422() {
+    let ctx = TestContext::new("filter-v1-nophrase").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "context": ["home"]
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Creating a v2 filter with no title (required string field) returns 422.
+#[tokio::test]
+async fn test_filter_v2_missing_title_returns_422() {
+    let ctx = TestContext::new("filter-v2-notitle").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "context": ["home"],
+            "filter_action": "warn"
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 // ── filter expiry ──────────────────────────────────────────────────────────────
 
 /// Creating a filter with expires_in sets the expires_at field.
