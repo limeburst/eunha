@@ -1,5 +1,5 @@
 use reqwest::StatusCode;
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
@@ -133,4 +133,134 @@ async fn test_admin_list_roles() {
     assert_eq!(resp.status(), StatusCode::OK);
     let roles: Vec<Value> = resp.json().await.unwrap();
     assert!(!roles.is_empty(), "expected at least one role");
+}
+
+/// Admin can resolve and reopen a report.
+#[tokio::test]
+async fn test_admin_resolve_and_reopen_report() {
+    let ctx = TestContext::new("admin-report-res").await;
+    make_admin(&ctx).await;
+
+    // Bob files a report against alice.
+    let report_resp = ctx.api.post_json(
+        "/api/v1/reports",
+        Some(&ctx.bob_token),
+        &json!({
+            "account_id": ctx.alice_id,
+            "comment": "test report for admin resolve"
+        }),
+    ).await;
+    assert_eq!(report_resp.status(), StatusCode::OK);
+    let report: Value = report_resp.json().await.unwrap();
+    let report_id = report["id"].as_str().expect("report id missing");
+
+    // Admin resolves it.
+    let resolve_resp = ctx.api.post_json(
+        &format!("/api/v1/admin/reports/{report_id}/resolve"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resolve_resp.status(), StatusCode::OK);
+    let resolved: Value = resolve_resp.json().await.unwrap();
+    assert!(resolved["action_taken"].as_bool().unwrap_or(false), "action_taken should be true after resolve");
+
+    // Reopen it.
+    let reopen_resp = ctx.api.post_json(
+        &format!("/api/v1/admin/reports/{report_id}/reopen"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(reopen_resp.status(), StatusCode::OK);
+    let reopened: Value = reopen_resp.json().await.unwrap();
+    assert!(!reopened["action_taken"].as_bool().unwrap_or(true), "action_taken should be false after reopen");
+}
+
+/// GET /api/v1/admin/reports/:id returns the specific report.
+#[tokio::test]
+async fn test_admin_get_report() {
+    let ctx = TestContext::new("admin-get-report").await;
+    make_admin(&ctx).await;
+
+    let report: Value = ctx.api.post_json(
+        "/api/v1/reports",
+        Some(&ctx.bob_token),
+        &json!({"account_id": ctx.alice_id, "comment": "admin get report test"}),
+    ).await.json().await.unwrap();
+    let report_id = report["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/admin/reports/{report_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"].as_str(), Some(report_id));
+}
+
+/// Admin domain allows: create, list, delete.
+#[tokio::test]
+async fn test_admin_domain_allows_crud() {
+    let ctx = TestContext::new("admin-dallow").await;
+    make_admin(&ctx).await;
+
+    let create_resp = ctx.api.post_json(
+        "/api/v1/admin/domain_allows",
+        Some(&ctx.alice_token),
+        &json!({"domain": "trusted.example.com"}),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let allow: Value = create_resp.json().await.unwrap();
+    let allow_id = allow["id"].as_str().expect("id missing");
+    assert_eq!(allow["domain"].as_str(), Some("trusted.example.com"));
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/admin/domain_allows", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(list.iter().any(|a| a["id"].as_str() == Some(allow_id)), "created allow not in list");
+
+    let del = ctx.api.delete(
+        &format!("/api/v1/admin/domain_allows/{allow_id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del.status(), StatusCode::OK);
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/admin/domain_allows", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!after.iter().any(|a| a["id"].as_str() == Some(allow_id)), "deleted allow still in list");
+}
+
+/// Admin domain blocks: create, list, delete.
+#[tokio::test]
+async fn test_admin_domain_blocks_crud() {
+    let ctx = TestContext::new("admin-dblock").await;
+    make_admin(&ctx).await;
+
+    let create_resp = ctx.api.post_json(
+        "/api/v1/admin/domain_blocks",
+        Some(&ctx.alice_token),
+        &json!({
+            "domain": "spam.example.com",
+            "severity": "silence",
+            "reject_media": true
+        }),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let block: Value = create_resp.json().await.unwrap();
+    let block_id = block["id"].as_str().expect("id missing");
+    assert_eq!(block["domain"].as_str(), Some("spam.example.com"));
+    assert_eq!(block["severity"].as_str(), Some("silence"));
+    assert_eq!(block["reject_media"].as_bool(), Some(true));
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/admin/domain_blocks", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(list.iter().any(|b| b["id"].as_str() == Some(block_id)), "created block not in list");
+
+    let del = ctx.api.delete(
+        &format!("/api/v1/admin/domain_blocks/{block_id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del.status(), StatusCode::OK);
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/admin/domain_blocks", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!after.iter().any(|b| b["id"].as_str() == Some(block_id)), "deleted block still in list");
 }
