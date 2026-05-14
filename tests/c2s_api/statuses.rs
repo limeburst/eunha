@@ -1810,3 +1810,41 @@ async fn test_notifications_since_id_excludes_anchor() {
         "favourite notification should appear after since_id anchor",
     );
 }
+
+/// Reply to a non-existent status returns 422.
+#[tokio::test]
+async fn test_reply_to_nonexistent_status_returns_422() {
+    let ctx = TestContext::new("reply-nonexist").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "this is a reply",
+            "visibility": "public",
+            "in_reply_to_id": "999999999999"
+        }),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "replying to non-existent status should return 422",
+    );
+}
+
+/// Status with no text, no media, and no poll returns 422.
+#[tokio::test]
+async fn test_post_status_empty_returns_422() {
+    let ctx = TestContext::new("status-empty").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "", "visibility": "public"}),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "posting empty status should return 422",
+    );
+}

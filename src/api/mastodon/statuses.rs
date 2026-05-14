@@ -116,12 +116,16 @@ pub async fn post_status(
 
     // Look up the parent author for in_reply_to_account_id
     let in_reply_to_account_id: Option<uuid::Uuid> = if let Some(parent_id) = in_reply_to_id {
-        sqlx::query_scalar!(
+        let account_id = sqlx::query_scalar!(
             "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
             parent_id,
         )
         .fetch_optional(&state.db)
-        .await?
+        .await?;
+        if account_id.is_none() {
+            return Err(AppError::Unprocessable("in_reply_to_id does not exist".into()));
+        }
+        account_id
     } else {
         None
     };
