@@ -247,6 +247,21 @@ async fn test_deleted_status_absent_from_public_timeline() {
     assert!(!ids.contains(&id.as_str()), "deleted status still appears in public timeline");
 }
 
+/// DELETE /api/v1/statuses/:id response includes the text field (supports delete-and-redraft).
+#[tokio::test]
+async fn test_delete_status_response_includes_text() {
+    let ctx = TestContext::new("del-text").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "delete and redraft me", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let del_resp = ctx.api.delete(&format!("/api/v1/statuses/{id}"), &ctx.alice_token).await;
+    assert_eq!(del_resp.status(), StatusCode::OK);
+    let body: Value = del_resp.json().await.unwrap();
+    let text = body["text"].as_str().unwrap_or("");
+    assert!(text.contains("delete and redraft"), "deleted status response should include original text");
+}
+
 /// Only the author can delete their own status; another user gets 403.
 #[tokio::test]
 async fn test_delete_status_by_non_author_returns_403() {
