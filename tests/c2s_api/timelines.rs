@@ -481,3 +481,31 @@ async fn test_home_timeline_hides_muted_accounts() {
         "bob's statuses should be hidden from home timeline after mute",
     );
 }
+
+/// Public timeline returns favourited=true for statuses already liked by the authenticated viewer.
+#[tokio::test]
+async fn test_public_timeline_viewer_context() {
+    let ctx = TestContext::new("pub-tl-viewer").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "public for viewer context", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Bob favourites it.
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{status_id}/favourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Fetch public timeline as Bob — the status should show favourited=true.
+    let timeline: Vec<Value> = ctx.api.get("/api/v1/timelines/public", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+
+    let found = timeline.iter().find(|s| s["id"].as_str() == Some(status_id));
+    assert!(found.is_some(), "status not found in public timeline");
+    assert_eq!(
+        found.unwrap()["favourited"].as_bool(),
+        Some(true),
+        "authenticated viewer should see favourited=true for a status they liked",
+    );
+}

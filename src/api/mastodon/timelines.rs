@@ -35,6 +35,7 @@ pub async fn public_timeline(
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PublicTimelineQuery>,
+    auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<impl IntoResponse> {
     let limit = q.pagination.limit_clamped(20, 40);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -42,6 +43,7 @@ pub async fn public_timeline(
     let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let local_only = q.local.unwrap_or(false);
     let remote_only = q.remote.unwrap_or(false);
+    let only_media = q.only_media.unwrap_or(false);
 
     // min_id: return oldest items just after min_id (ASC); else DESC
     let statuses = if min_id.is_some() {
@@ -61,6 +63,7 @@ pub async fn public_timeline(
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
                  AND ($3::bigint IS NULL OR s.id > $3)
+                 AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                ORDER BY s.id ASC
@@ -70,6 +73,7 @@ pub async fn public_timeline(
             min_id,
             limit,
             remote_only,
+            only_media,
         )
         .fetch_all(&state.db)
         .await?
@@ -91,6 +95,7 @@ pub async fn public_timeline(
                  ))
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($5::bigint IS NULL OR s.id > $5)
+                 AND (NOT $7::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                ORDER BY s.id DESC
@@ -101,12 +106,14 @@ pub async fn public_timeline(
             limit,
             since_id,
             remote_only,
+            only_media,
         )
         .fetch_all(&state.db)
         .await?
     };
 
-    let result = build_status_list(&state, statuses, None).await?;
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+    let result = build_status_list(&state, statuses, viewer_id).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }
@@ -292,6 +299,7 @@ pub async fn tag_timeline(
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
+    auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<impl IntoResponse> {
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -375,7 +383,8 @@ pub async fn tag_timeline(
             .await?
     };
 
-    let result = build_status_list(&state, statuses, None).await?;
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+    let result = build_status_list(&state, statuses, viewer_id).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }
