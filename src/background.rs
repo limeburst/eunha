@@ -176,11 +176,14 @@ async fn publish_one(
         if let Ok(api_status) = build_status(state, &status_with_uri, &account, media, None, None).await {
             if matches!(visibility, "public" | "unlisted" | "private") {
                 if let Ok(payload) = serde_json::to_string(&api_status) {
+                    let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
                     state.streaming.publish(crate::streaming::Event::NewStatus {
                         instance_id: instance.id,
                         author_id: account.id,
                         is_public: visibility == "public",
+                        is_direct: visibility == "direct",
                         status_id: status_with_uri.id,
+                        hashtags,
                         payload: std::sync::Arc::new(payload),
                     });
                 }

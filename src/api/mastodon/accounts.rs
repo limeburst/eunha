@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -1274,6 +1274,64 @@ pub async fn batch_reblog_data(
     Ok(result)
 }
 
+pub async fn fetch_status_poll(
+    state: &AppState,
+    status_id: i64,
+    viewer_id: Option<Uuid>,
+) -> AppResult<Option<super::types::Poll>> {
+    let row = sqlx::query!(
+        "SELECT id, options, multiple, votes_count, voters_count, expires_at FROM polls WHERE status_id = $1",
+        status_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let now = chrono::Utc::now();
+    let expired = row.expires_at.map_or(false, |t| t < now);
+
+    let options: Vec<super::types::PollOption> = row.options
+        .as_array()
+        .map(|arr| arr.iter().map(|o| super::types::PollOption {
+            title: o["title"].as_str().unwrap_or("").to_string(),
+            votes_count: o["votes_count"].as_i64(),
+        }).collect())
+        .unwrap_or_default();
+
+    let (voted, own_votes) = if let Some(vid) = viewer_id {
+        let votes = sqlx::query!(
+            "SELECT choice FROM poll_votes WHERE poll_id = $1 AND account_id = $2 ORDER BY choice",
+            row.id, vid,
+        )
+        .fetch_all(&state.db)
+        .await?;
+        if votes.is_empty() {
+            (Some(false), Some(vec![]))
+        } else {
+            let choices: Vec<i32> = votes.iter().map(|v| v.choice).collect();
+            (Some(true), Some(choices))
+        }
+    } else {
+        (None, None)
+    };
+
+    Ok(Some(super::types::Poll {
+        id: row.id.to_string(),
+        expires_at: row.expires_at.map(|t| t.to_rfc3339()),
+        expired,
+        multiple: row.multiple,
+        votes_count: row.votes_count,
+        voters_count: row.voters_count,
+        options,
+        emojis: vec![],
+        voted,
+        own_votes,
+    }))
+}
+
 pub async fn fetch_status_media(
     state: &AppState,
     status_id: i64,
@@ -1460,9 +1518,17 @@ pub async fn get_suggestions(
 // ── DELETE /api/v1/suggestions/:account_id ────────────────────────────────
 
 pub async fn dismiss_suggestion(
-    Extension(_auth): Extension<AuthenticatedUser>,
-    Path(_account_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(account_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
+    sqlx::query!(
+        r#"INSERT INTO suggestion_dismissals (account_id, target_account_id)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
+        auth.account_id, account_id,
+    )
+    .execute(&state.db)
+    .await?;
     Ok(Json(serde_json::json!({})))
 }
 
@@ -1488,6 +1554,10 @@ pub async fn get_suggestions_v2(
                SELECT 1 FROM follows f2
                WHERE f2.account_id = $1 AND f2.target_account_id = a.id
              )
+             AND NOT EXISTS (
+               SELECT 1 FROM suggestion_dismissals sd
+               WHERE sd.account_id = $1 AND sd.target_account_id = a.id
+             )
            ORDER BY f.created_at DESC
            LIMIT $3"#,
         auth.account_id,
@@ -1507,6 +1577,112 @@ pub async fn get_suggestions_v2(
         .collect();
 
     Ok(Json(suggestions))
+}
+
+// ── POST /api/v1/accounts/move ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct MoveAccountForm {
+    pub acct: String,
+    pub current_password: String,
+}
+
+pub async fn move_account(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<MoveAccountForm>,
+) -> AppResult<Json<serde_json::Value>> {
+    // Verify password
+    let user = sqlx::query!(
+        "SELECT password_hash FROM users WHERE account_id = $1",
+        auth.account_id
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let valid = crate::crypto::verify_password(&form.current_password, &user.password_hash).is_ok();
+    if !valid {
+        return Err(AppError::Unauthorized);
+    }
+
+    // Look up target account URI (by acct handle or URL)
+    let target_uri = form.acct.clone();
+    sqlx::query!(
+        "UPDATE accounts SET moved_to_uri = $1, updated_at = now() WHERE id = $2",
+        target_uri, auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v1/profile/aliases ───────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AccountAlias {
+    pub id: String,
+    pub account_id: String,
+    pub uri: String,
+    pub created_at: String,
+}
+
+pub async fn list_aliases(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AccountAlias>>> {
+    let rows = sqlx::query!(
+        "SELECT id, account_id, uri, created_at FROM account_aliases WHERE account_id = $1 ORDER BY created_at",
+        auth.account_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| AccountAlias {
+        id: r.id.to_string(),
+        account_id: r.account_id.to_string(),
+        uri: r.uri,
+        created_at: r.created_at.to_rfc3339(),
+    }).collect()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAliasForm {
+    pub acct: String,
+}
+
+pub async fn create_alias(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateAliasForm>,
+) -> AppResult<Json<AccountAlias>> {
+    let r = sqlx::query!(
+        r#"INSERT INTO account_aliases (account_id, uri) VALUES ($1, $2)
+           ON CONFLICT (account_id, uri) DO UPDATE SET updated_at = now()
+           RETURNING id, account_id, uri, created_at"#,
+        auth.account_id, form.acct,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(AccountAlias {
+        id: r.id.to_string(),
+        account_id: r.account_id.to_string(),
+        uri: r.uri,
+        created_at: r.created_at.to_rfc3339(),
+    }))
+}
+
+pub async fn delete_alias(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    sqlx::query!(
+        "DELETE FROM account_aliases WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({})))
 }
 
 // ── POST /api/v1/accounts/:id/note ────────────────────────────────────────
@@ -1947,16 +2123,111 @@ pub async fn build_status(
     reblog: Option<(crate::db::models::Status, Account, Vec<crate::db::models::MediaAttachment>)>,
     viewer_ctx: Option<super::convert::StatusViewerContext>,
 ) -> AppResult<super::types::Status> {
+    let viewer_account_id = viewer_ctx.as_ref().map(|c| c.account_id);
     let mut api = super::convert::status_from_db(s, account, media, reblog, viewer_ctx);
     let id: i64 = api.id.parse().unwrap_or(0);
     api.tags = fetch_status_tags(state, id).await?;
     api.mentions = fetch_status_mentions(state, id).await?;
+    api.poll = fetch_status_poll(state, id, viewer_account_id).await?;
+    api.card = fetch_status_card(state, id, &api.content).await;
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
         rb.tags = fetch_status_tags(state, rid).await?;
         rb.mentions = fetch_status_mentions(state, rid).await?;
+        rb.poll = fetch_status_poll(state, rid, None).await?;
+        rb.card = fetch_status_card(state, rid, &rb.content).await;
     }
     Ok(api)
+}
+
+async fn fetch_status_card(
+    state: &AppState,
+    status_id: i64,
+    content: &str,
+) -> Option<super::types::PreviewCard> {
+    // Check for already-linked card first
+    let existing = sqlx::query!(
+        r#"SELECT pc.id, pc.url, pc.title, pc.description, pc.card_type,
+                  pc.image_url, pc.author_name, pc.author_url,
+                  pc.provider_name, pc.provider_url, pc.html, pc.width, pc.height,
+                  pc.embed_url, pc.blurhash
+           FROM preview_cards pc
+           JOIN status_preview_cards spc ON spc.card_id = pc.id
+           WHERE spc.status_id = $1
+           LIMIT 1"#,
+        status_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(r) = existing {
+        return Some(super::types::PreviewCard {
+            url: r.url,
+            title: r.title,
+            description: r.description,
+            language: None,
+            card_type: r.card_type,
+            author_name: r.author_name,
+            author_url: r.author_url,
+            provider_name: r.provider_name,
+            provider_url: r.provider_url,
+            html: r.html,
+            width: r.width,
+            height: r.height,
+            embed_url: r.embed_url,
+            image: r.image_url,
+            image_description: String::new(),
+            blurhash: r.blurhash,
+            published_at: None,
+            authors: vec![],
+        });
+    }
+
+    // Extract URLs from status content and fetch the first one
+    let urls = crate::preview_card::extract_urls_from_content(content);
+    let url = urls.into_iter().next()?;
+
+    let card_id = crate::preview_card::fetch_and_store(&state.db, &state.http, &url).await?;
+
+    // Link card to status
+    let _ = sqlx::query!(
+        "INSERT INTO status_preview_cards (status_id, card_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        status_id, card_id,
+    )
+    .execute(&state.db)
+    .await;
+
+    // Re-fetch and return
+    let r = sqlx::query!(
+        "SELECT url, title, description, card_type, image_url, author_name, author_url, provider_name, provider_url, html, width, height, embed_url, blurhash FROM preview_cards WHERE id = $1",
+        card_id,
+    )
+    .fetch_one(&state.db)
+    .await
+    .ok()?;
+
+    Some(super::types::PreviewCard {
+        url: r.url,
+        title: r.title,
+        description: r.description,
+        language: None,
+        card_type: r.card_type,
+        author_name: r.author_name,
+        author_url: r.author_url,
+        provider_name: r.provider_name,
+        provider_url: r.provider_url,
+        html: r.html,
+        width: r.width,
+        height: r.height,
+        embed_url: r.embed_url,
+        image: r.image_url,
+        image_description: String::new(),
+        blurhash: r.blurhash,
+        published_at: None,
+        authors: vec![],
+    })
 }
 
 // ── DELETE /api/v1/accounts ────────────────────────────────────────────────

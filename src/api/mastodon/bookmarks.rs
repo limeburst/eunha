@@ -78,6 +78,7 @@ pub async fn get_bookmarks(
 
         let reblog = fetch_reblog_data(&state, &s).await?;
         let ctx = super::convert::StatusViewerContext {
+            account_id: auth.account_id,
             favourited,
             reblogged,
             muted: false,

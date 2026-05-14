@@ -1313,6 +1313,235 @@ pub async fn delete_domain_allow(
     Ok(StatusCode::OK)
 }
 
+// ── Admin IP blocks ───────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AdminIpBlock {
+    pub id: String,
+    pub ip: String,
+    pub severity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateIpBlockForm {
+    pub ip: String,
+    pub severity: Option<String>,
+    pub comment: Option<String>,
+    pub expires_in: Option<i64>,
+}
+
+pub async fn list_ip_blocks(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AdminIpBlock>>> {
+    require_admin(&state, auth.account_id).await?;
+    let rows = sqlx::query!(
+        "SELECT id, ip, severity, comment, expires_at, created_at FROM admin_ip_blocks ORDER BY created_at DESC"
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| AdminIpBlock {
+        id: r.id.to_string(),
+        ip: r.ip,
+        severity: r.severity,
+        comment: r.comment,
+        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
+        created_at: r.created_at.to_rfc3339(),
+    }).collect()))
+}
+
+pub async fn get_ip_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminIpBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let r = sqlx::query!(
+        "SELECT id, ip, severity, comment, expires_at, created_at FROM admin_ip_blocks WHERE id = $1",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminIpBlock {
+        id: r.id.to_string(),
+        ip: r.ip,
+        severity: r.severity,
+        comment: r.comment,
+        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
+        created_at: r.created_at.to_rfc3339(),
+    }))
+}
+
+pub async fn create_ip_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateIpBlockForm>,
+) -> AppResult<Json<AdminIpBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let severity = form.severity.as_deref().unwrap_or("sign_up_block");
+    let expires_at = form.expires_in
+        .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+    let r = sqlx::query!(
+        r#"INSERT INTO admin_ip_blocks (ip, severity, comment, expires_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (ip) DO UPDATE SET severity = $2, comment = $3, expires_at = $4, updated_at = now()
+           RETURNING id, ip, severity, comment, expires_at, created_at"#,
+        form.ip, severity, form.comment, expires_at,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(AdminIpBlock {
+        id: r.id.to_string(),
+        ip: r.ip,
+        severity: r.severity,
+        comment: r.comment,
+        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
+        created_at: r.created_at.to_rfc3339(),
+    }))
+}
+
+pub async fn update_ip_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+    Json(form): Json<CreateIpBlockForm>,
+) -> AppResult<Json<AdminIpBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let severity = form.severity.as_deref().unwrap_or("sign_up_block");
+    let expires_at = form.expires_in
+        .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+    let r = sqlx::query!(
+        r#"UPDATE admin_ip_blocks SET severity = $2, comment = $3, expires_at = $4, updated_at = now()
+           WHERE id = $1
+           RETURNING id, ip, severity, comment, expires_at, created_at"#,
+        id, severity, form.comment, expires_at,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminIpBlock {
+        id: r.id.to_string(),
+        ip: r.ip,
+        severity: r.severity,
+        comment: r.comment,
+        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
+        created_at: r.created_at.to_rfc3339(),
+    }))
+}
+
+pub async fn delete_ip_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!("DELETE FROM admin_ip_blocks WHERE id = $1", id)
+        .execute(&state.db)
+        .await?;
+    Ok(StatusCode::OK)
+}
+
+// ── Admin Email Domain blocks ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AdminEmailDomainBlock {
+    pub id: String,
+    pub domain: String,
+    pub created_at: String,
+    pub history: Vec<AdminEmailDomainBlockHistory>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminEmailDomainBlockHistory {
+    pub day: String,
+    pub accounts: String,
+    pub uses: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateEmailDomainBlockForm {
+    pub domain: String,
+}
+
+pub async fn list_email_domain_blocks(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<AdminEmailDomainBlock>>> {
+    require_admin(&state, auth.account_id).await?;
+    let rows = sqlx::query!(
+        "SELECT id, domain, created_at FROM admin_email_domain_blocks ORDER BY domain"
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| AdminEmailDomainBlock {
+        id: r.id.to_string(),
+        domain: r.domain,
+        created_at: r.created_at.to_rfc3339(),
+        history: vec![],
+    }).collect()))
+}
+
+pub async fn get_email_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminEmailDomainBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let r = sqlx::query!(
+        "SELECT id, domain, created_at FROM admin_email_domain_blocks WHERE id = $1",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminEmailDomainBlock {
+        id: r.id.to_string(),
+        domain: r.domain,
+        created_at: r.created_at.to_rfc3339(),
+        history: vec![],
+    }))
+}
+
+pub async fn create_email_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateEmailDomainBlockForm>,
+) -> AppResult<Json<AdminEmailDomainBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let r = sqlx::query!(
+        r#"INSERT INTO admin_email_domain_blocks (domain) VALUES ($1)
+           ON CONFLICT (domain) DO UPDATE SET updated_at = now()
+           RETURNING id, domain, created_at"#,
+        form.domain,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(AdminEmailDomainBlock {
+        id: r.id.to_string(),
+        domain: r.domain,
+        created_at: r.created_at.to_rfc3339(),
+        history: vec![],
+    }))
+}
+
+pub async fn delete_email_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!("DELETE FROM admin_email_domain_blocks WHERE id = $1", id)
+        .execute(&state.db)
+        .await?;
+    Ok(StatusCode::OK)
+}
+
 fn md5_bytes(s: &str) -> [u8; 16] {
     // Simple deterministic digest (not security-sensitive — Mastodon uses it for obfuscation display)
     let mut h: u128 = 0x9e3779b97f4a7c15;

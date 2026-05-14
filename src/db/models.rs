@@ -113,6 +113,10 @@ pub struct User {
     pub default_privacy: String,
     pub default_sensitive: bool,
     pub default_language: Option<String>,
+    pub notif_filter_not_following: bool,
+    pub notif_filter_not_followers: bool,
+    pub notif_filter_new_accounts: bool,
+    pub notif_filter_private_mentions: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -125,6 +125,8 @@ async fn run(
                         for stream in &subscribed {
                             let msg = if stream == "user" {
                                 to_wire_user(&event, account_id, instance_id, &following, &state.db).await
+                            } else if stream.starts_with("list:") || stream == "direct" {
+                                to_wire_authenticated(&event, stream, account_id, instance_id, &state.db).await
                             } else {
                                 to_wire(&event, stream, account_id, instance_id, &following)
                             };
@@ -281,6 +283,7 @@ fn to_wire(
             instance_id: ev_iid,
             author_id,
             is_public,
+            hashtags,
             payload,
             ..
         } => {
@@ -292,6 +295,15 @@ fn to_wire(
                         && account_id
                             .map(|aid| aid == *author_id || following.contains(author_id))
                             .unwrap_or(false)
+                }
+                s if s.starts_with("hashtag:local:") => {
+                    let tag = &s["hashtag:local:".len()..];
+                    *is_public && *ev_iid == instance_id
+                        && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
+                }
+                s if s.starts_with("hashtag:") && !s.starts_with("hashtag:local") => {
+                    let tag = &s["hashtag:".len()..];
+                    *is_public && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
                 }
                 _ => false,
             };
@@ -336,6 +348,73 @@ fn to_wire(
     }
 }
 
+/// Handle `list:N` and `direct` streams which require DB lookups.
+async fn to_wire_authenticated(
+    event: &Event,
+    stream: &str,
+    account_id: Option<Uuid>,
+    instance_id: Uuid,
+    db: &sqlx::PgPool,
+) -> Option<String> {
+    let aid = account_id?;
+    match event {
+        Event::NewStatus {
+            instance_id: ev_iid,
+            author_id,
+            is_direct,
+            status_id,
+            payload,
+            ..
+        } => {
+            if *ev_iid != instance_id {
+                return None;
+            }
+            let deliver = if stream == "direct" {
+                *is_direct
+                    && sqlx::query_scalar!(
+                        "SELECT 1 AS e FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
+                        status_id, aid
+                    )
+                    .fetch_optional(db).await.ok().flatten().is_some()
+                    || (*is_direct && *author_id == aid)
+            } else if let Some(list_id_str) = stream.strip_prefix("list:") {
+                if let Ok(list_id) = list_id_str.parse::<i64>() {
+                    // Deliver if the author is in this list owned by the viewer
+                    sqlx::query_scalar!(
+                        r#"SELECT 1 AS e FROM list_accounts la
+                           JOIN lists l ON l.id = la.list_id
+                           WHERE la.list_id = $1 AND la.account_id = $2
+                             AND l.account_id = $3"#,
+                        list_id, *author_id, aid,
+                    )
+                    .fetch_optional(db).await.ok().flatten().is_some()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !deliver {
+                return None;
+            }
+            let stream_arr = stream_label(stream);
+            Some(wire("update", &stream_arr, payload))
+        }
+        Event::DeleteStatus { instance_id: ev_iid, status_id } => {
+            if *ev_iid != instance_id {
+                return None;
+            }
+            let stream_arr = stream_label(stream);
+            Some(serde_json::json!({
+                "stream": stream_arr,
+                "event": "delete",
+                "payload": status_id.to_string(),
+            }).to_string())
+        }
+        Event::Notification { .. } => None,
+    }
+}
+
 /// Encode an event as a Mastodon streaming JSON message.
 /// `payload` is already a serialised JSON string; `serde_json::json!` will
 /// double-encode it as required by the protocol.
@@ -351,6 +430,11 @@ fn wire(event: &str, streams: &[&str], payload: &str) -> String {
 fn stream_label(stream: &str) -> Vec<&str> {
     match stream {
         "public:local" => vec!["public", "public:local"],
+        s if s.starts_with("hashtag:local:") => {
+            vec!["hashtag", "hashtag:local"]
+        }
+        s if s.starts_with("hashtag:") => vec!["hashtag"],
+        s if s.starts_with("list:") => vec!["list"],
         other => vec![other],
     }
 }

@@ -677,6 +677,26 @@ pub struct NotificationPolicySummary {
     pub pending_notifications_count: i64,
 }
 
+// ── Notification Request ─────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct NotificationRequest {
+    pub id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub notifications_count: String,
+    pub account: Account,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_status: Option<Status>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationPagination {
+    pub limit: Option<i64>,
+    pub max_id: Option<String>,
+    pub since_id: Option<String>,
+}
+
 // ── Suggestion v2 ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

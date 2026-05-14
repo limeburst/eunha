@@ -1,7 +1,9 @@
 use axum::{
     extract::{Extension, Path, Query, RawQuery, State},
+    http::StatusCode,
     Json,
 };
+use serde::Deserialize;
 
 use crate::{
     db::models::{Account, Notification as DbNotification},
@@ -13,8 +15,8 @@ use super::{
     accounts::{build_status, fetch_reblog_data, fetch_status_media},
     convert::account_from_db,
     types::{
-        Notification, NotificationGroup, NotificationGroupsResponse, NotificationPolicy,
-        NotificationPolicySummary, PaginationParams,
+        Notification, NotificationGroup, NotificationGroupsResponse, NotificationPagination,
+        NotificationPolicy, NotificationPolicySummary, NotificationRequest, PaginationParams,
     },
 };
 
@@ -216,52 +218,263 @@ pub async fn get_notifications_v2(
 // ── GET /api/v2/notifications/policy ─────────────────────────────────────
 
 pub async fn get_notification_policy(
-    Extension(_auth): Extension<AuthenticatedUser>,
-) -> Json<NotificationPolicy> {
-    Json(NotificationPolicy {
-        filter_not_following: false,
-        filter_not_followers: false,
-        filter_new_accounts: false,
-        filter_private_mentions: false,
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<NotificationPolicy>> {
+    let user = sqlx::query!(
+        r#"SELECT notif_filter_not_following, notif_filter_not_followers,
+                  notif_filter_new_accounts, notif_filter_private_mentions
+           FROM users WHERE account_id = $1"#,
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let (pending_requests, pending_notifs) = if user.notif_filter_not_following
+        || user.notif_filter_not_followers
+        || user.notif_filter_new_accounts
+        || user.notif_filter_private_mentions
+    {
+        let pending_requests: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM notification_requests WHERE account_id = $1 AND NOT dismissed",
+            auth.account_id,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(0);
+        let pending_notifs: i64 = sqlx::query_scalar!(
+            "SELECT COALESCE(SUM(notifications_count), 0)::bigint FROM notification_requests WHERE account_id = $1 AND NOT dismissed",
+            auth.account_id,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(0);
+        (pending_requests, pending_notifs)
+    } else {
+        (0_i64, 0_i64)
+    };
+
+    Ok(Json(NotificationPolicy {
+        filter_not_following: user.notif_filter_not_following,
+        filter_not_followers: user.notif_filter_not_followers,
+        filter_new_accounts: user.notif_filter_new_accounts,
+        filter_private_mentions: user.notif_filter_private_mentions,
         summary: NotificationPolicySummary {
-            pending_requests_count: 0,
-            pending_notifications_count: 0,
+            pending_requests_count: pending_requests,
+            pending_notifications_count: pending_notifs,
         },
-    })
+    }))
 }
 
 // ── PATCH /api/v2/notifications/policy ───────────────────────────────────
 
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateNotificationPolicyForm {
+    pub filter_not_following: Option<bool>,
+    pub filter_not_followers: Option<bool>,
+    pub filter_new_accounts: Option<bool>,
+    pub filter_private_mentions: Option<bool>,
+}
+
 pub async fn update_notification_policy(
-    Extension(_auth): Extension<AuthenticatedUser>,
-) -> Json<NotificationPolicy> {
-    Json(NotificationPolicy::default())
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<UpdateNotificationPolicyForm>,
+) -> AppResult<Json<NotificationPolicy>> {
+    sqlx::query!(
+        r#"UPDATE users SET
+               notif_filter_not_following    = COALESCE($2, notif_filter_not_following),
+               notif_filter_not_followers    = COALESCE($3, notif_filter_not_followers),
+               notif_filter_new_accounts     = COALESCE($4, notif_filter_new_accounts),
+               notif_filter_private_mentions = COALESCE($5, notif_filter_private_mentions),
+               updated_at = now()
+           WHERE account_id = $1"#,
+        auth.account_id,
+        form.filter_not_following,
+        form.filter_not_followers,
+        form.filter_new_accounts,
+        form.filter_private_mentions,
+    )
+    .execute(&state.db)
+    .await?;
+
+    get_notification_policy(State(state), Extension(auth)).await
 }
 
 // ── GET /api/v1/notifications/requests ───────────────────────────────────
 
 pub async fn get_notification_requests(
-    Extension(_auth): Extension<AuthenticatedUser>,
-) -> Json<Vec<serde_json::Value>> {
-    Json(vec![])
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(pagination): Query<NotificationPagination>,
+) -> AppResult<Json<Vec<NotificationRequest>>> {
+    let limit = pagination.limit.unwrap_or(40).min(80).max(1) as i64;
+    let rows = sqlx::query!(
+        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
+                  a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
+                  a.note, a.note_text, a.url, a.uri, a.header, a.header_static,
+                  a.public_key, a.private_key, a.followers_count, a.following_count,
+                  a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
+                  a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
+                  a.suspended_at, a.silenced_at, a.hide_collections, a.fields,
+                  a.instance_id, a.created_at AS account_created_at, a.updated_at AS account_updated_at
+           FROM notification_requests nr
+           JOIN accounts a ON a.id = nr.from_account_id
+           WHERE nr.account_id = $1 AND NOT nr.dismissed
+           ORDER BY nr.updated_at DESC
+           LIMIT $2"#,
+        auth.account_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let result = rows.into_iter().map(|r| {
+        let acc = crate::db::models::Account {
+            id: r.from_account_id,
+            instance_id: r.instance_id,
+            username: r.username,
+            domain: r.domain,
+            display_name: r.display_name,
+            note: r.note,
+            note_text: r.note_text,
+            url: r.url,
+            uri: r.uri,
+            avatar: r.avatar,
+            avatar_static: r.avatar_static,
+            header: r.header,
+            header_static: r.header_static,
+            private_key: r.private_key,
+            public_key: r.public_key,
+            followers_count: r.followers_count,
+            following_count: r.following_count,
+            statuses_count: r.statuses_count,
+            locked: r.locked,
+            bot: r.bot,
+            discoverable: r.discoverable,
+            indexable: r.indexable,
+            moved_to_uri: r.moved_to_uri,
+            inbox_url: r.inbox_url,
+            outbox_url: r.outbox_url,
+            shared_inbox_url: r.shared_inbox_url,
+            suspended_at: r.suspended_at,
+            silenced_at: r.silenced_at,
+            hide_collections: r.hide_collections,
+            fields: r.fields,
+            created_at: r.account_created_at,
+            updated_at: r.account_updated_at,
+        };
+        NotificationRequest {
+            id: r.id.to_string(),
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.created_at.to_rfc3339(),
+            notifications_count: r.notifications_count.to_string(),
+            last_status: None,
+            account: super::convert::account_from_db(&acc),
+        }
+    }).collect();
+
+    Ok(Json(result))
 }
 
 // ── POST /api/v1/notifications/requests/:id/accept ───────────────────────
 
 pub async fn accept_notification_request(
-    Extension(_auth): Extension<AuthenticatedUser>,
-    axum::extract::Path(_id): axum::extract::Path<String>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({}))
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    sqlx::query!(
+        "UPDATE notification_requests SET dismissed = false WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({})))
 }
 
 // ── POST /api/v1/notifications/requests/:id/dismiss ──────────────────────
 
 pub async fn dismiss_notification_request(
-    Extension(_auth): Extension<AuthenticatedUser>,
-    axum::extract::Path(_id): axum::extract::Path<String>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({}))
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    sqlx::query!(
+        "UPDATE notification_requests SET dismissed = true WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v1/notifications/requests/:id ───────────────────────────────
+
+pub async fn get_notification_request(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<NotificationRequest>> {
+    let r = sqlx::query!(
+        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
+                  a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
+                  a.note, a.note_text, a.url, a.uri, a.header, a.header_static,
+                  a.public_key, a.private_key, a.followers_count, a.following_count,
+                  a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
+                  a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
+                  a.suspended_at, a.silenced_at, a.hide_collections, a.fields,
+                  a.instance_id, a.created_at AS account_created_at, a.updated_at AS account_updated_at
+           FROM notification_requests nr
+           JOIN accounts a ON a.id = nr.from_account_id
+           WHERE nr.id = $1 AND nr.account_id = $2"#,
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let acc = crate::db::models::Account {
+        id: r.from_account_id,
+        instance_id: r.instance_id,
+        username: r.username,
+        domain: r.domain,
+        display_name: r.display_name,
+        note: r.note,
+        note_text: r.note_text,
+        url: r.url,
+        uri: r.uri,
+        avatar: r.avatar,
+        avatar_static: r.avatar_static,
+        header: r.header,
+        header_static: r.header_static,
+        private_key: r.private_key,
+        public_key: r.public_key,
+        followers_count: r.followers_count,
+        following_count: r.following_count,
+        statuses_count: r.statuses_count,
+        locked: r.locked,
+        bot: r.bot,
+        discoverable: r.discoverable,
+        indexable: r.indexable,
+        moved_to_uri: r.moved_to_uri,
+        inbox_url: r.inbox_url,
+        outbox_url: r.outbox_url,
+        shared_inbox_url: r.shared_inbox_url,
+        suspended_at: r.suspended_at,
+        silenced_at: r.silenced_at,
+        hide_collections: r.hide_collections,
+        fields: r.fields,
+        created_at: r.account_created_at,
+        updated_at: r.account_updated_at,
+    };
+    Ok(Json(NotificationRequest {
+        id: r.id.to_string(),
+        created_at: r.created_at.to_rfc3339(),
+        updated_at: r.created_at.to_rfc3339(),
+        notifications_count: r.notifications_count.to_string(),
+        last_status: None,
+        account: super::convert::account_from_db(&acc),
+    }))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

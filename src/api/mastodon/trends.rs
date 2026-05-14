@@ -154,7 +154,7 @@ pub async fn trending_statuses(
                 "SELECT 1 AS e FROM bookmarks WHERE account_id = $1 AND status_id = $2",
                 vid, s.id
             ).fetch_optional(&state.db).await?.is_some();
-            Some(super::convert::StatusViewerContext { favourited, reblogged, muted: false, bookmarked, pinned: false })
+            Some(super::convert::StatusViewerContext { account_id: vid, favourited, reblogged, muted: false, bookmarked, pinned: false })
         } else {
             None
         };

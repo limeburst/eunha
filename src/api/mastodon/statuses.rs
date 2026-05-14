@@ -265,11 +265,14 @@ pub async fn post_status(
 
     if matches!(visibility, "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {
+            let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
             state.streaming.publish(Event::NewStatus {
                 instance_id: instance.id,
                 author_id: account.id,
                 is_public: visibility == "public",
+                is_direct: visibility == "direct",
                 status_id: status.id,
+                hashtags,
                 payload: std::sync::Arc::new(payload),
             });
         }
@@ -614,11 +617,14 @@ pub async fn reblog_status(
     let api_boost = build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?;
 
     if let Ok(payload) = serde_json::to_string(&api_boost) {
+        let hashtags: Vec<String> = api_boost.tags.iter().map(|t| t.name.clone()).collect();
         state.streaming.publish(Event::NewStatus {
             instance_id: instance.id,
             author_id: boost_account.id,
             is_public: original.visibility == "public",
+            is_direct: false,
             status_id: boost.id,
+            hashtags,
             payload: std::sync::Arc::new(payload),
         });
     }
@@ -1167,6 +1173,7 @@ pub(super) async fn batch_viewer_contexts(
     let mut result = HashMap::with_capacity(status_ids.len());
     for &id in status_ids {
         result.insert(id, StatusViewerContext {
+            account_id: viewer_id,
             favourited: fav_set.contains(&id),
             reblogged: reb_set.contains(&id),
             bookmarked: book_set.contains(&id),
@@ -1223,6 +1230,7 @@ pub async fn build_viewer_context(
     .is_some();
 
     Ok(super::convert::StatusViewerContext {
+        account_id: viewer_id,
         favourited,
         reblogged,
         muted,

@@ -8,7 +8,9 @@ pub enum Event {
         instance_id: Uuid,
         author_id: Uuid,
         is_public: bool,
+        is_direct: bool,
         status_id: i64,
+        hashtags: Vec<String>,
         payload: Arc<String>,
     },
     Notification {

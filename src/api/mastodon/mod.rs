@@ -129,6 +129,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/notifications", get(notifications::get_notifications))
         .route("/api/v1/notifications/clear", post(notifications::clear_notifications))
         .route("/api/v1/notifications/requests", get(notifications::get_notification_requests))
+        .route("/api/v1/notifications/requests/{id}", get(notifications::get_notification_request))
         .route("/api/v1/notifications/requests/{id}/accept", post(notifications::accept_notification_request))
         .route("/api/v1/notifications/requests/{id}/dismiss", post(notifications::dismiss_notification_request))
         .route("/api/v1/notifications/{id}", get(notifications::get_notification))
@@ -179,6 +180,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/admin/domain_blocks/{id}", delete(admin::delete_domain_block))
         .route("/api/v1/admin/domain_allows", get(admin::list_domain_allows).post(admin::create_domain_allow))
         .route("/api/v1/admin/domain_allows/{id}", delete(admin::delete_domain_allow))
+        .route("/api/v1/admin/ip_blocks", get(admin::list_ip_blocks).post(admin::create_ip_block))
+        .route("/api/v1/admin/ip_blocks/{id}", get(admin::get_ip_block).put(admin::update_ip_block).delete(admin::delete_ip_block))
+        .route("/api/v1/admin/email_domain_blocks", get(admin::list_email_domain_blocks).post(admin::create_email_domain_block))
+        .route("/api/v1/admin/email_domain_blocks/{id}", get(admin::get_email_domain_block).delete(admin::delete_email_domain_block))
+        // Account move and aliases
+        .route("/api/v1/accounts/move", post(accounts::move_account))
+        .route("/api/v1/profile/aliases", get(accounts::list_aliases).post(accounts::create_alias))
+        .route("/api/v1/profile/aliases/{id}", delete(accounts::delete_alias))
         // Suggestions
         .route("/api/v1/directory", get(accounts::get_directory))
         .route("/api/v1/suggestions", get(accounts::get_suggestions))
