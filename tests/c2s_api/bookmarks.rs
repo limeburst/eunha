@@ -111,6 +111,72 @@ async fn test_bookmarks_unbookmark_removes_from_list() {
     assert!(!ids.contains(&status_id.as_str()), "unbookmarked status still in bookmarks list");
 }
 
+/// max_id pagination excludes bookmarks at or newer than the given id.
+#[tokio::test]
+async fn test_bookmarks_max_id_pagination() {
+    let ctx = TestContext::new("bmarks-maxid").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "bmark maxid first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "bmark maxid second", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+
+    for id in [&s1_id, &s2_id] {
+        ctx.api.post_json(
+            &format!("/api/v1/statuses/{id}/bookmark"),
+            Some(&ctx.bob_token),
+            &serde_json::json!({}),
+        ).await;
+    }
+
+    let paged: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/bookmarks?max_id={s2_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s2_id.as_str())),
+        "max_id bookmark should be excluded",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s1_id.as_str())),
+        "s1 should appear when max_id=s2_id",
+    );
+}
+
+/// since_id pagination returns only bookmarks newer than the given id.
+#[tokio::test]
+async fn test_bookmarks_since_id_pagination() {
+    let ctx = TestContext::new("bmarks-since").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "bmark since first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "bmark since second", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+
+    for id in [&s1_id, &s2_id] {
+        ctx.api.post_json(
+            &format!("/api/v1/statuses/{id}/bookmark"),
+            Some(&ctx.bob_token),
+            &serde_json::json!({}),
+        ).await;
+    }
+
+    let paged: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/bookmarks?since_id={s1_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s1_id.as_str())),
+        "since_id bookmark should be excluded",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s2_id.as_str())),
+        "s2 should appear when since_id=s1_id",
+    );
+}
+
 /// The limit parameter caps the number of results returned.
 #[tokio::test]
 async fn test_bookmarks_limit_param() {
