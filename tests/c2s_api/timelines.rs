@@ -247,6 +247,38 @@ async fn test_tag_timeline_any_filter() {
     assert!(!ids.contains(&primary_only_id), "status with only primary tag should be excluded by any[]");
 }
 
+/// Tag timeline all[] returns only statuses that contain ALL of the specified additional tags.
+#[tokio::test]
+async fn test_tag_timeline_all_filter() {
+    let ctx = TestContext::new("tag-all").await;
+
+    // Status with primary tag and both required tags.
+    let both = ctx.api.post_status(
+        &ctx.alice_token,
+        "has #allfilter #required1 #required2",
+        "public",
+    ).await;
+    let both_id = both["id"].as_str().unwrap();
+
+    // Status with primary tag and only one required tag.
+    let partial = ctx.api.post_status(
+        &ctx.alice_token,
+        "has #allfilter #required1 only",
+        "public",
+    ).await;
+    let partial_id = partial["id"].as_str().unwrap();
+
+    // all[]=required1&all[]=required2 → only status with both additional tags.
+    let timeline: Vec<Value> = ctx.api.get(
+        "/api/v1/timelines/tag/allfilter?all[]=required1&all[]=required2",
+        None,
+    ).await.json().await.unwrap();
+
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&both_id), "status with all required tags should be in result");
+    assert!(!ids.contains(&partial_id), "status missing a required tag should be excluded by all[]");
+}
+
 /// Tag timeline none[] excludes statuses that contain any of the none tags.
 #[tokio::test]
 async fn test_tag_timeline_none_filter() {
