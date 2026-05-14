@@ -324,6 +324,27 @@ async fn test_list_timeline_max_id_pagination() {
     );
 }
 
+/// POST /api/v1/lists/:id/accounts returns 422 when the account is not followed.
+#[tokio::test]
+async fn test_list_add_unfollowed_account_returns_422() {
+    let ctx = TestContext::new("list-add-unfollow").await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "No Follow List"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    // Alice does NOT follow Bob. Adding Bob to a list should return 422.
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "adding unfollowed account should return 422");
+}
+
 /// List timeline respects since_id pagination.
 #[tokio::test]
 async fn test_list_timeline_since_id_pagination() {

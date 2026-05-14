@@ -175,6 +175,16 @@ pub async fn add_list_accounts(
 
     for id_str in &form.account_ids {
         if let Ok(account_id) = id_str.parse::<Uuid>() {
+            let is_followed = sqlx::query_scalar!(
+                "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                auth.account_id, account_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if !is_followed {
+                return Err(AppError::Unprocessable("Account must be followed before adding to a list".into()));
+            }
             sqlx::query!(
                 "INSERT INTO list_accounts (list_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                 id, account_id,
