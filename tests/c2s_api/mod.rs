@@ -17,6 +17,7 @@
 mod helpers;
 
 mod accounts;
+mod admin;
 mod apps;
 mod blocks;
 mod bookmarks;
