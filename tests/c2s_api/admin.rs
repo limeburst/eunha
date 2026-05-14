@@ -264,3 +264,56 @@ async fn test_admin_domain_blocks_crud() {
         .await.json().await.unwrap();
     assert!(!after.iter().any(|b| b["id"].as_str() == Some(block_id)), "deleted block still in list");
 }
+
+/// POST /api/v1/admin/accounts/:id/approve returns 200 with the account.
+#[tokio::test]
+async fn test_admin_approve_account() {
+    let ctx = TestContext::new("admin-approve").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/admin/accounts/{}/approve", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let acc: Value = resp.json().await.unwrap();
+    assert_eq!(acc["id"].as_str(), Some(ctx.bob_id.as_str()));
+    assert_eq!(acc["approved"].as_bool(), Some(true));
+}
+
+/// POST /api/v1/admin/accounts/:id/enable clears a suspended account.
+#[tokio::test]
+async fn test_admin_enable_account() {
+    let ctx = TestContext::new("admin-enable").await;
+    make_admin(&ctx).await;
+
+    // Suspend bob first, then enable.
+    ctx.api.post_json(
+        &format!("/api/v1/admin/accounts/{}/suspend", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let enable_resp = ctx.api.post_json(
+        &format!("/api/v1/admin/accounts/{}/enable", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(enable_resp.status(), StatusCode::OK);
+    let acc: Value = enable_resp.json().await.unwrap();
+    assert_eq!(acc["suspended"].as_bool(), Some(false));
+}
+
+/// GET /api/v1/admin/roles/:id returns the role by ID.
+#[tokio::test]
+async fn test_admin_get_role_by_id() {
+    let ctx = TestContext::new("admin-role-id").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v1/admin/roles/1", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let role: Value = resp.json().await.unwrap();
+    assert_eq!(role["id"].as_str(), Some("1"), "expected role id 1 (Admin)");
+    assert_eq!(role["name"].as_str(), Some("Admin"));
+}
