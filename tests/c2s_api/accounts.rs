@@ -170,6 +170,41 @@ async fn test_account_statuses_pinned() {
     }
 }
 
+/// ?limit=1 on account statuses returns at most 1 status.
+#[tokio::test]
+async fn test_account_statuses_limit_param() {
+    let ctx = TestContext::new("acct-stat-limit").await;
+
+    ctx.api.post_status(&ctx.alice_token, "limit test 1", "public").await;
+    ctx.api.post_status(&ctx.alice_token, "limit test 2", "public").await;
+
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?limit=1", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(statuses.len() <= 1, "limit=1 should return at most 1 status, got {}", statuses.len());
+}
+
+/// ?max_id pagination on account statuses omits statuses newer than max_id.
+#[tokio::test]
+async fn test_account_statuses_max_id_pagination() {
+    let ctx = TestContext::new("acct-stat-maxid").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "pagination first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "pagination second", "public").await;
+    let s1_id = s1["id"].as_str().unwrap();
+    let s2_id = s2["id"].as_str().unwrap();
+
+    // Fetch with max_id = s2's id: should return s1 but not s2.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?max_id={}", ctx.alice_id, s2_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(!ids.contains(&s2_id), "max_id={s2_id} should exclude s2");
+    assert!(ids.contains(&s1_id), "s1 should be included when max_id={s2_id}");
+}
+
 /// ?tagged=<name> endpoint returns 200 (filtering implementation tracked separately).
 #[tokio::test]
 async fn test_account_statuses_tagged_returns_200() {
