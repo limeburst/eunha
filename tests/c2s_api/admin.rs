@@ -383,3 +383,79 @@ async fn test_admin_retention() {
     assert_eq!(resp.status(), StatusCode::OK);
     let _: Vec<Value> = resp.json().await.unwrap();
 }
+
+/// Admin IP blocks: create, list, get, delete.
+#[tokio::test]
+async fn test_admin_ip_blocks_crud() {
+    let ctx = TestContext::new("admin-ipblock").await;
+    make_admin(&ctx).await;
+
+    let create_resp = ctx.api.post_json(
+        "/api/v1/admin/ip_blocks",
+        Some(&ctx.alice_token),
+        &json!({
+            "ip": "192.0.2.1",
+            "severity": "sign_up_block",
+            "comment": "test ip block"
+        }),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let block: Value = create_resp.json().await.unwrap();
+    let block_id = block["id"].as_str().expect("id missing");
+    assert_eq!(block["ip"].as_str(), Some("192.0.2.1"));
+    assert_eq!(block["severity"].as_str(), Some("sign_up_block"));
+
+    // List.
+    let list: Vec<Value> = ctx.api.get("/api/v1/admin/ip_blocks", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(list.iter().any(|b| b["id"].as_str() == Some(block_id)));
+
+    // Get single.
+    let get_resp = ctx.api.get(
+        &format!("/api/v1/admin/ip_blocks/{block_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let got: Value = get_resp.json().await.unwrap();
+    assert_eq!(got["id"].as_str(), Some(block_id));
+
+    // Delete.
+    let del = ctx.api.delete(
+        &format!("/api/v1/admin/ip_blocks/{block_id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del.status(), StatusCode::OK);
+}
+
+/// Admin email domain blocks: create, list, get, delete.
+#[tokio::test]
+async fn test_admin_email_domain_blocks_crud() {
+    let ctx = TestContext::new("admin-edblock").await;
+    make_admin(&ctx).await;
+
+    let create_resp = ctx.api.post_json(
+        "/api/v1/admin/email_domain_blocks",
+        Some(&ctx.alice_token),
+        &json!({"domain": "spam-email.example.com"}),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let block: Value = create_resp.json().await.unwrap();
+    let block_id = block["id"].as_str().expect("id missing");
+    assert_eq!(block["domain"].as_str(), Some("spam-email.example.com"));
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/admin/email_domain_blocks", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(list.iter().any(|b| b["id"].as_str() == Some(block_id)));
+
+    let get_resp = ctx.api.get(
+        &format!("/api/v1/admin/email_domain_blocks/{block_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+
+    let del = ctx.api.delete(
+        &format!("/api/v1/admin/email_domain_blocks/{block_id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del.status(), StatusCode::OK);
+}
