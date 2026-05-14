@@ -599,3 +599,55 @@ async fn test_notifications_v2_since_id_pagination() {
     ).await.json().await.unwrap();
     assert!(since_body["notification_groups"].is_array(), "notification_groups should be present");
 }
+
+/// Muting an account with hide_notifications=true suppresses their notifications.
+#[tokio::test]
+async fn test_mute_hides_notifications_when_flag_true() {
+    let ctx = TestContext::new("notif-mute-hide").await;
+
+    // Alice mutes Bob with notifications=true (default).
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob follows Alice — this creates a "follow" notification.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    // Alice's notifications should NOT include the follow from Bob.
+    let body: Value = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let notifs = body.as_array().unwrap();
+    assert!(
+        !notifs.iter().any(|n| n["type"].as_str() == Some("follow")
+            && n["account"]["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "muted account's follow notification should be suppressed when hide_notifications=true",
+    );
+}
+
+/// Muting an account with notifications=false still shows their notifications.
+#[tokio::test]
+async fn test_mute_with_notifications_false_shows_notifications() {
+    let ctx = TestContext::new("notif-mute-show").await;
+
+    // Alice mutes Bob with notifications=false (explicit).
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({"notifications": false}),
+    ).await;
+
+    // Bob follows Alice.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    // Alice's notifications SHOULD include Bob's follow (notifications not hidden).
+    let body: Value = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let notifs = body.as_array().unwrap();
+    assert!(
+        notifs.iter().any(|n| n["type"].as_str() == Some("follow")
+            && n["account"]["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "muted account's follow notification should appear when hide_notifications=false",
+    );
+}

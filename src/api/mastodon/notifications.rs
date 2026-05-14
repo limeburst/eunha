@@ -43,6 +43,12 @@ pub async fn get_notifications(
              AND ($5::text[] IS NULL OR notification_type = ANY($5))
              AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
              AND ($7::uuid IS NULL OR from_account_id = $7)
+             AND NOT EXISTS (
+                 SELECT 1 FROM mutes m
+                 WHERE m.account_id = $1 AND m.target_account_id = from_account_id
+                   AND m.hide_notifications = true
+                   AND (m.expires_at IS NULL OR m.expires_at > now())
+             )
            ORDER BY id DESC
            LIMIT $4"#,
     )
@@ -143,6 +149,12 @@ pub async fn get_notifications_v2(
              AND ($5::text[] IS NULL OR notification_type = ANY($5))
              AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
              AND ($7::uuid IS NULL OR from_account_id = $7)
+             AND NOT EXISTS (
+                 SELECT 1 FROM mutes m
+                 WHERE m.account_id = $1 AND m.target_account_id = from_account_id
+                   AND m.hide_notifications = true
+                   AND (m.expires_at IS NULL OR m.expires_at > now())
+             )
            ORDER BY id DESC
            LIMIT $4"#,
     )
