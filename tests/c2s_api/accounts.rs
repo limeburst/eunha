@@ -1278,3 +1278,73 @@ async fn test_preferences_reflect_user_table_values() {
     assert_eq!(prefs["posting:default:sensitive"].as_bool(), Some(true));
     assert_eq!(prefs["posting:default:language"].as_str(), Some("fr"));
 }
+
+// ── profile aliases ───────────────────────────────────────────────────────────
+
+/// GET /api/v1/profile/aliases returns empty list initially; POST creates one; DELETE removes it.
+#[tokio::test]
+async fn test_profile_aliases_crud() {
+    let ctx = TestContext::new("alias-crud").await;
+
+    // Initially empty.
+    let resp = ctx.api.get("/api/v1/profile/aliases", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.is_empty(), "expected empty aliases list: {list:?}");
+
+    // Create an alias.
+    let create_resp = ctx.api.post_json(
+        "/api/v1/profile/aliases",
+        Some(&ctx.alice_token),
+        &json!({"acct": "alice@old.example.com"}),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let alias: Value = create_resp.json().await.unwrap();
+    let alias_id = alias["id"].as_str().expect("alias id missing");
+    assert_eq!(alias["uri"].as_str(), Some("alice@old.example.com"));
+
+    // List now contains the alias.
+    let after_create: Vec<Value> = ctx.api.get("/api/v1/profile/aliases", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        after_create.iter().any(|a| a["id"].as_str() == Some(alias_id)),
+        "created alias not in list: {after_create:?}",
+    );
+
+    // Delete it.
+    let del_resp = ctx.api.delete(
+        &format!("/api/v1/profile/aliases/{alias_id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del_resp.status(), StatusCode::OK);
+
+    // List is empty again.
+    let after_delete: Vec<Value> = ctx.api.get("/api/v1/profile/aliases", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !after_delete.iter().any(|a| a["id"].as_str() == Some(alias_id)),
+        "deleted alias still in list: {after_delete:?}",
+    );
+}
+
+/// POST /api/v1/profile/aliases is idempotent (same uri twice → single entry).
+#[tokio::test]
+async fn test_profile_alias_idempotent() {
+    let ctx = TestContext::new("alias-idem").await;
+
+    ctx.api.post_json(
+        "/api/v1/profile/aliases",
+        Some(&ctx.alice_token),
+        &json!({"acct": "alice@idem.example.com"}),
+    ).await;
+    ctx.api.post_json(
+        "/api/v1/profile/aliases",
+        Some(&ctx.alice_token),
+        &json!({"acct": "alice@idem.example.com"}),
+    ).await;
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/profile/aliases", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let count = list.iter().filter(|a| a["uri"].as_str() == Some("alice@idem.example.com")).count();
+    assert_eq!(count, 1, "duplicate aliases created: {list:?}");
+}
