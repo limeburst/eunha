@@ -414,6 +414,68 @@ async fn test_unfollow_updates_relationship() {
     assert_eq!(rel["following"].as_bool(), Some(false));
 }
 
+/// Following increments followers_count and following_count.
+#[tokio::test]
+async fn test_follow_increments_counts() {
+    let ctx = TestContext::new("follow-counts").await;
+
+    // Get initial counts.
+    let bob_before: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    let bob_followers_before = bob_before["followers_count"].as_i64().unwrap_or(0);
+
+    let alice_before: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None)
+        .await.json().await.unwrap();
+    let alice_following_before = alice_before["following_count"].as_i64().unwrap_or(0);
+
+    // Alice follows Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Bob's followers_count should increase.
+    let bob_after: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        bob_after["followers_count"].as_i64().unwrap_or(0),
+        bob_followers_before + 1,
+        "Bob's followers_count should increment after being followed",
+    );
+
+    // Alice's following_count should increase.
+    let alice_after: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        alice_after["following_count"].as_i64().unwrap_or(0),
+        alice_following_before + 1,
+        "Alice's following_count should increment after following",
+    );
+}
+
+/// Unfollowing decrements followers_count and following_count.
+#[tokio::test]
+async fn test_unfollow_decrements_counts() {
+    let ctx = TestContext::new("unfollow-counts").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let bob_mid: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    let bob_followers_mid = bob_mid["followers_count"].as_i64().unwrap_or(0);
+
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/unfollow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let bob_after: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        bob_after["followers_count"].as_i64().unwrap_or(0),
+        bob_followers_mid - 1,
+        "Bob's followers_count should decrement after unfollow",
+    );
+}
+
 /// Blocking sets blocking=true; unblocking sets it back to false.
 #[tokio::test]
 async fn test_block_and_unblock() {
