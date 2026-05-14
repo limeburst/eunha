@@ -1395,6 +1395,43 @@ async fn test_get_poll_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// Voting on a poll updates per-option votes_count and voters_count.
+#[tokio::test]
+async fn test_poll_vote_counts() {
+    let ctx = TestContext::new("poll-counts").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "Counts poll!",
+            "visibility": "public",
+            "poll": {"options": ["X", "Y", "Z"], "expires_in": 86400}
+        }),
+    ).await.json().await.unwrap();
+    let poll_id = status["poll"]["id"].as_str().unwrap();
+
+    // Bob votes for option Y (index 1).
+    ctx.api.post_json(
+        &format!("/api/v1/polls/{poll_id}/votes"),
+        Some(&ctx.bob_token),
+        &json!({"choices": [1]}),
+    ).await;
+
+    let poll: Value = ctx.api.get(
+        &format!("/api/v1/polls/{poll_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert_eq!(poll["votes_count"].as_i64(), Some(1), "votes_count should be 1");
+    assert_eq!(poll["voters_count"].as_i64(), Some(1), "voters_count should be 1");
+
+    let options = poll["options"].as_array().unwrap();
+    assert_eq!(options[0]["votes_count"].as_i64(), Some(0), "option X should have 0 votes");
+    assert_eq!(options[1]["votes_count"].as_i64(), Some(1), "option Y should have 1 vote");
+    assert_eq!(options[2]["votes_count"].as_i64(), Some(0), "option Z should have 0 votes");
+}
+
 /// A multiple-choice poll allows selecting several options.
 #[tokio::test]
 async fn test_vote_poll_multiple_choice_allowed() {

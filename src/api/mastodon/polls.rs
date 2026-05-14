@@ -98,13 +98,35 @@ async fn fetch_poll(state: &AppState, id: Uuid) -> AppResult<models::Poll> {
 }
 
 async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<Uuid>) -> AppResult<Poll> {
-    let options: Vec<PollOption> = poll.options
+    let option_titles: Vec<String> = poll.options
         .as_array()
-        .map(|arr| arr.iter().map(|o| PollOption {
-            title: o["title"].as_str().unwrap_or("").to_string(),
-            votes_count: o["votes_count"].as_i64(),
-        }).collect())
+        .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())
         .unwrap_or_default();
+
+    // Compute per-option vote counts from the actual poll_votes table
+    let per_option_counts = sqlx::query!(
+        "SELECT choice, COUNT(*) as cnt FROM poll_votes WHERE poll_id = $1 GROUP BY choice",
+        poll.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let options: Vec<PollOption> = option_titles.iter().enumerate().map(|(i, title)| {
+        let cnt = per_option_counts.iter()
+            .find(|r| r.choice == i as i32)
+            .and_then(|r| r.cnt)
+            .unwrap_or(0);
+        PollOption { title: title.clone(), votes_count: Some(cnt) }
+    }).collect();
+
+    // voters_count = distinct voters (each voter counted once regardless of multiple-choice)
+    let voters_count = sqlx::query_scalar!(
+        "SELECT COUNT(DISTINCT account_id) FROM poll_votes WHERE poll_id = $1",
+        poll.id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
 
     let (voted, own_votes) = if let Some(vid) = viewer_id {
         let votes = sqlx::query!(
@@ -123,6 +145,14 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<U
         (None, None)
     };
 
+    let votes_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM poll_votes WHERE poll_id = $1",
+        poll.id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
     let expired = poll.expires_at.map(|e| e < chrono::Utc::now()).unwrap_or(false);
 
     Ok(Poll {
@@ -130,8 +160,8 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<U
         expires_at: poll.expires_at.map(|e| e.to_rfc3339()),
         expired,
         multiple: poll.multiple,
-        votes_count: poll.votes_count,
-        voters_count: poll.voters_count,
+        votes_count,
+        voters_count: Some(voters_count),
         options,
         emojis: vec![],
         voted,
