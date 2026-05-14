@@ -230,6 +230,47 @@ async fn test_get_filter_status_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+// ── filter expiry ──────────────────────────────────────────────────────────────
+
+/// Creating a filter with expires_in sets the expires_at field.
+#[tokio::test]
+async fn test_filter_v2_with_expires_in() {
+    let ctx = TestContext::new("filter-expires").await;
+
+    let create_resp = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Expiring Filter",
+            "context": ["home"],
+            "filter_action": "warn",
+            "expires_in": 3600
+        }),
+    ).await;
+    assert_eq!(create_resp.status(), StatusCode::OK);
+    let filter: Value = create_resp.json().await.unwrap();
+    assert!(filter["expires_at"].as_str().is_some(), "expires_at should be set when expires_in provided");
+}
+
+/// Creating a v1 filter with expires_in sets the expires_at field.
+#[tokio::test]
+async fn test_filter_v1_with_expires_in() {
+    let ctx = TestContext::new("filter-v1-expires").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "phrase": "expiringword",
+            "context": ["home"],
+            "expires_in": 7200
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let filter: Value = resp.json().await.unwrap();
+    assert!(filter["expires_at"].as_str().is_some(), "expires_at should be set when expires_in provided");
+}
+
 // ── v1 filter whole_word reflects database value ───────────────────────────────
 
 /// The v1 filter whole_word field reads from the keyword row, not hardcoded.
