@@ -975,6 +975,51 @@ async fn test_unpin_requires_auth() {
 
 // ── favourited_by / reblogged_by ──────────────────────────────────────────────
 
+/// GET /api/v1/statuses/:id/favourited_by on a private status (unauthenticated) → 404.
+#[tokio::test]
+async fn test_favourited_by_private_status_unauthenticated_is_404() {
+    let ctx = TestContext::new("fav-by-prv").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private favby", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/favourited_by"), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/statuses/:id/favourited_by excludes accounts blocked by the viewer.
+#[tokio::test]
+async fn test_favourited_by_excludes_blocked_accounts() {
+    let ctx = TestContext::new("fav-by-block").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "fav-by block test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Bob favourites Alice's status.
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Alice views favourited_by — Bob should not appear.
+    let list: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses/{id}/favourited_by"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        !list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "blocked account appeared in favourited_by",
+    );
+}
+
 /// GET /api/v1/statuses/:id/favourited_by lists accounts that favourited.
 #[tokio::test]
 async fn test_favourited_by_list() {
@@ -996,6 +1041,51 @@ async fn test_favourited_by_list() {
     assert_eq!(resp.status(), StatusCode::OK);
     let list: Vec<Value> = resp.json().await.unwrap();
     assert!(list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
+}
+
+/// GET /api/v1/statuses/:id/reblogged_by on a private status (unauthenticated) → 404.
+#[tokio::test]
+async fn test_reblogged_by_private_status_unauthenticated_is_404() {
+    let ctx = TestContext::new("rb-by-prv").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private rbby", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/reblogged_by"), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/statuses/:id/reblogged_by excludes accounts blocked by the viewer.
+#[tokio::test]
+async fn test_reblogged_by_excludes_blocked_accounts() {
+    let ctx = TestContext::new("rb-by-block").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "rb-by block test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Bob reblogs Alice's status.
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Alice views reblogged_by — Bob should not appear.
+    let list: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses/{id}/reblogged_by"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        !list.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "blocked account appeared in reblogged_by",
+    );
 }
 
 /// GET /api/v1/statuses/:id/reblogged_by lists accounts that reblogged.

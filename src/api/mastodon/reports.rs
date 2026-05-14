@@ -46,6 +46,19 @@ pub async fn file_report(
         .filter_map(|s| s.parse::<i64>().ok())
         .collect();
 
+    // Verify all provided statuses belong to the target account.
+    for &sid in &status_ids {
+        let belongs = sqlx::query_scalar!(
+            "SELECT 1 as e FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
+            sid, form.account_id,
+        )
+        .fetch_optional(&state.db)
+        .await?;
+        if belongs.is_none() {
+            return Err(AppError::NotFound);
+        }
+    }
+
     let comment = form.comment.unwrap_or_default();
     let forwarded = form.forward.unwrap_or(false);
     let category = form.category.unwrap_or_else(|| "other".into());

@@ -386,7 +386,7 @@ pub async fn follow_account(
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
     if auth.account_id == target_id {
-        return Err(AppError::Unprocessable("Cannot follow yourself".into()));
+        return Err(AppError::Forbidden);
     }
     let params = body.map(|Json(p)| p).unwrap_or_default();
     let show_reblogs = params.reblogs.unwrap_or(true);

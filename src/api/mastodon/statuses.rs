@@ -907,22 +907,42 @@ pub async fn unmute_status(
 pub async fn favourited_by(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<super::types::Account>>> {
-    sqlx::query!("SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL", id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+    if let Some(vid) = viewer_id {
+        check_status_visible(&state, &status, vid).await?;
+    } else if status.visibility == "private" || status.visibility == "direct" {
+        return Err(AppError::NotFound);
+    }
 
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN favourites f ON f.account_id = a.id
-           WHERE f.status_id = $1
-           ORDER BY f.id DESC LIMIT 80"#,
-        id,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let accounts = if let Some(vid) = viewer_id {
+        sqlx::query_as!(
+            Account,
+            r#"SELECT a.* FROM accounts a
+               JOIN favourites f ON f.account_id = a.id
+               WHERE f.status_id = $1
+                 AND NOT EXISTS (
+                     SELECT 1 FROM blocks WHERE account_id = $2 AND target_account_id = a.id
+                 )
+               ORDER BY f.id DESC LIMIT 80"#,
+            id, vid,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            Account,
+            r#"SELECT a.* FROM accounts a
+               JOIN favourites f ON f.account_id = a.id
+               WHERE f.status_id = $1
+               ORDER BY f.id DESC LIMIT 80"#,
+            id,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     Ok(Json(accounts.iter().map(account_from_db).collect()))
 }
@@ -932,22 +952,42 @@ pub async fn favourited_by(
 pub async fn reblogged_by(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<super::types::Account>>> {
-    sqlx::query!("SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL", id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let (status, _) = fetch_status_with_account(&state, id).await?;
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+    if let Some(vid) = viewer_id {
+        check_status_visible(&state, &status, vid).await?;
+    } else if status.visibility == "private" || status.visibility == "direct" {
+        return Err(AppError::NotFound);
+    }
 
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN statuses s ON s.account_id = a.id
-           WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
-           ORDER BY s.id DESC LIMIT 80"#,
-        id,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let accounts = if let Some(vid) = viewer_id {
+        sqlx::query_as!(
+            Account,
+            r#"SELECT a.* FROM accounts a
+               JOIN statuses s ON s.account_id = a.id
+               WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM blocks WHERE account_id = $2 AND target_account_id = a.id
+                 )
+               ORDER BY s.id DESC LIMIT 80"#,
+            id, vid,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            Account,
+            r#"SELECT a.* FROM accounts a
+               JOIN statuses s ON s.account_id = a.id
+               WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
+               ORDER BY s.id DESC LIMIT 80"#,
+            id,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     Ok(Json(accounts.iter().map(account_from_db).collect()))
 }

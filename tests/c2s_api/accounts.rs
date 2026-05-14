@@ -187,6 +187,19 @@ async fn test_account_statuses_tagged_returns_200() {
 
 // ── follow lifecycle ──────────────────────────────────────────────────────────
 
+/// Following your own account returns 403.
+#[tokio::test]
+async fn test_self_follow_returns_403() {
+    let ctx = TestContext::new("self-follow").await;
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
 /// Following an unlocked account is immediately accepted.
 #[tokio::test]
 async fn test_follow_unlocked_account_is_accepted() {
