@@ -105,7 +105,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/follow_requests/{id}/authorize", post(accounts::authorize_follow_request))
         .route("/api/v1/follow_requests/{id}/reject", post(accounts::reject_follow_request))
         // Statuses — authenticated writes
-        .route("/api/v1/statuses", post(statuses::post_status))
+        .route("/api/v1/statuses", get(statuses::get_statuses_batch).post(statuses::post_status))
         .route("/api/v1/statuses/{id}", delete(statuses::delete_status).put(statuses::edit_status))
         .route("/api/v1/statuses/{id}/favourite", post(statuses::favourite_status))
         .route("/api/v1/statuses/{id}/unfavourite", post(statuses::unfavourite_status))

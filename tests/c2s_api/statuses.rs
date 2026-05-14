@@ -1429,6 +1429,51 @@ async fn test_status_language_field() {
 
 // ── scheduled statuses ────────────────────────────────────────────────────────
 
+// ── batch GET statuses ────────────────────────────────────────────────────────
+
+/// GET /api/v1/statuses?id[]=... returns the requested statuses.
+#[tokio::test]
+async fn test_batch_get_statuses() {
+    let ctx = TestContext::new("batch-get").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "batch status 1", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "batch status 2", "public").await;
+    let id1 = s1["id"].as_str().unwrap();
+    let id2 = s2["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/statuses?id[]={id1}&id[]={id2}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let statuses: Vec<Value> = resp.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&id1), "s1 missing from batch result");
+    assert!(ids.contains(&id2), "s2 missing from batch result");
+}
+
+/// GET /api/v1/statuses?id[]=... skips private statuses not visible to viewer.
+#[tokio::test]
+async fn test_batch_get_statuses_skips_invisible() {
+    let ctx = TestContext::new("batch-skip").await;
+
+    let prv = ctx.api.post_status(&ctx.alice_token, "batch private", "private").await;
+    let pub_s = ctx.api.post_status(&ctx.alice_token, "batch public", "public").await;
+    let prv_id = prv["id"].as_str().unwrap();
+    let pub_id = pub_s["id"].as_str().unwrap();
+
+    // Bob is not following Alice, so the private status should be silently skipped.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses?id[]={prv_id}&id[]={pub_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(!ids.contains(&prv_id), "private status should be silently skipped in batch");
+    assert!(ids.contains(&pub_id), "public status should be in batch result");
+}
+
+// ── scheduled statuses ────────────────────────────────────────────────────────
+
 /// POST /api/v1/statuses with scheduled_at returns a scheduled status (201).
 #[tokio::test]
 async fn test_create_scheduled_status() {

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, FromRequest, Multipart, Path, State},
+    extract::{Extension, FromRequest, Multipart, Path, RawQuery, State},
     http::header,
     Json,
 };
@@ -404,6 +404,65 @@ async fn extract_post_status_form(request: axum::extract::Request) -> AppResult<
 }
 
 // ── GET /api/v1/statuses/:id ───────────────────────────────────────────────
+
+// ── GET /api/v1/statuses (batch) ──────────────────────────────────────────
+
+pub async fn get_statuses_batch(
+    State(state): State<AppState>,
+    RawQuery(qs): RawQuery,
+    auth: Option<Extension<AuthenticatedUser>>,
+) -> AppResult<Json<Vec<Status>>> {
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+
+    let ids: Vec<i64> = url::form_urlencoded::parse(qs.as_deref().unwrap_or("").as_bytes())
+        .filter(|(k, _)| k == "id[]" || k == "id")
+        .filter_map(|(_, v)| v.parse::<i64>().ok())
+        .take(100)
+        .collect();
+
+    let mut result = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Ok((status, account)) = fetch_status_with_account(&state, id).await else {
+            continue;
+        };
+        match status.visibility.as_str() {
+            "private" => {
+                let is_author = viewer_id == Some(status.account_id);
+                let is_follower = if let Some(vid) = viewer_id {
+                    sqlx::query_scalar!(
+                        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                        vid, status.account_id
+                    )
+                    .fetch_optional(&state.db)
+                    .await?
+                    .is_some()
+                } else {
+                    false
+                };
+                if !is_author && !is_follower {
+                    continue;
+                }
+            }
+            "direct" => {
+                if viewer_id != Some(status.account_id) {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        let media = fetch_status_media(&state, id).await?;
+        let reblog = fetch_reblog_data(&state, &status).await?;
+        let viewer_ctx = if let Some(vid) = viewer_id {
+            Some(build_viewer_context(&state, vid, id).await?)
+        } else {
+            None
+        };
+        result.push(build_status(&state, &status, &account, media, reblog, viewer_ctx).await?);
+    }
+    Ok(Json(result))
+}
+
+// ── GET /api/v1/statuses/:id ──────────────────────────────────────────────
 
 pub async fn get_status(
     State(state): State<AppState>,
