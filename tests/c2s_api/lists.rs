@@ -384,3 +384,155 @@ async fn test_list_timeline_since_id_pagination() {
         "s2 should appear when since_id=s1_id",
     );
 }
+
+/// Accounts in an exclusive list are excluded from home timeline.
+#[tokio::test]
+async fn test_exclusive_list_excludes_from_home_timeline() {
+    let ctx = TestContext::new("excl-list-home").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Exclusive", "exclusive": true}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "exclusivetermXYZ", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Bob's status should NOT appear on Alice's home timeline (exclusive list).
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !home.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "exclusive list member's status should be excluded from home timeline",
+    );
+
+    // But it should appear on the list timeline.
+    let list_tl: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        list_tl.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "exclusive list member's status should appear on list timeline",
+    );
+}
+
+/// List timeline with replies_policy=none hides replies.
+#[tokio::test]
+async fn test_list_timeline_replies_policy_none() {
+    let ctx = TestContext::new("list-rep-none").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "NoReplies", "replies_policy": "none"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    // Normal post
+    let s1 = ctx.api.post_status(&ctx.bob_token, "not a reply", "public").await;
+    let s1_id = s1["id"].as_str().unwrap();
+    // Reply to own status
+    let s2: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &serde_json::json!({"status": "a reply here", "visibility": "public", "in_reply_to_id": s1_id}),
+    ).await.json().await.unwrap();
+    let s2_id = s2["id"].as_str().unwrap();
+
+    let list_tl: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        list_tl.iter().any(|s| s["id"].as_str() == Some(s1_id)),
+        "non-reply should appear in list with replies_policy=none",
+    );
+    assert!(
+        !list_tl.iter().any(|s| s["id"].as_str() == Some(s2_id)),
+        "reply should be hidden in list with replies_policy=none",
+    );
+}
+
+/// List timeline with replies_policy=list shows replies only when replying to another list member.
+#[tokio::test]
+async fn test_list_timeline_replies_policy_list() {
+    let ctx = TestContext::new("list-rep-list").await;
+
+    // Create a third user (charlie) inline.
+    let (charlie_id, charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie", "charlie@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "ListPolicy", "replies_policy": "list"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    // Add bob but not charlie to the list.
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let charlie_post = ctx.api.post_status(&charlie_token, "charlie says hi", "public").await;
+    let charlie_post_id = charlie_post["id"].as_str().unwrap();
+
+    let bob_post = ctx.api.post_status(&ctx.bob_token, "bob says hi", "public").await;
+    let bob_post_id = bob_post["id"].as_str().unwrap();
+
+    // Bob replies to Charlie (not in list) — should be hidden.
+    let reply_to_charlie: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &serde_json::json!({"status": "reply to charlie", "visibility": "public", "in_reply_to_id": charlie_post_id}),
+    ).await.json().await.unwrap();
+    let reply_to_charlie_id = reply_to_charlie["id"].as_str().unwrap();
+
+    // Bob replies to his own post (bob is in list) — should be visible.
+    let reply_to_bob: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &serde_json::json!({"status": "reply to bob", "visibility": "public", "in_reply_to_id": bob_post_id}),
+    ).await.json().await.unwrap();
+    let reply_to_bob_id = reply_to_bob["id"].as_str().unwrap();
+
+    let list_tl: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !list_tl.iter().any(|s| s["id"].as_str() == Some(reply_to_charlie_id)),
+        "reply to non-list-member should be hidden with replies_policy=list",
+    );
+    assert!(
+        list_tl.iter().any(|s| s["id"].as_str() == Some(reply_to_bob_id)),
+        "reply to list member should be visible with replies_policy=list",
+    );
+}

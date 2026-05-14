@@ -162,6 +162,11 @@ pub async fn home_timeline(
                        AND f.show_reblogs = false
                    )
                )
+               AND (s.account_id = $1 OR NOT EXISTS (
+                   SELECT 1 FROM list_accounts la
+                   JOIN lists l ON l.id = la.list_id
+                   WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
+               ))
                AND ($2::bigint IS NULL OR s.id > $2)
                AND (s.text != '' OR s.content != ''
                     OR s.reblog_of_id IS NOT NULL
@@ -203,6 +208,11 @@ pub async fn home_timeline(
                        AND f.show_reblogs = false
                    )
                )
+               AND (s.account_id = $1 OR NOT EXISTS (
+                   SELECT 1 FROM list_accounts la
+                   JOIN lists l ON l.id = la.list_id
+                   WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
+               ))
                AND ($2::bigint IS NULL OR s.id < $2)
                AND ($3::bigint IS NULL OR s.id > $3)
                AND (s.text != '' OR s.content != ''
@@ -235,8 +245,8 @@ pub async fn list_timeline(
     Query(q): Query<PaginationParams>,
 ) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:statuses")?;
-    sqlx::query!(
-        "SELECT id FROM lists WHERE id = $1 AND account_id = $2",
+    let list = sqlx::query!(
+        "SELECT id, replies_policy FROM lists WHERE id = $1 AND account_id = $2",
         list_id, auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -247,10 +257,29 @@ pub async fn list_timeline(
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let replies_policy = list.replies_policy.as_str();
+
+    // replies_policy values:
+    //   "none"     — exclude all replies
+    //   "list"     — include replies only when the in-reply-to author is also in this list
+    //   "followed" — include replies only when the in-reply-to author is followed by the viewer
+    let reply_filter = match replies_policy {
+        "none" => "AND s.in_reply_to_id IS NULL",
+        "list" => "AND (s.in_reply_to_id IS NULL OR EXISTS (
+                       SELECT 1 FROM statuses s2
+                       JOIN list_accounts la2 ON la2.account_id = s2.account_id
+                       WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1))",
+        _ => "AND (s.in_reply_to_id IS NULL OR EXISTS (
+                   SELECT 1 FROM statuses s2
+                   WHERE s2.id = s.in_reply_to_id
+                     AND (s2.account_id = $5 OR EXISTS (
+                         SELECT 1 FROM follows f
+                         WHERE f.account_id = $5 AND f.target_account_id = s2.account_id AND f.state = 'accepted'
+                     ))))",
+    };
 
     let statuses = if min_id.is_some() {
-        sqlx::query_as!(
-            DbStatus,
+        let sql = format!(
             r#"SELECT s.* FROM statuses s
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
@@ -259,15 +288,20 @@ pub async fn list_timeline(
                  AND (s.text != '' OR s.content != ''
                       OR s.reblog_of_id IS NOT NULL
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 {reply_filter}
                ORDER BY s.id ASC
-               LIMIT $3"#,
-            list_id, min_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+               LIMIT $3"#
+        );
+        sqlx::query_as::<_, DbStatus>(&sql)
+            .bind(list_id)
+            .bind(min_id)
+            .bind(limit)
+            .bind(Option::<i64>::None)
+            .bind(auth.account_id)
+            .fetch_all(&state.db)
+            .await?
     } else {
-        sqlx::query_as!(
-            DbStatus,
+        let sql = format!(
             r#"SELECT s.* FROM statuses s
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
@@ -277,12 +311,18 @@ pub async fn list_timeline(
                  AND (s.text != '' OR s.content != ''
                       OR s.reblog_of_id IS NOT NULL
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 {reply_filter}
                ORDER BY s.id DESC
-               LIMIT $4"#,
-            list_id, max_id, since_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+               LIMIT $4"#
+        );
+        sqlx::query_as::<_, DbStatus>(&sql)
+            .bind(list_id)
+            .bind(max_id)
+            .bind(since_id)
+            .bind(limit)
+            .bind(auth.account_id)
+            .fetch_all(&state.db)
+            .await?
     };
 
     let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
