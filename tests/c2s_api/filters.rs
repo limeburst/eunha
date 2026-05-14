@@ -156,6 +156,80 @@ async fn test_filter_v2_crud() {
     assert_eq!(del_resp.status(), StatusCode::OK);
 }
 
+// ── filter statuses (v2) ──────────────────────────────────────────────────────
+
+/// Full filter_statuses lifecycle: create filter → add status → list → get → delete.
+#[tokio::test]
+async fn test_filter_statuses_crud() {
+    let ctx = TestContext::new("filter-statuses").await;
+
+    // Create a filter.
+    let filter: Value = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Status filter",
+            "context": ["home"],
+            "filter_action": "hide"
+        }),
+    ).await.json().await.unwrap();
+    let filter_id = filter["id"].as_str().unwrap();
+
+    // Post a status to attach.
+    let status = ctx.api.post_status(&ctx.alice_token, "filtered status", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Add status to filter.
+    let add_resp = ctx.api.post_json(
+        &format!("/api/v2/filters/{filter_id}/statuses"),
+        Some(&ctx.alice_token),
+        &json!({"status_id": status_id}),
+    ).await;
+    assert_eq!(add_resp.status(), StatusCode::OK);
+    let fs: Value = add_resp.json().await.unwrap();
+    let fs_id = fs["id"].as_str().unwrap().to_string();
+    assert_eq!(fs["status_id"].as_str(), Some(status_id));
+
+    // List filter statuses.
+    let list: Vec<Value> = ctx.api.get(
+        &format!("/api/v2/filters/{filter_id}/statuses"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(list.iter().any(|s| s["status_id"].as_str() == Some(status_id)));
+
+    // Get individual filter status.
+    let get_resp = ctx.api.get(
+        &format!("/api/v2/filter_statuses/{fs_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let fs2: Value = get_resp.json().await.unwrap();
+    assert_eq!(fs2["status_id"].as_str(), Some(status_id));
+
+    // Delete filter status.
+    let del_resp = ctx.api.delete(
+        &format!("/api/v2/filter_statuses/{fs_id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del_resp.status(), StatusCode::OK);
+
+    // Verify deleted.
+    let after: Vec<Value> = ctx.api.get(
+        &format!("/api/v2/filters/{filter_id}/statuses"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(!after.iter().any(|s| s["status_id"].as_str() == Some(status_id)));
+}
+
+/// GET /api/v2/filter_statuses/:id for unknown id returns 404.
+#[tokio::test]
+async fn test_get_filter_status_not_found() {
+    let ctx = TestContext::new("filter-status-404").await;
+
+    let resp = ctx.api.get("/api/v2/filter_statuses/99999999", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 // ── v1 filter whole_word reflects database value ───────────────────────────────
 
 /// The v1 filter whole_word field reads from the keyword row, not hardcoded.

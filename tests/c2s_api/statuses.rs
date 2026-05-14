@@ -1298,6 +1298,95 @@ async fn test_vote_poll_twice_returns_422() {
     assert_eq!(second.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// Voting on a single-choice poll with multiple choices returns 422.
+#[tokio::test]
+async fn test_vote_poll_multiple_choices_on_single_poll_returns_422() {
+    let ctx = TestContext::new("poll-multi-fail").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "Single choice!",
+            "visibility": "public",
+            "poll": {"options": ["A", "B", "C"], "expires_in": 86400, "multiple": false}
+        }),
+    ).await.json().await.unwrap();
+    let poll_id = status["poll"]["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/polls/{poll_id}/votes"),
+        Some(&ctx.bob_token),
+        &json!({"choices": [0, 1]}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Voting with an out-of-bounds choice index returns 422.
+#[tokio::test]
+async fn test_vote_poll_invalid_choice_index_returns_422() {
+    let ctx = TestContext::new("poll-oob").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "Two choices",
+            "visibility": "public",
+            "poll": {"options": ["A", "B"], "expires_in": 86400}
+        }),
+    ).await.json().await.unwrap();
+    let poll_id = status["poll"]["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/polls/{poll_id}/votes"),
+        Some(&ctx.bob_token),
+        &json!({"choices": [99]}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// GET /api/v1/polls/:id for unknown id returns 404.
+#[tokio::test]
+async fn test_get_poll_not_found() {
+    let ctx = TestContext::new("poll-404").await;
+
+    let resp = ctx.api.get(
+        "/api/v1/polls/00000000-0000-0000-0000-000000000000",
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// A multiple-choice poll allows selecting several options.
+#[tokio::test]
+async fn test_vote_poll_multiple_choice_allowed() {
+    let ctx = TestContext::new("poll-multi-ok").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "Multi choice!",
+            "visibility": "public",
+            "poll": {"options": ["A", "B", "C"], "expires_in": 86400, "multiple": true}
+        }),
+    ).await.json().await.unwrap();
+    let poll_id = status["poll"]["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/polls/{poll_id}/votes"),
+        Some(&ctx.bob_token),
+        &json!({"choices": [0, 2]}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let poll: Value = resp.json().await.unwrap();
+    assert_eq!(poll["voted"].as_bool(), Some(true));
+    let own_votes = poll["own_votes"].as_array().unwrap();
+    assert!(own_votes.contains(&json!(0)));
+    assert!(own_votes.contains(&json!(2)));
+}
+
 // ── status sensitive and language ─────────────────────────────────────────────
 
 /// Status with sensitive=true has sensitive=true in the response.

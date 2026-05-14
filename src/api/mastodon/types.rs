@@ -562,6 +562,12 @@ pub struct Filter {
 }
 
 #[derive(Debug, Serialize)]
+pub struct FilterStatus {
+    pub id: String,
+    pub status_id: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct FilterKeyword {
     pub id: String,
     pub keyword: String,

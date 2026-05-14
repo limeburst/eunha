@@ -10,7 +10,7 @@ use crate::{
     middleware::AuthenticatedUser,
     state::AppState,
 };
-use super::types::{Filter, FilterKeyword, FilterV1};
+use super::types::{Filter, FilterKeyword, FilterStatus, FilterV1};
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -398,6 +398,128 @@ pub async fn delete_filter_keyword(
            USING custom_filters f
            WHERE fk.id = $1 AND fk.custom_filter_id = f.id AND f.account_id = $2
            RETURNING fk.id"#,
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if deleted.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v2/filters/:id/statuses ─────────────────────────────────────
+
+pub async fn get_filter_statuses(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<FilterStatus>>> {
+    auth.require_scope("read:filters")?;
+    let exists = sqlx::query_scalar!(
+        "SELECT 1 FROM custom_filters WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let rows = sqlx::query!(
+        "SELECT id, status_id FROM custom_filter_statuses WHERE custom_filter_id = $1 ORDER BY id",
+        id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(rows.into_iter().map(|r| FilterStatus {
+        id: r.id.to_string(),
+        status_id: r.status_id.to_string(),
+    }).collect()))
+}
+
+// ── POST /api/v2/filters/:id/statuses ────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AddFilterStatusForm {
+    pub status_id: String,
+}
+
+pub async fn add_filter_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<AddFilterStatusForm>,
+) -> AppResult<(StatusCode, Json<FilterStatus>)> {
+    auth.require_scope("write:filters")?;
+    let exists = sqlx::query_scalar!(
+        "SELECT 1 FROM custom_filters WHERE id = $1 AND account_id = $2",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let status_id: i64 = form.status_id.parse().map_err(|_| AppError::NotFound)?;
+
+    let row_id = sqlx::query_scalar!(
+        "INSERT INTO custom_filter_statuses (custom_filter_id, status_id) VALUES ($1, $2) RETURNING id",
+        id, status_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok((StatusCode::OK, Json(FilterStatus {
+        id: row_id.to_string(),
+        status_id: status_id.to_string(),
+    })))
+}
+
+// ── GET /api/v2/filter_statuses/:id ──────────────────────────────────────
+
+pub async fn get_filter_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<FilterStatus>> {
+    auth.require_scope("read:filters")?;
+    let row = sqlx::query!(
+        r#"SELECT fs.id, fs.status_id
+           FROM custom_filter_statuses fs
+           JOIN custom_filters f ON f.id = fs.custom_filter_id
+           WHERE fs.id = $1 AND f.account_id = $2"#,
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(FilterStatus {
+        id: row.id.to_string(),
+        status_id: row.status_id.to_string(),
+    }))
+}
+
+// ── DELETE /api/v2/filter_statuses/:id ───────────────────────────────────
+
+pub async fn delete_filter_status(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:filters")?;
+    let deleted = sqlx::query_scalar!(
+        r#"DELETE FROM custom_filter_statuses fs
+           USING custom_filters f
+           WHERE fs.id = $1 AND fs.custom_filter_id = f.id AND f.account_id = $2
+           RETURNING fs.id"#,
         id, auth.account_id,
     )
     .fetch_optional(&state.db)
