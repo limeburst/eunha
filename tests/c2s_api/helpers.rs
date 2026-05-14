@@ -121,6 +121,27 @@ impl ApiClient {
         req.send().await.unwrap()
     }
 
+    /// PATCH with multipart/form-data (required by update_credentials).
+    pub async fn patch_multipart(
+        &self,
+        path: &str,
+        token: &str,
+        fields: &[(&'static str, &str)],
+    ) -> reqwest::Response {
+        let mut form = reqwest::multipart::Form::new();
+        for (k, v) in fields {
+            form = form.text(*k, v.to_string());
+        }
+        self.http
+            .patch(self.url(path))
+            .header("host", &self.host)
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .unwrap()
+    }
+
     // ── convenience helpers ──────────────────────────────────────────────
 
     /// POST /api/v1/statuses with JSON body, returns the status JSON.

@@ -17,12 +17,17 @@
 mod helpers;
 
 mod accounts;
+mod blocks;
+mod bookmarks;
 mod conversations;
+mod favourites;
 mod filters;
+mod follow_requests;
 mod instance;
 mod invites;
 mod lists;
 mod markers;
+mod mutes;
 mod notifications;
 mod reports;
 mod search;
