@@ -103,6 +103,50 @@ async fn test_conversations_since_id() {
     assert!(new_id > old_id, "since_id should only return conversations newer than anchor");
 }
 
+/// GET /api/v1/conversations max_id returns only conversations older than the given id.
+#[tokio::test]
+async fn test_conversations_max_id() {
+    let ctx = TestContext::new("conv-maxid").await;
+
+    // First DM — older conversation.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "@bob conv maxid old", "visibility": "direct"}),
+    ).await;
+
+    let convs_first: Vec<Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!convs_first.is_empty());
+    let old_id = convs_first[0]["id"].as_str().unwrap().to_string();
+
+    // Delete so next DM is a new conversation with a higher id.
+    ctx.api.delete(&format!("/api/v1/conversations/{old_id}"), &ctx.bob_token).await;
+
+    // Second DM — newer conversation.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "@bob conv maxid new", "visibility": "direct"}),
+    ).await;
+
+    let convs_all: Vec<Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!convs_all.is_empty());
+    let new_id = convs_all[0]["id"].as_str().unwrap().to_string();
+
+    // max_id=new_id should exclude new_id and return only older ones.
+    let with_max: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/conversations?max_id={new_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !with_max.iter().any(|c| c["id"].as_str() == Some(new_id.as_str())),
+        "max_id conversation itself should be excluded",
+    );
+}
+
 /// Sender also sees their own conversation.
 #[tokio::test]
 async fn test_conversations_visible_to_sender() {
