@@ -45,6 +45,33 @@ async fn test_admin_list_accounts() {
     }
 }
 
+/// GET /api/v1/admin/accounts?username=alice returns only alice.
+#[tokio::test]
+async fn test_admin_list_accounts_filter_by_username() {
+    let ctx = TestContext::new("admin-list-user").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v1/admin/accounts?username=alice", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(!list.is_empty(), "expected alice");
+    for acc in &list {
+        assert_eq!(acc["username"].as_str(), Some("alice"), "non-alice account in filtered results");
+    }
+}
+
+/// GET /api/v1/admin/accounts?limit=1 returns at most 1 account.
+#[tokio::test]
+async fn test_admin_list_accounts_limit() {
+    let ctx = TestContext::new("admin-list-limit").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v1/admin/accounts?limit=1", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.len() <= 1, "limit=1 should return at most 1 account, got {}", list.len());
+}
+
 /// GET /api/v1/admin/accounts/:id returns a specific account.
 #[tokio::test]
 async fn test_admin_get_account() {
