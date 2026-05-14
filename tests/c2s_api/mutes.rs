@@ -45,6 +45,23 @@ async fn test_mutes_requires_auth() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// GET /api/v1/mutes with limit=1 returns at most 1 account.
+#[tokio::test]
+async fn test_mutes_limit_param() {
+    let ctx = TestContext::new("mutes-limit").await;
+
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    let resp = ctx.api.get("/api/v1/mutes?limit=1", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Vec<Value> = resp.json().await.unwrap();
+    assert!(body.len() <= 1, "limit=1 should return at most 1 muted account");
+}
+
 /// Muting then unmuting removes the account from the list.
 #[tokio::test]
 async fn test_mutes_unmute_removes_from_list() {

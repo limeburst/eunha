@@ -45,6 +45,24 @@ async fn test_blocks_requires_auth() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// GET /api/v1/blocks with limit=1 returns at most 1 account.
+#[tokio::test]
+async fn test_blocks_limit_param() {
+    let ctx = TestContext::new("blocks-limit").await;
+
+    // Alice blocks bob (so alice has at least 1 block).
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    let resp = ctx.api.get("/api/v1/blocks?limit=1", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Vec<Value> = resp.json().await.unwrap();
+    assert!(body.len() <= 1, "limit=1 should return at most 1 block");
+}
+
 /// Blocking an account then unblocking it removes it from the list.
 #[tokio::test]
 async fn test_blocks_unblock_removes_from_list() {
