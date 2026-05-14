@@ -87,6 +87,22 @@ impl ApiClient {
             .unwrap()
     }
 
+    pub async fn delete_json(
+        &self,
+        path: &str,
+        token: &str,
+        body: &serde_json::Value,
+    ) -> reqwest::Response {
+        self.http
+            .delete(self.url(path))
+            .header("host", &self.host)
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await
+            .unwrap()
+    }
+
     pub async fn put_json(
         &self,
         path: &str,

@@ -17,9 +17,11 @@
 mod helpers;
 
 mod accounts;
+mod apps;
 mod blocks;
 mod bookmarks;
 mod conversations;
+mod domain_blocks;
 mod favourites;
 mod filters;
 mod follow_requests;

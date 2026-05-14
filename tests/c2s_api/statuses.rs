@@ -331,6 +331,94 @@ async fn test_reblog_increments_count() {
     assert_eq!(updated["reblogs_count"].as_i64().unwrap_or(0), before + 1);
 }
 
+/// Reblog response wraps the original in a `reblog` field with reblogged=true.
+#[tokio::test]
+async fn test_reblog_response_shape() {
+    let ctx = TestContext::new("reblog-shape").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "reblog shape", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp: Value = ctx
+        .api
+        .post_json(&format!("/api/v1/statuses/{id}/reblog"), Some(&ctx.bob_token), &json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["reblog"]["id"].as_str(), Some(id), "reblog.id should be the original status id");
+    assert_eq!(resp["reblog"]["reblogged"], true, "reblog.reblogged should be true");
+    assert_eq!(resp["reblog"]["reblogs_count"].as_i64(), Some(1));
+}
+
+/// Unreblog response is the original status at the top level with reblogged=false.
+#[tokio::test]
+async fn test_unreblog_response_shape() {
+    let ctx = TestContext::new("unreblog-shape").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "unreblog shape", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api
+        .post_json(&format!("/api/v1/statuses/{id}/reblog"), Some(&ctx.bob_token), &json!({}))
+        .await;
+
+    let resp: Value = ctx
+        .api
+        .post_json(&format!("/api/v1/statuses/{id}/unreblog"), Some(&ctx.bob_token), &json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["id"].as_str(), Some(id), "unreblog should return the original status");
+    assert_eq!(resp["reblogged"], false, "reblogged should be false after unreblog");
+    assert_eq!(resp["reblogs_count"].as_i64(), Some(0));
+}
+
+// ── conversation mute ─────────────────────────────────────────────────────────
+
+/// POST /api/v1/statuses/:id/mute sets muted=true on the status.
+#[tokio::test]
+async fn test_conversation_mute() {
+    let ctx = TestContext::new("conv-mute").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "mutable conv", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx
+        .api
+        .post_json(&format!("/api/v1/statuses/{id}/mute"), Some(&ctx.alice_token), &json!({}))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["muted"], true, "status should be muted after POST .../mute");
+}
+
+/// POST /api/v1/statuses/:id/unmute sets muted=false on the status.
+#[tokio::test]
+async fn test_conversation_unmute() {
+    let ctx = TestContext::new("conv-unmute").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "unmutable conv", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api
+        .post_json(&format!("/api/v1/statuses/{id}/mute"), Some(&ctx.alice_token), &json!({}))
+        .await;
+
+    let resp = ctx
+        .api
+        .post_json(&format!("/api/v1/statuses/{id}/unmute"), Some(&ctx.alice_token), &json!({}))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["muted"], false, "status should be unmuted after POST .../unmute");
+}
+
 // ── status thread & context ──────────────────────────────────────────────────
 
 /// A reply has in_reply_to_id set to the parent status id.
