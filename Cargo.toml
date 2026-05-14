@@ -24,6 +24,10 @@ path = "src/bin/upload_media.rs"
 name = "eunha-init-r2"
 path = "src/bin/init_r2.rs"
 
+[[bin]]
+name = "eunha-send-test-push"
+path = "src/bin/send_test_push.rs"
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["multipart", "macros", "ws"] }
