@@ -535,6 +535,51 @@ async fn test_home_timeline_includes_followed_tag_statuses() {
     );
 }
 
+/// Authenticated viewer does not see blocked account's statuses on public timeline.
+#[tokio::test]
+async fn test_public_timeline_hides_blocked_accounts() {
+    let ctx = TestContext::new("pub-tl-block").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "block-me-public post", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let timeline: Vec<Value> = ctx.api.get("/api/v1/timelines/public", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !timeline.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "blocked account's statuses should be hidden from public timeline",
+    );
+}
+
+/// Authenticated viewer does not see blocking account's statuses on public timeline.
+#[tokio::test]
+async fn test_public_timeline_hides_accounts_that_blocked_viewer() {
+    let ctx = TestContext::new("pub-tl-blocked-by").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "bob-blocked-alice post", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Bob blocks Alice.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let timeline: Vec<Value> = ctx.api.get("/api/v1/timelines/public", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !timeline.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "statuses from accounts that blocked the viewer should be hidden from public timeline",
+    );
+}
+
 /// Statuses with a followed tag do NOT appear on home timeline if the account is muted.
 #[tokio::test]
 async fn test_home_timeline_followed_tag_muted_account_excluded() {

@@ -44,6 +44,7 @@ pub async fn public_timeline(
     let local_only = q.local.unwrap_or(false);
     let remote_only = q.remote.unwrap_or(false);
     let only_media = q.only_media.unwrap_or(false);
+    let viewer_id: Option<uuid::Uuid> = auth.as_ref().map(|Extension(a)| a.account_id);
 
     // min_id: return oldest items just after min_id (ASC); else DESC
     let statuses = if min_id.is_some() {
@@ -66,6 +67,11 @@ pub async fn public_timeline(
                  AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 AND ($7::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $7 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $7)
+                 ))
                ORDER BY s.id ASC
                LIMIT $4"#,
             local_only,
@@ -74,6 +80,7 @@ pub async fn public_timeline(
             limit,
             remote_only,
             only_media,
+            viewer_id,
         )
         .fetch_all(&state.db)
         .await?
@@ -98,6 +105,11 @@ pub async fn public_timeline(
                  AND (NOT $7::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 AND ($8::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $8)
+                 ))
                ORDER BY s.id DESC
                LIMIT $4"#,
             local_only,
@@ -107,12 +119,12 @@ pub async fn public_timeline(
             since_id,
             remote_only,
             only_media,
+            viewer_id,
         )
         .fetch_all(&state.db)
         .await?
     };
 
-    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     let result = build_status_list(&state, statuses, viewer_id).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
@@ -399,6 +411,8 @@ pub async fn tag_timeline(
                      WHERE st2.status_id = s.id AND lower(t2.name) = ANY($7)
                  ))"#;
 
+    let viewer_id: Option<uuid::Uuid> = auth.as_ref().map(|Extension(a)| a.account_id);
+
     let statuses: Vec<DbStatus> = if min_id.is_some() {
         let sql = format!(
             r#"SELECT s.* FROM statuses s
@@ -406,6 +420,11 @@ pub async fn tag_timeline(
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
                  AND ($3::bigint IS NULL OR s.id > $3)
+                 AND ($8::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $8)
+                 ))
                ORDER BY s.id ASC
                LIMIT $4"#
         );
@@ -417,6 +436,7 @@ pub async fn tag_timeline(
             .bind(&any_tags)
             .bind(&all_tags)
             .bind(&none_tags)
+            .bind(viewer_id)
             .fetch_all(&state.db)
             .await?
     } else {
@@ -427,6 +447,11 @@ pub async fn tag_timeline(
                {base_conditions}
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($4::bigint IS NULL OR s.id > $4)
+                 AND ($9::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $9 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $9)
+                 ))
                ORDER BY s.id DESC
                LIMIT $8"#
         );
@@ -439,11 +464,10 @@ pub async fn tag_timeline(
             .bind(&all_tags)
             .bind(&none_tags)
             .bind(limit)
+            .bind(viewer_id)
             .fetch_all(&state.db)
             .await?
     };
-
-    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     let result = build_status_list(&state, statuses, viewer_id).await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
