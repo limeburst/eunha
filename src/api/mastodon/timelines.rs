@@ -139,10 +139,20 @@ pub async fn home_timeline(
             r#"SELECT s.*
                FROM statuses s
                JOIN accounts a ON a.id = s.account_id
-               WHERE s.account_id IN (
-                   SELECT target_account_id FROM follows
-                   WHERE account_id = $1 AND state = 'accepted'
-                   UNION ALL SELECT $1
+               WHERE (
+                   s.account_id IN (
+                       SELECT target_account_id FROM follows
+                       WHERE account_id = $1 AND state = 'accepted'
+                       UNION ALL SELECT $1
+                   )
+                   OR (
+                       s.visibility = 'public'
+                       AND EXISTS (
+                           SELECT 1 FROM status_tags st
+                           JOIN tag_follows tf ON tf.tag_id = st.tag_id
+                           WHERE st.status_id = s.id AND tf.account_id = $1
+                       )
+                   )
                )
                AND s.deleted_at IS NULL
                AND a.suspended_at IS NULL
@@ -185,10 +195,20 @@ pub async fn home_timeline(
             r#"SELECT s.*
                FROM statuses s
                JOIN accounts a ON a.id = s.account_id
-               WHERE s.account_id IN (
-                   SELECT target_account_id FROM follows
-                   WHERE account_id = $1 AND state = 'accepted'
-                   UNION ALL SELECT $1
+               WHERE (
+                   s.account_id IN (
+                       SELECT target_account_id FROM follows
+                       WHERE account_id = $1 AND state = 'accepted'
+                       UNION ALL SELECT $1
+                   )
+                   OR (
+                       s.visibility = 'public'
+                       AND EXISTS (
+                           SELECT 1 FROM status_tags st
+                           JOIN tag_follows tf ON tf.tag_id = st.tag_id
+                           WHERE st.status_id = s.id AND tf.account_id = $1
+                       )
+                   )
                )
                AND s.deleted_at IS NULL
                AND a.suspended_at IS NULL

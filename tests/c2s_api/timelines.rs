@@ -509,3 +509,58 @@ async fn test_public_timeline_viewer_context() {
         "authenticated viewer should see favourited=true for a status they liked",
     );
 }
+
+/// Public statuses with a followed tag appear on the home timeline even from non-followed accounts.
+#[tokio::test]
+async fn test_home_timeline_includes_followed_tag_statuses() {
+    let ctx = TestContext::new("home-tl-tag").await;
+
+    // Alice follows #rustlang, Bob does not follow Alice.
+    ctx.api.post_json(
+        "/api/v1/tags/rustlang/follow",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob posts a public status with #rustlang.
+    let status = ctx.api.post_status(&ctx.bob_token, "I love #rustlang today", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // The status should appear on Alice's home timeline even though she doesn't follow Bob.
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        home.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "status with followed tag should appear in home timeline",
+    );
+}
+
+/// Statuses with a followed tag do NOT appear on home timeline if the account is muted.
+#[tokio::test]
+async fn test_home_timeline_followed_tag_muted_account_excluded() {
+    let ctx = TestContext::new("home-tl-tag-mute").await;
+
+    ctx.api.post_json(
+        "/api/v1/tags/mutedtag42/follow",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Alice mutes Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob posts a public status with #mutedtag42.
+    let status = ctx.api.post_status(&ctx.bob_token, "muted but tagged #mutedtag42", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !home.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "muted account's status should not appear in home timeline even if it has a followed tag",
+    );
+}
