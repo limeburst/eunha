@@ -38,6 +38,40 @@ async fn test_search_statuses() {
     );
 }
 
+/// Search without a type param returns accounts, statuses, and hashtags.
+#[tokio::test]
+async fn test_search_all_types() {
+    let ctx = TestContext::new("search-all").await;
+
+    ctx.api.post_status(&ctx.alice_token, "searching #alltype999 here", "public").await;
+
+    let body: Value = ctx.api.get(
+        "/api/v2/search?q=alltype999",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(body["accounts"].is_array(), "accounts missing from search result");
+    assert!(body["statuses"].is_array(), "statuses missing from search result");
+    assert!(body["hashtags"].is_array(), "hashtags missing from search result");
+}
+
+/// Search with limit=1 returns at most one result per category.
+#[tokio::test]
+async fn test_search_limit_param() {
+    let ctx = TestContext::new("search-limit").await;
+
+    ctx.api.post_status(&ctx.alice_token, "limitterm888", "public").await;
+    ctx.api.post_status(&ctx.alice_token, "limitterm888 second", "public").await;
+
+    let body: Value = ctx.api.get(
+        "/api/v2/search?q=limitterm888&type=statuses&limit=1",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let statuses = body["statuses"].as_array().unwrap();
+    assert!(statuses.len() <= 1, "limit=1 should return at most 1 status, got {}", statuses.len());
+}
+
 /// GET /api/v2/search?type=hashtags finds tags created by posting.
 #[tokio::test]
 async fn test_search_hashtags() {
