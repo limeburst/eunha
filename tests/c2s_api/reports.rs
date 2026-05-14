@@ -72,6 +72,41 @@ async fn test_report_category_is_saved() {
     }
 }
 
+/// POST /api/v1/reports with forward=true saves the forwarded flag.
+#[tokio::test]
+async fn test_report_forward_flag() {
+    let ctx = TestContext::new("report-fwd").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/reports",
+        Some(&ctx.alice_token),
+        &json!({
+            "account_id": ctx.bob_id,
+            "comment": "forwarded report",
+            "forward": true
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let report: Value = resp.json().await.unwrap();
+    assert!(report["id"].as_str().is_some(), "report id missing");
+}
+
+/// POST /api/v1/reports requires authentication.
+#[tokio::test]
+async fn test_file_report_requires_auth() {
+    let ctx = TestContext::new("report-unauth").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/reports",
+        None,
+        &json!({
+            "account_id": ctx.bob_id,
+            "comment": "unauthenticated report attempt"
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
 /// POST /api/v1/reports for an unknown account_id returns 404.
 #[tokio::test]
 async fn test_file_report_unknown_account() {
