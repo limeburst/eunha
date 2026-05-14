@@ -450,6 +450,82 @@ async fn test_get_notifications_v2() {
     assert!(follow_group.is_some(), "no follow notification group found");
 }
 
+/// GET /api/v1/notifications?since_id=X returns only notifications newer than X.
+#[tokio::test]
+async fn test_notifications_since_id_pagination() {
+    let ctx = TestContext::new("notif-since-id").await;
+
+    // First notification: alice follows bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let first_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!first_notifs.is_empty(), "expected a follow notification");
+    let first_id = first_notifs.last().unwrap()["id"].as_str().unwrap().to_string();
+
+    // Second notification: alice favourites bob's status.
+    let status = ctx.api.post_status(&ctx.bob_token, "since_id target", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let all_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(all_notifs.len() >= 2, "expected at least 2 notifications total");
+
+    // since_id should return only notifications newer than first_id.
+    let since_notifs: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/notifications?since_id={first_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !since_notifs.iter().any(|n| n["id"].as_str() == Some(&first_id)),
+        "since_id notification itself should be excluded",
+    );
+    assert!(
+        since_notifs.iter().any(|n| n["type"].as_str() == Some("favourite")),
+        "favourite notification (newer) should appear with since_id filter",
+    );
+}
+
+/// GET /api/v1/notifications?max_id=X returns only notifications older than X.
+#[tokio::test]
+async fn test_notifications_max_id_pagination() {
+    let ctx = TestContext::new("notif-max-id").await;
+
+    // First notification: alice follows bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Second notification: alice favourites bob's status.
+    let status = ctx.api.post_status(&ctx.bob_token, "max_id target", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let all_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(all_notifs.len() >= 2, "expected at least 2 notifications");
+    // Notifications are newest-first; take the newest id as the max_id.
+    let newest_id = all_notifs[0]["id"].as_str().unwrap().to_string();
+
+    let max_id_notifs: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/notifications?max_id={newest_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !max_id_notifs.iter().any(|n| n["id"].as_str() == Some(&newest_id)),
+        "max_id notification itself should be excluded",
+    );
+}
+
 /// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
 #[tokio::test]
 async fn test_notifications_limit_80_is_accepted() {
