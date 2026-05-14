@@ -205,6 +205,25 @@ async fn test_account_statuses_max_id_pagination() {
     assert!(ids.contains(&s1_id), "s1 should be included when max_id={s2_id}");
 }
 
+/// ?since_id pagination on account statuses returns only statuses newer than since_id.
+#[tokio::test]
+async fn test_account_statuses_since_id_pagination() {
+    let ctx = TestContext::new("acct-stat-since").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "since first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "since second", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?since_id={s1_id}", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(!ids.contains(&s1_id.as_str()), "since_id={s1_id} should exclude s1");
+    assert!(ids.contains(&s2_id.as_str()), "s2 should appear when since_id={s1_id}");
+}
+
 /// ?tagged=<name> endpoint returns 200 (filtering implementation tracked separately).
 #[tokio::test]
 async fn test_account_statuses_tagged_returns_200() {
