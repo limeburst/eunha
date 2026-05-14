@@ -241,6 +241,7 @@ pub async fn get_account_statuses(
     let limit = q.pagination.limit_clamped(20, 40);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let is_self = viewer_id == Some(account.id);
     let is_follower = if !is_self {
@@ -260,49 +261,93 @@ pub async fn get_account_statuses(
     };
 
     let tagged_lower = q.tagged.as_deref().map(|t| t.to_lowercase());
-    let statuses = sqlx::query_as!(
-        crate::db::models::Status,
-        r#"SELECT statuses.* FROM statuses
-           WHERE account_id = $1
-             AND deleted_at IS NULL
-             AND ($2::bigint IS NULL OR id < $2)
-             AND ($3::bigint IS NULL OR id > $3)
-             AND ($4::boolean IS NOT TRUE OR reblog_of_id IS NULL)
-             AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL)
-             AND (
-               visibility IN ('public', 'unlisted')
-               OR ($6::boolean = true)
-               OR ($7::boolean = true AND visibility = 'private')
-             )
-             AND (
-               text != '' OR content != ''
-               OR reblog_of_id IS NOT NULL
-               OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
-             )
-             AND ($9::boolean IS NOT TRUE OR
-               EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id) OR
-               (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
-             )
-             AND ($10::text IS NULL OR EXISTS (
-               SELECT 1 FROM status_tags st
-               JOIN tags t ON t.id = st.tag_id
-               WHERE st.status_id = statuses.id AND t.name = $10
-             ))
-           ORDER BY id DESC
-           LIMIT $8"#,
-        account.id,
-        max_id,
-        since_id,
-        q.exclude_reblogs.unwrap_or(false),
-        q.exclude_replies.unwrap_or(false),
-        is_self,
-        is_follower,
-        limit,
-        q.only_media.unwrap_or(false),
-        tagged_lower,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let statuses = if min_id.is_some() {
+        sqlx::query_as!(
+            crate::db::models::Status,
+            r#"SELECT statuses.* FROM statuses
+               WHERE account_id = $1
+                 AND deleted_at IS NULL
+                 AND ($2::bigint IS NULL OR id > $2)
+                 AND ($3::boolean IS NOT TRUE OR reblog_of_id IS NULL)
+                 AND ($4::boolean IS NOT TRUE OR in_reply_to_id IS NULL)
+                 AND (
+                   visibility IN ('public', 'unlisted')
+                   OR ($5::boolean = true)
+                   OR ($6::boolean = true AND visibility = 'private')
+                 )
+                 AND (
+                   text != '' OR content != ''
+                   OR reblog_of_id IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
+                 )
+                 AND ($8::boolean IS NOT TRUE OR
+                   EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id) OR
+                   (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
+                 )
+                 AND ($9::text IS NULL OR EXISTS (
+                   SELECT 1 FROM status_tags st
+                   JOIN tags t ON t.id = st.tag_id
+                   WHERE st.status_id = statuses.id AND t.name = $9
+                 ))
+               ORDER BY id ASC
+               LIMIT $7"#,
+            account.id,
+            min_id,
+            q.exclude_reblogs.unwrap_or(false),
+            q.exclude_replies.unwrap_or(false),
+            is_self,
+            is_follower,
+            limit,
+            q.only_media.unwrap_or(false),
+            tagged_lower,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            crate::db::models::Status,
+            r#"SELECT statuses.* FROM statuses
+               WHERE account_id = $1
+                 AND deleted_at IS NULL
+                 AND ($2::bigint IS NULL OR id < $2)
+                 AND ($3::bigint IS NULL OR id > $3)
+                 AND ($4::boolean IS NOT TRUE OR reblog_of_id IS NULL)
+                 AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL)
+                 AND (
+                   visibility IN ('public', 'unlisted')
+                   OR ($6::boolean = true)
+                   OR ($7::boolean = true AND visibility = 'private')
+                 )
+                 AND (
+                   text != '' OR content != ''
+                   OR reblog_of_id IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
+                 )
+                 AND ($9::boolean IS NOT TRUE OR
+                   EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id) OR
+                   (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
+                 )
+                 AND ($10::text IS NULL OR EXISTS (
+                   SELECT 1 FROM status_tags st
+                   JOIN tags t ON t.id = st.tag_id
+                   WHERE st.status_id = statuses.id AND t.name = $10
+                 ))
+               ORDER BY id DESC
+               LIMIT $8"#,
+            account.id,
+            max_id,
+            since_id,
+            q.exclude_reblogs.unwrap_or(false),
+            q.exclude_replies.unwrap_or(false),
+            is_self,
+            is_follower,
+            limit,
+            q.only_media.unwrap_or(false),
+            tagged_lower,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let effective_ids: Vec<i64> = statuses.iter()
         .map(|s| s.reblog_of_id.unwrap_or(s.id))

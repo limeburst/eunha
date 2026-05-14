@@ -224,6 +224,33 @@ async fn test_account_statuses_since_id_pagination() {
     assert!(ids.contains(&s2_id.as_str()), "s2 should appear when since_id={s1_id}");
 }
 
+/// ?min_id returns statuses newer than the anchor, in ascending order.
+#[tokio::test]
+async fn test_account_statuses_min_id_pagination() {
+    let ctx = TestContext::new("acct-stat-min").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "min first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "min second", "public").await;
+    let s3 = ctx.api.post_status(&ctx.alice_token, "min third", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+    let s3_id = s3["id"].as_str().unwrap().to_string();
+
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?min_id={s1_id}", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+
+    assert!(!ids.contains(&s1_id.as_str()), "min_id anchor should not appear");
+    assert!(ids.contains(&s2_id.as_str()), "s2 should appear");
+    assert!(ids.contains(&s3_id.as_str()), "s3 should appear");
+
+    let s2_pos = ids.iter().position(|&id| id == s2_id).unwrap();
+    let s3_pos = ids.iter().position(|&id| id == s3_id).unwrap();
+    assert!(s2_pos < s3_pos, "results should be in ascending order for min_id");
+}
+
 /// ?tagged=<name> endpoint returns 200 (filtering implementation tracked separately).
 #[tokio::test]
 async fn test_account_statuses_tagged_returns_200() {
