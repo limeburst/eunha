@@ -119,7 +119,7 @@ async fn publish_one(
     .execute(&state.db)
     .await?;
 
-    store_status_tags(state, status.id, &hashtags).await?;
+    store_status_tags(state, status.id, account.id, &hashtags).await?;
     store_status_mentions(state, status.id, &resolved).await?;
 
     sqlx::query!(

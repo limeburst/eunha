@@ -164,7 +164,7 @@ pub async fn post_status(
     .await?;
 
     // Store tags and mentions
-    store_status_tags(&state, status.id, &hashtags).await?;
+    store_status_tags(&state, status.id, account.id, &hashtags).await?;
     store_status_mentions(&state, status.id, &resolved).await?;
 
     // Manage conversation for direct messages
@@ -546,6 +546,25 @@ pub async fn delete_status(
     sqlx::query!(
         "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
         account.id
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Recalculate featured_tags counts now that this status is soft-deleted
+    sqlx::query!(
+        r#"UPDATE featured_tags ft
+           SET statuses_count = (
+               SELECT COUNT(*) FROM status_tags st
+               JOIN statuses s ON s.id = st.status_id
+               WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
+           ),
+           last_status_at = (
+               SELECT MAX(s.created_at) FROM status_tags st
+               JOIN statuses s ON s.id = st.status_id
+               WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
+           )
+           WHERE ft.account_id = $1"#,
+        account.id,
     )
     .execute(&state.db)
     .await?;
@@ -1119,7 +1138,7 @@ pub async fn edit_status(
     .execute(&state.db)
     .await?;
 
-    store_status_tags(&state, id, &hashtags).await?;
+    store_status_tags(&state, id, auth.account_id, &hashtags).await?;
     store_status_mentions(&state, id, &resolved).await?;
 
     let (updated_status, _) = fetch_status_with_account(&state, id).await?;
@@ -1577,7 +1596,7 @@ pub fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (Str
     map
 }
 
-pub async fn store_status_tags(state: &AppState, status_id: i64, hashtags: &[String]) -> AppResult<()> {
+pub async fn store_status_tags(state: &AppState, status_id: i64, account_id: uuid::Uuid, hashtags: &[String]) -> AppResult<()> {
     sqlx::query!("DELETE FROM status_tags WHERE status_id = $1", status_id)
         .execute(&state.db)
         .await?;
@@ -1597,6 +1616,24 @@ pub async fn store_status_tags(state: &AppState, status_id: i64, hashtags: &[Str
         .execute(&state.db)
         .await?;
     }
+    // Recalculate statuses_count and last_status_at for all featured tags of this account
+    sqlx::query!(
+        r#"UPDATE featured_tags ft
+           SET statuses_count = (
+               SELECT COUNT(*) FROM status_tags st
+               JOIN statuses s ON s.id = st.status_id
+               WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
+           ),
+           last_status_at = (
+               SELECT MAX(s.created_at) FROM status_tags st
+               JOIN statuses s ON s.id = st.status_id
+               WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
+           )
+           WHERE ft.account_id = $1"#,
+        account_id,
+    )
+    .execute(&state.db)
+    .await?;
     Ok(())
 }
 
