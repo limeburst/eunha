@@ -1584,6 +1584,110 @@ async fn test_list_scheduled_statuses() {
     assert!(list[0]["scheduled_at"].as_str().is_some());
 }
 
+/// GET /api/v1/scheduled_statuses/:id returns a single scheduled status.
+#[tokio::test]
+async fn test_get_scheduled_status() {
+    let ctx = TestContext::new("sched-get").await;
+
+    let created: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "get scheduled",
+            "visibility": "public",
+            "scheduled_at": "2099-07-01T00:00:00Z"
+        }),
+    ).await.json().await.unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/scheduled_statuses/{id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"].as_str(), Some(id));
+    assert!(body["scheduled_at"].as_str().is_some());
+}
+
+/// GET /api/v1/scheduled_statuses/:id returns 404 for another user's scheduled status.
+#[tokio::test]
+async fn test_get_scheduled_status_other_user_is_404() {
+    let ctx = TestContext::new("sched-get-other").await;
+
+    let created: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "alice scheduled",
+            "visibility": "public",
+            "scheduled_at": "2099-08-01T00:00:00Z"
+        }),
+    ).await.json().await.unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/scheduled_statuses/{id}"),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// PUT /api/v1/scheduled_statuses/:id updates the scheduled_at time.
+#[tokio::test]
+async fn test_update_scheduled_status() {
+    let ctx = TestContext::new("sched-update").await;
+
+    let created: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "update scheduled",
+            "visibility": "public",
+            "scheduled_at": "2099-09-01T00:00:00Z"
+        }),
+    ).await.json().await.unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let resp = ctx.api.put_json(
+        &format!("/api/v1/scheduled_statuses/{id}"),
+        Some(&ctx.alice_token),
+        &json!({"scheduled_at": "2099-10-01T00:00:00Z"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["scheduled_at"].as_str().unwrap().contains("2099-10"), "scheduled_at should be updated");
+}
+
+/// DELETE /api/v1/scheduled_statuses/:id cancels a scheduled status.
+#[tokio::test]
+async fn test_delete_scheduled_status() {
+    let ctx = TestContext::new("sched-del").await;
+
+    let created: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "delete scheduled",
+            "visibility": "public",
+            "scheduled_at": "2099-11-01T00:00:00Z"
+        }),
+    ).await.json().await.unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let del_resp = ctx.api.delete(
+        &format!("/api/v1/scheduled_statuses/{id}"),
+        &ctx.alice_token,
+    ).await;
+    assert_eq!(del_resp.status(), StatusCode::OK);
+
+    let not_found = ctx.api.get(
+        &format!("/api/v1/scheduled_statuses/{id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(not_found.status(), StatusCode::NOT_FOUND);
+}
+
 // ── mentions and tags in status response ──────────────────────────────────────
 
 /// A status with @username mention includes the mentioned account in the mentions array.

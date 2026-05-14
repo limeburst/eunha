@@ -228,6 +228,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         // Scheduled statuses
         .route("/api/v1/scheduled_statuses", get(scheduled_statuses::list_scheduled_statuses))
+        .route("/api/v1/scheduled_statuses/{id}", get(scheduled_statuses::get_scheduled_status).put(scheduled_statuses::update_scheduled_status).delete(scheduled_statuses::delete_scheduled_status))
         // Media — 25 MB limit matching Mastodon's default
         .route("/api/v1/media", post(media::upload_media))
         .route("/api/v2/media", post(media::upload_media))
