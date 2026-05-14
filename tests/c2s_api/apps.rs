@@ -135,3 +135,25 @@ async fn test_register_multiple_apps() {
         "two apps should get distinct client_ids"
     );
 }
+
+/// POST /oauth/revoke invalidates a token so it can no longer be used.
+#[tokio::test]
+async fn test_revoke_token() {
+    let ctx = TestContext::new("apps-revoke").await;
+
+    // Verify that the token is currently valid.
+    let before = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token)).await;
+    assert_eq!(before.status(), StatusCode::OK, "token should be valid before revocation");
+
+    // Revoke it.
+    let revoke_resp = ctx.api.post_json(
+        "/oauth/revoke",
+        None,
+        &serde_json::json!({"token": ctx.alice_token}),
+    ).await;
+    assert_eq!(revoke_resp.status(), StatusCode::OK);
+
+    // After revocation the token should no longer work.
+    let after = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token)).await;
+    assert_eq!(after.status(), StatusCode::UNAUTHORIZED, "revoked token should return 401");
+}
