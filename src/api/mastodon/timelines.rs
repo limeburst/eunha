@@ -273,41 +273,80 @@ pub async fn tag_timeline(
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let tag_name = hashtag.to_lowercase();
 
-    let statuses = if min_id.is_some() {
-        sqlx::query_as!(
-            DbStatus,
-            r#"SELECT s.* FROM statuses s
-               JOIN status_tags st ON st.status_id = s.id
-               JOIN tags t ON t.id = st.tag_id
+    let collect_tag_filter = |key_plain: &str, key_bracket: &str| -> Option<Vec<String>> {
+        let v: Vec<String> = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+            .filter(|(k, _)| k == key_plain || k == key_bracket)
+            .map(|(_, v)| v.to_lowercase())
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    };
+    let any_tags = collect_tag_filter("any", "any[]");
+    let all_tags = collect_tag_filter("all", "all[]");
+    let none_tags = collect_tag_filter("none", "none[]");
+
+    let base_conditions = r#"
                WHERE lower(t.name) = $1
                  AND s.instance_id = $2
                  AND s.visibility = 'public'
                  AND s.deleted_at IS NULL
+                 AND ($5::text[] IS NULL OR EXISTS (
+                     SELECT 1 FROM status_tags st2
+                     JOIN tags t2 ON t2.id = st2.tag_id
+                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($5)
+                 ))
+                 AND ($6::text[] IS NULL OR (
+                     SELECT COUNT(DISTINCT lower(t2.name))
+                     FROM status_tags st2 JOIN tags t2 ON t2.id = st2.tag_id
+                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($6)
+                 ) = array_length($6, 1))
+                 AND ($7::text[] IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM status_tags st2
+                     JOIN tags t2 ON t2.id = st2.tag_id
+                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($7)
+                 ))"#;
+
+    let statuses: Vec<DbStatus> = if min_id.is_some() {
+        let sql = format!(
+            r#"SELECT s.* FROM statuses s
+               JOIN status_tags st ON st.status_id = s.id
+               JOIN tags t ON t.id = st.tag_id
+               {base_conditions}
                  AND ($3::bigint IS NULL OR s.id > $3)
                ORDER BY s.id ASC
-               LIMIT $4"#,
-            tag_name, instance.id, min_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+               LIMIT $4"#
+        );
+        sqlx::query_as(&sql)
+            .bind(&tag_name)
+            .bind(instance.id)
+            .bind(min_id)
+            .bind(limit)
+            .bind(&any_tags)
+            .bind(&all_tags)
+            .bind(&none_tags)
+            .fetch_all(&state.db)
+            .await?
     } else {
-        sqlx::query_as!(
-            DbStatus,
+        let sql = format!(
             r#"SELECT s.* FROM statuses s
                JOIN status_tags st ON st.status_id = s.id
                JOIN tags t ON t.id = st.tag_id
-               WHERE lower(t.name) = $1
-                 AND s.instance_id = $2
-                 AND s.visibility = 'public'
-                 AND s.deleted_at IS NULL
+               {base_conditions}
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($4::bigint IS NULL OR s.id > $4)
                ORDER BY s.id DESC
-               LIMIT $5"#,
-            tag_name, instance.id, max_id, since_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+               LIMIT $8"#
+        );
+        sqlx::query_as(&sql)
+            .bind(&tag_name)
+            .bind(instance.id)
+            .bind(max_id)
+            .bind(since_id)
+            .bind(&any_tags)
+            .bind(&all_tags)
+            .bind(&none_tags)
+            .bind(limit)
+            .fetch_all(&state.db)
+            .await?
     };
 
     let result = build_status_list(&state, statuses, None).await?;

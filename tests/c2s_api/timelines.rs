@@ -223,6 +223,54 @@ async fn test_tag_timeline() {
     );
 }
 
+/// Tag timeline any[] returns statuses that contain the primary tag AND at least one of the any tags.
+#[tokio::test]
+async fn test_tag_timeline_any_filter() {
+    let ctx = TestContext::new("tag-any").await;
+
+    // Status with both tags.
+    let both = ctx.api.post_status(&ctx.alice_token, "has #anyfilter and #secondary", "public").await;
+    let both_id = both["id"].as_str().unwrap();
+
+    // Status with only the primary tag.
+    let primary_only = ctx.api.post_status(&ctx.alice_token, "has #anyfilter only", "public").await;
+    let primary_only_id = primary_only["id"].as_str().unwrap();
+
+    // any[]=secondary → only status with both tags.
+    let timeline: Vec<Value> = ctx.api.get(
+        "/api/v1/timelines/tag/anyfilter?any[]=secondary",
+        None,
+    ).await.json().await.unwrap();
+
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&both_id), "status with both tags should be in any[] result");
+    assert!(!ids.contains(&primary_only_id), "status with only primary tag should be excluded by any[]");
+}
+
+/// Tag timeline none[] excludes statuses that contain any of the none tags.
+#[tokio::test]
+async fn test_tag_timeline_none_filter() {
+    let ctx = TestContext::new("tag-none").await;
+
+    // Status with both the primary tag and a banned tag.
+    let with_banned = ctx.api.post_status(&ctx.alice_token, "has #nonefilter and #banned", "public").await;
+    let with_banned_id = with_banned["id"].as_str().unwrap();
+
+    // Status with only the primary tag.
+    let clean = ctx.api.post_status(&ctx.alice_token, "has #nonefilter only", "public").await;
+    let clean_id = clean["id"].as_str().unwrap();
+
+    // none[]=banned → only the clean status.
+    let timeline: Vec<Value> = ctx.api.get(
+        "/api/v1/timelines/tag/nonefilter?none[]=banned",
+        None,
+    ).await.json().await.unwrap();
+
+    let ids: Vec<&str> = timeline.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&clean_id), "status without banned tag should appear");
+    assert!(!ids.contains(&with_banned_id), "status with banned tag should be excluded by none[]");
+}
+
 /// A reblog by a followed account appears in the home timeline.
 #[tokio::test]
 async fn test_reblog_appears_in_home_timeline() {

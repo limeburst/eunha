@@ -709,6 +709,76 @@ async fn test_update_credentials_locked() {
     assert_eq!(rel["requested"].as_bool(), Some(true));
 }
 
+/// PATCH /api/v1/accounts/update_credentials with source[privacy] updates default posting visibility.
+#[tokio::test]
+async fn test_update_credentials_source_privacy() {
+    let ctx = TestContext::new("update-privacy").await;
+
+    let form = reqwest::multipart::Form::new()
+        .text("source[privacy]", "private");
+
+    let resp = ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify via verify_credentials.
+    let creds: Value = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(creds["source"]["privacy"].as_str(), Some("private"));
+}
+
+/// PATCH /api/v1/accounts/update_credentials with source[sensitive] updates default sensitivity.
+#[tokio::test]
+async fn test_update_credentials_source_sensitive() {
+    let ctx = TestContext::new("update-sensitive").await;
+
+    let form = reqwest::multipart::Form::new()
+        .text("source[sensitive]", "true");
+
+    let resp = ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let creds: Value = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(creds["source"]["sensitive"].as_bool(), Some(true));
+}
+
+/// PATCH /api/v1/accounts/update_credentials with source[language] updates default language.
+#[tokio::test]
+async fn test_update_credentials_source_language() {
+    let ctx = TestContext::new("update-lang").await;
+
+    let form = reqwest::multipart::Form::new()
+        .text("source[language]", "fr");
+
+    let resp = ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let creds: Value = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(creds["source"]["language"].as_str(), Some("fr"));
+}
+
 // ── familiar followers ────────────────────────────────────────────────────────
 
 /// GET /api/v1/accounts/familiar_followers returns an array of familiar-followers objects.
