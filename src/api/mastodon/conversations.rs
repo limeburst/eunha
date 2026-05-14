@@ -25,6 +25,7 @@ pub async fn get_conversations(
 ) -> AppResult<Json<Vec<Conversation>>> {
     let limit = pagination.limit_clamped(20, 40);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
         r#"SELECT c.id, cp.unread
@@ -32,11 +33,13 @@ pub async fn get_conversations(
            JOIN conversation_participants cp ON cp.conversation_id = c.id
            WHERE cp.account_id = $1
              AND ($2::bigint IS NULL OR c.id < $2)
+             AND ($4::bigint IS NULL OR c.id > $4)
            ORDER BY c.updated_at DESC
            LIMIT $3"#,
         auth.account_id,
         max_id,
         limit,
+        since_id,
     )
     .fetch_all(&state.db)
     .await?;

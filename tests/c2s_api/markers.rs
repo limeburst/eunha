@@ -49,6 +49,28 @@ async fn test_markers_notifications() {
     assert_eq!(markers["notifications"]["last_read_id"].as_str(), Some(notif_id));
 }
 
+/// The updated_at field on a marker is an ISO 8601 timestamp (RFC 3339 format).
+#[tokio::test]
+async fn test_marker_updated_at_is_iso8601() {
+    let ctx = TestContext::new("markers-ts").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "ts marker test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp: serde_json::Value = ctx.api.post_form(
+        "/api/v1/markers",
+        Some(&ctx.alice_token),
+        &[("home[last_read_id]", id)],
+    ).await.json().await.unwrap();
+
+    let ts = resp["home"]["updated_at"].as_str().expect("updated_at missing");
+    // RFC 3339 ends with 'Z' or a numeric offset like +00:00.
+    assert!(
+        ts.contains('T') && (ts.ends_with('Z') || ts.contains('+')),
+        "updated_at is not ISO 8601: {ts}",
+    );
+}
+
 /// Updating the home marker increments the version.
 #[tokio::test]
 async fn test_marker_version_increments() {

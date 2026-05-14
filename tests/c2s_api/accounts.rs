@@ -727,6 +727,23 @@ async fn test_familiar_followers_returns_array() {
     assert!(list[0]["accounts"].is_array());
 }
 
+/// Passing the same id twice returns only one entry (deduplication).
+#[tokio::test]
+async fn test_familiar_followers_deduplicates_ids() {
+    let ctx = TestContext::new("familiar-dedup").await;
+
+    let resp = ctx.api.get(
+        &format!(
+            "/api/v1/accounts/familiar_followers?id[]={}&id[]={}",
+            ctx.bob_id, ctx.bob_id
+        ),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(list.len(), 1, "duplicate id[] should be collapsed to one entry");
+}
+
 // ── suggestions ───────────────────────────────────────────────────────────────
 
 /// GET /api/v1/suggestions returns a JSON array.

@@ -1869,11 +1869,13 @@ pub async fn get_familiar_followers(
     Extension(auth): Extension<AuthenticatedUser>,
     RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
+    let mut seen = std::collections::HashSet::new();
     let ids: Vec<Uuid> = url::form_urlencoded::parse(
             qs.as_deref().unwrap_or("").as_bytes()
         )
         .filter(|(k, _)| k == "id[]" || k == "id")
         .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .filter(|id| seen.insert(*id))
         .collect();
 
     let mut result = Vec::with_capacity(ids.len());
