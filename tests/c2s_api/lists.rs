@@ -283,3 +283,83 @@ async fn test_list_timeline() {
         "Bob's status should appear in the list timeline",
     );
 }
+
+/// List timeline respects max_id pagination.
+#[tokio::test]
+async fn test_list_timeline_max_id_pagination() {
+    let ctx = TestContext::new("list-tl-maxid").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "MaxId List"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let s1 = ctx.api.post_status(&ctx.bob_token, "list maxid first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.bob_token, "list maxid second", "public").await;
+    let s1_id = s1["id"].as_str().unwrap();
+    let s2_id = s2["id"].as_str().unwrap();
+
+    let paged: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}?max_id={s2_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s2_id)),
+        "max_id status should be excluded",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s1_id)),
+        "s1 should appear when max_id=s2_id",
+    );
+}
+
+/// List timeline respects since_id pagination.
+#[tokio::test]
+async fn test_list_timeline_since_id_pagination() {
+    let ctx = TestContext::new("list-tl-since").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "SinceId List"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let s1 = ctx.api.post_status(&ctx.bob_token, "list since first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.bob_token, "list since second", "public").await;
+    let s1_id = s1["id"].as_str().unwrap();
+    let s2_id = s2["id"].as_str().unwrap();
+
+    let paged: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}?since_id={s1_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s1_id)),
+        "since_id status should be excluded",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s2_id)),
+        "s2 should appear when since_id=s1_id",
+    );
+}
