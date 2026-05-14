@@ -188,7 +188,7 @@ async fn send_one(
     };
 
     let mut builder = WebPushMessageBuilder::new(&sub_info);
-    builder.set_payload(ContentEncoding::Aes128Gcm, payload.as_bytes());
+    builder.set_payload(ContentEncoding::AesGcm, payload.as_bytes());
     builder.set_ttl(86400);
 
     let sig_builder = VapidSignatureBuilder::from_pem(
