@@ -446,7 +446,8 @@ async fn test_get_notifications_v2() {
     let groups = body["notification_groups"].as_array().unwrap();
     assert!(!groups.is_empty(), "expected at least one notification group");
 
-    let follow_group = groups.iter().find(|g| g["notification_type"].as_str() == Some("follow"));
+    // NotificationGroup serializes as "type" (serde rename), not "notification_type"
+    let follow_group = groups.iter().find(|g| g["type"].as_str() == Some("follow"));
     assert!(follow_group.is_some(), "no follow notification group found");
 }
 

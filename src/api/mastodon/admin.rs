@@ -175,9 +175,10 @@ pub async fn list_admin_accounts(
         r#"SELECT a.* FROM accounts a
            WHERE a.instance_id = $1
              AND a.domain IS NULL
+             AND ($3::text IS NULL OR a.username = $3)
            ORDER BY a.created_at DESC
            LIMIT $2"#,
-        instance_id, limit,
+        instance_id, limit, params.username.as_deref(),
     )
     .fetch_all(&state.db)
     .await?;
@@ -862,7 +863,7 @@ pub async fn get_retention(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(body): Json<RetentionRequest>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
     let instance_id = sqlx::query_scalar!(
         "SELECT instance_id FROM accounts WHERE id = $1",
@@ -879,10 +880,13 @@ pub async fn get_retention(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|d| d.with_timezone(&chrono::Utc))
         .unwrap_or_else(chrono::Utc::now);
-    let frequency = body.frequency.as_deref().unwrap_or("day");
-    let interval = if frequency == "week" { "7 days" } else { "1 day" };
+    // frequency must be a valid date_trunc unit: "day", "week", or "month"
+    let frequency = match body.frequency.as_deref().unwrap_or("day") {
+        "week" => "week",
+        "month" => "month",
+        _ => "day",
+    };
 
-    // Get each signup-period bucket and the accounts in it
     let cohort_rows = sqlx::query!(
         r#"SELECT
                date_trunc($3, a.created_at)::timestamptz AS period,
@@ -894,13 +898,12 @@ pub async fn get_retention(
            ORDER BY period"#,
         instance_id,
         start,
-        interval,
+        frequency,
         end,
     )
     .fetch_all(&state.db)
     .await?;
 
-    // Group account IDs by cohort period
     let mut cohorts: std::collections::BTreeMap<
         chrono::DateTime<chrono::Utc>,
         Vec<uuid::Uuid>,
@@ -911,15 +914,17 @@ pub async fn get_retention(
         }
     }
 
+    // Cap iterations to avoid very long loops
+    let max_periods: usize = 100;
+
     let mut data = Vec::new();
     for (period, account_ids) in &cohorts {
         let cohort_size = account_ids.len() as i64;
-        // For each subsequent period from the signup period to end, count how many
-        // of this cohort posted at least once.
         let mut retention_data = Vec::new();
         let mut check_period = *period;
-        while check_period <= end {
-            let next_period = check_period + chrono::Duration::days(if frequency == "week" { 7 } else { 1 });
+        let mut count = 0;
+        while check_period <= end && count < max_periods {
+            let next_period = advance_period(check_period, frequency);
             let active_count = sqlx::query_scalar!(
                 r#"SELECT COUNT(DISTINCT s.account_id)
                    FROM statuses s
@@ -946,16 +951,34 @@ pub async fn get_retention(
                 "value": active_count,
             }));
             check_period = next_period;
+            count += 1;
         }
 
         data.push(serde_json::json!({
             "period": period.to_rfc3339(),
+            "frequency": frequency,
             "cohort_size": cohort_size,
             "data": retention_data,
         }));
     }
 
-    Ok(Json(serde_json::json!({ "data": data })))
+    Ok(Json(data))
+}
+
+fn advance_period(dt: chrono::DateTime<chrono::Utc>, frequency: &str) -> chrono::DateTime<chrono::Utc> {
+    use chrono::Datelike;
+    match frequency {
+        "month" => {
+            let (year, month) = if dt.month() == 12 {
+                (dt.year() + 1, 1u32)
+            } else {
+                (dt.year(), dt.month() + 1)
+            };
+            dt.with_year(year).and_then(|d| d.with_month(month)).unwrap_or(dt + chrono::Duration::days(30))
+        }
+        "week" => dt + chrono::Duration::days(7),
+        _ => dt + chrono::Duration::days(1),
+    }
 }
 
 // ── Admin CustomEmoji type ────────────────────────────────────────────────

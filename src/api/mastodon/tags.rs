@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::Json,
     Extension,
 };
@@ -74,20 +74,29 @@ pub async fn get_tag(
     }))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct FollowedTagsParams {
+    limit: Option<i64>,
+}
+
 pub async fn list_followed_tags(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
+    Query(params): Query<FollowedTagsParams>,
 ) -> AppResult<Json<Vec<Tag>>> {
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let limit = params.limit.unwrap_or(100).min(200).max(1);
 
     let rows = sqlx::query!(
         r#"SELECT t.id, t.name
            FROM tag_follows tf
            JOIN tags t ON t.id = tf.tag_id
            WHERE tf.account_id = $1
-           ORDER BY t.name"#,
+           ORDER BY t.name
+           LIMIT $2"#,
         auth.account_id,
+        limit,
     )
     .fetch_all(&state.db)
     .await?;

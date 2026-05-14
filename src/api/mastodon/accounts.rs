@@ -1966,23 +1966,26 @@ pub async fn get_directory(
 
 // ── GET /api/v1/accounts (batch lookup) ──────────────────────────────────
 
-#[derive(Debug, serde::Deserialize)]
-pub struct BatchAccountsQuery {
-    #[serde(default, rename = "id[]")]
-    pub ids: Vec<Uuid>,
-}
-
 pub async fn get_accounts_batch(
     State(state): State<AppState>,
-    Query(q): Query<BatchAccountsQuery>,
+    RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
-    if q.ids.is_empty() {
+    // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
+    // Parse with form_urlencoded which correctly returns each pair separately.
+    let ids: Vec<Uuid> = url::form_urlencoded::parse(
+            qs.as_deref().unwrap_or("").as_bytes()
+        )
+        .filter(|(k, _)| k == "id[]" || k == "id")
+        .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .collect();
+
+    if ids.is_empty() {
         return Ok(Json(vec![]));
     }
     let accounts = sqlx::query_as!(
         crate::db::models::Account,
         "SELECT * FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY created_at DESC",
-        &q.ids,
+        &ids,
     )
     .fetch_all(&state.db)
     .await?;

@@ -159,9 +159,9 @@ async fn test_reblog_private_returns_403() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-/// Reblogging a direct status → 403.
+/// Reblogging a direct status by a non-recipient → 404 (status not visible).
 #[tokio::test]
-async fn test_reblog_direct_returns_403() {
+async fn test_reblog_direct_returns_404() {
     let ctx = TestContext::new("reblog-dir").await;
 
     let status = ctx.api.post_status(&ctx.alice_token, "alice direct rb", "direct").await;
@@ -175,7 +175,8 @@ async fn test_reblog_direct_returns_403() {
             &json!({}),
         )
         .await;
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    // Direct messages are hidden from non-recipients, so the server returns 404.
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 // ── authentication requirements ──────────────────────────────────────────────

@@ -249,8 +249,8 @@ pub async fn issue_token(
 
 #[derive(Debug, Deserialize)]
 pub struct RevokeRequest {
-    pub client_id: String,
-    pub client_secret: String,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
     pub token: String,
 }
 
