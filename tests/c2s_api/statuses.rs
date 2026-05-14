@@ -1510,6 +1510,37 @@ async fn test_create_scheduled_status() {
     assert!(body["params"].is_object(), "params field missing");
 }
 
+/// Posting a status increments statuses_count; deleting decrements it.
+#[tokio::test]
+async fn test_statuses_count_increments_and_decrements() {
+    let ctx = TestContext::new("stat-count").await;
+
+    let before: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None)
+        .await.json().await.unwrap();
+    let count_before = before["statuses_count"].as_i64().unwrap_or(0);
+
+    let status = ctx.api.post_status(&ctx.alice_token, "counting post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let after_post: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        after_post["statuses_count"].as_i64().unwrap_or(0),
+        count_before + 1,
+        "statuses_count should increment after posting",
+    );
+
+    ctx.api.delete(&format!("/api/v1/statuses/{id}"), &ctx.alice_token).await;
+
+    let after_del: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        after_del["statuses_count"].as_i64().unwrap_or(0),
+        count_before,
+        "statuses_count should decrement after deleting",
+    );
+}
+
 /// GET /api/v1/scheduled_statuses lists previously scheduled statuses.
 #[tokio::test]
 async fn test_list_scheduled_statuses() {
