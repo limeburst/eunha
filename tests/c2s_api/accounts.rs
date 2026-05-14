@@ -1404,3 +1404,45 @@ async fn test_update_profile_settings_returns_account() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["id"].as_str(), Some(ctx.alice_id.as_str()));
 }
+
+// ── account deletion ──────────────────────────────────────────────────────────
+
+/// DELETE /api/v1/accounts with correct password deletes the account (returns 200).
+#[tokio::test]
+async fn test_delete_account_with_valid_password() {
+    let ctx = TestContext::new("del-acct").await;
+
+    let resp = ctx.api.http
+        .delete(ctx.api.url("/api/v1/accounts"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"password": "testpassword123"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // After deletion, verify_credentials should fail (account is suspended / user row deleted).
+    let after = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token)).await;
+    assert!(
+        after.status() == StatusCode::UNAUTHORIZED || after.status() == StatusCode::FORBIDDEN,
+        "expected 401/403 after account deletion, got {}",
+        after.status(),
+    );
+}
+
+/// DELETE /api/v1/accounts with wrong password returns 401.
+#[tokio::test]
+async fn test_delete_account_wrong_password_is_401() {
+    let ctx = TestContext::new("del-acct-wrong").await;
+
+    let resp = ctx.api.http
+        .delete(ctx.api.url("/api/v1/accounts"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"password": "notmypassword"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

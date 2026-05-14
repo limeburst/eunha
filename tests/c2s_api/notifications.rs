@@ -427,6 +427,29 @@ async fn test_notification_request_dismiss_and_accept() {
     );
 }
 
+/// GET /api/v2/notifications returns notification groups with accounts and statuses sideloaded.
+#[tokio::test]
+async fn test_get_notifications_v2() {
+    let ctx = TestContext::new("notif-v2").await;
+
+    // Alice follows Bob → Bob gets a follow notification.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let resp = ctx.api.get("/api/v2/notifications", Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert!(body["notification_groups"].is_array(), "notification_groups missing");
+    assert!(body["accounts"].is_array(), "accounts missing");
+    assert!(body["statuses"].is_array(), "statuses missing");
+
+    let groups = body["notification_groups"].as_array().unwrap();
+    assert!(!groups.is_empty(), "expected at least one notification group");
+
+    let follow_group = groups.iter().find(|g| g["notification_type"].as_str() == Some("follow"));
+    assert!(follow_group.is_some(), "no follow notification group found");
+}
+
 /// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
 #[tokio::test]
 async fn test_notifications_limit_80_is_accepted() {
