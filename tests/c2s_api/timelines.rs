@@ -415,3 +415,69 @@ async fn test_tag_timeline_min_id_pagination() {
     let s3_pos = ids.iter().position(|&id| id == s3["id"].as_str().unwrap()).unwrap();
     assert!(s2_pos < s3_pos, "tag min_id results should be in ascending order");
 }
+
+/// Home timeline hides reblogs from accounts followed with show_reblogs=false.
+#[tokio::test]
+async fn test_home_timeline_hides_reblogs_when_show_reblogs_false() {
+    let ctx = TestContext::new("home-no-reblogs").await;
+
+    // Alice follows Bob with show_reblogs=false.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({"reblogs": false}),
+    ).await;
+
+    // Bob posts a status, then Alice reblogs it (Bob reblogs his own).
+    let original = ctx.api.post_status(&ctx.alice_token, "original for reblog test", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    // Bob reblogs alice's status.
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/reblog"),
+        Some(&ctx.bob_token),
+        &serde_json::json!({}),
+    ).await;
+
+    // Alice's home timeline should not contain the reblog from Bob.
+    let timeline: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let has_bob_reblog = timeline.iter().any(|s| {
+        s["account"]["id"].as_str() == Some(&ctx.bob_id)
+        && s["reblog"].is_object()
+    });
+    assert!(!has_bob_reblog, "reblog from bob should be hidden when show_reblogs=false");
+}
+
+/// Home timeline hides statuses from muted accounts.
+#[tokio::test]
+async fn test_home_timeline_hides_muted_accounts() {
+    let ctx = TestContext::new("home-muted").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "bob status before mute", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Verify it appears before mute.
+    let before: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        before.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "bob's status should appear before mute",
+    );
+
+    // Alice mutes Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !after.iter().any(|s| s["account"]["id"].as_str() == Some(&ctx.bob_id)),
+        "bob's statuses should be hidden from home timeline after mute",
+    );
+}

@@ -142,6 +142,19 @@ pub async fn home_timeline(
                AND (a.domain IS NULL OR NOT EXISTS (
                    SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                ))
+               AND NOT EXISTS (
+                   SELECT 1 FROM mutes m
+                   WHERE m.account_id = $1 AND m.target_account_id = s.account_id
+                   AND (m.expires_at IS NULL OR m.expires_at > now())
+               )
+               AND NOT (
+                   s.reblog_of_id IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM follows f
+                       WHERE f.account_id = $1 AND f.target_account_id = s.account_id
+                       AND f.show_reblogs = false
+                   )
+               )
                AND ($2::bigint IS NULL OR s.id > $2)
                AND (s.text != '' OR s.content != ''
                     OR s.reblog_of_id IS NOT NULL
@@ -170,6 +183,19 @@ pub async fn home_timeline(
                AND (a.domain IS NULL OR NOT EXISTS (
                    SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                ))
+               AND NOT EXISTS (
+                   SELECT 1 FROM mutes m
+                   WHERE m.account_id = $1 AND m.target_account_id = s.account_id
+                   AND (m.expires_at IS NULL OR m.expires_at > now())
+               )
+               AND NOT (
+                   s.reblog_of_id IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM follows f
+                       WHERE f.account_id = $1 AND f.target_account_id = s.account_id
+                       AND f.show_reblogs = false
+                   )
+               )
                AND ($2::bigint IS NULL OR s.id < $2)
                AND ($3::bigint IS NULL OR s.id > $3)
                AND (s.text != '' OR s.content != ''
