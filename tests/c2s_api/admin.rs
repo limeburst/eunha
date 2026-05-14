@@ -486,3 +486,27 @@ async fn test_admin_update_ip_block() {
     // Clean up.
     ctx.api.delete(&format!("/api/v1/admin/ip_blocks/{block_id}"), &ctx.alice_token).await;
 }
+
+/// POST /api/v1/admin/accounts/:id/reject returns 200 (suspends account).
+#[tokio::test]
+async fn test_admin_reject_account() {
+    let ctx = TestContext::new("admin-reject").await;
+    make_admin(&ctx).await;
+
+    // Create a fresh context to get an account to reject that doesn't affect other tests.
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/admin/accounts/{}/reject", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Bob should now be suspended.
+    let get_resp = ctx.api.get(
+        &format!("/api/v1/admin/accounts/{}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let acc: Value = get_resp.json().await.unwrap();
+    assert_eq!(acc["suspended"].as_bool(), Some(true), "bob should be suspended after reject");
+}
