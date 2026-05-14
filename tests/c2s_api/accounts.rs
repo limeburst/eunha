@@ -229,14 +229,25 @@ async fn test_account_statuses_since_id_pagination() {
 async fn test_account_statuses_tagged_returns_200() {
     let ctx = TestContext::new("acct-tagged-ok").await;
 
-    ctx.api.post_status(&ctx.alice_token, "post with #tagxyz888", "public").await;
+    let tagged = ctx.api.post_status(&ctx.alice_token, "post with #tagxyz888", "public").await;
+    let untagged = ctx.api.post_status(&ctx.alice_token, "post without tag", "public").await;
+    let tagged_id = tagged["id"].as_str().unwrap();
+    let untagged_id = untagged["id"].as_str().unwrap();
 
     let resp = ctx.api.get(
         &format!("/api/v1/accounts/{}/statuses?tagged=tagxyz888", ctx.alice_id),
         Some(&ctx.alice_token),
     ).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let _: Vec<Value> = resp.json().await.unwrap();
+    let statuses: Vec<Value> = resp.json().await.unwrap();
+    assert!(
+        statuses.iter().any(|s| s["id"].as_str() == Some(tagged_id)),
+        "tagged status should appear in tagged filter",
+    );
+    assert!(
+        !statuses.iter().any(|s| s["id"].as_str() == Some(untagged_id)),
+        "untagged status should not appear in tagged filter",
+    );
 }
 
 // ── follow lifecycle ──────────────────────────────────────────────────────────

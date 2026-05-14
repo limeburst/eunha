@@ -259,9 +259,10 @@ pub async fn get_account_statuses(
         false
     };
 
+    let tagged_lower = q.tagged.as_deref().map(|t| t.to_lowercase());
     let statuses = sqlx::query_as!(
         crate::db::models::Status,
-        r#"SELECT * FROM statuses
+        r#"SELECT statuses.* FROM statuses
            WHERE account_id = $1
              AND deleted_at IS NULL
              AND ($2::bigint IS NULL OR id < $2)
@@ -282,6 +283,11 @@ pub async fn get_account_statuses(
                EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id) OR
                (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
              )
+             AND ($10::text IS NULL OR EXISTS (
+               SELECT 1 FROM status_tags st
+               JOIN tags t ON t.id = st.tag_id
+               WHERE st.status_id = statuses.id AND t.name = $10
+             ))
            ORDER BY id DESC
            LIMIT $8"#,
         account.id,
@@ -293,6 +299,7 @@ pub async fn get_account_statuses(
         is_follower,
         limit,
         q.only_media.unwrap_or(false),
+        tagged_lower,
     )
     .fetch_all(&state.db)
     .await?;
