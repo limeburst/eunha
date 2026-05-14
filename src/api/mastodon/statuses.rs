@@ -336,6 +336,32 @@ pub async fn post_status(
         notified.insert(mentioned.id);
     }
 
+    // Notify followers who opted in to per-account posting notifications
+    if visibility == "public" || visibility == "unlisted" {
+        if let Ok(followers) = sqlx::query!(
+            r#"SELECT account_id FROM follows
+               WHERE target_account_id = $1 AND notify = true AND state = 'accepted'"#,
+            account.id,
+        )
+        .fetch_all(&state.db)
+        .await
+        {
+            for row in followers {
+                if notified.contains(&row.account_id) { continue; }
+                push::create_and_push(
+                    &state,
+                    row.account_id,
+                    account.id,
+                    "status",
+                    Some(status.id),
+                    format!("{} posted a new status", account.display_name),
+                    account.acct().clone(),
+                    account.avatar.clone().unwrap_or_default(),
+                ).await;
+            }
+        }
+    }
+
     Ok((axum::http::StatusCode::OK, Json(api_status)).into_response())
 }
 

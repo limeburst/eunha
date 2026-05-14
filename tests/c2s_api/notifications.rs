@@ -539,6 +539,31 @@ async fn test_notifications_limit_80_is_accepted() {
     assert_eq!(resp2.status(), reqwest::StatusCode::OK, "limit=81 should be clamped, not rejected");
 }
 
+/// Following with notify=true creates a "status" notification when the followed account posts.
+#[tokio::test]
+async fn test_notify_follow_creates_status_notification() {
+    let ctx = TestContext::new("notif-status-type").await;
+
+    // Alice follows Bob with notify=true.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({"notify": true}),
+    ).await;
+
+    // Bob posts a public status.
+    ctx.api.post_status(&ctx.bob_token, "hello notifiers", "public").await;
+
+    // Alice should have a "status" notification.
+    let body: Value = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let notifs = body.as_array().unwrap();
+    assert!(
+        notifs.iter().any(|n| n["type"].as_str() == Some("status")),
+        "expected a status notification for alice after bob posted, got: {notifs:?}",
+    );
+}
+
 /// GET /api/v2/notifications with since_id returns only newer notification groups.
 #[tokio::test]
 async fn test_notifications_v2_since_id_pagination() {
