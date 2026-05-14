@@ -301,6 +301,62 @@ async fn test_notification_filter_by_account_id() {
     }
 }
 
+// ── notification policy ───────────────────────────────────────────────────────
+
+/// GET /api/v2/notifications/policy returns the policy with all filters false by default.
+#[tokio::test]
+async fn test_notification_policy_defaults() {
+    let ctx = TestContext::new("notif-policy-defaults").await;
+
+    let resp = ctx.api.get("/api/v2/notifications/policy", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policy: Value = resp.json().await.unwrap();
+
+    assert_eq!(policy["filter_not_following"].as_bool(), Some(false));
+    assert_eq!(policy["filter_not_followers"].as_bool(), Some(false));
+    assert_eq!(policy["filter_new_accounts"].as_bool(), Some(false));
+    assert_eq!(policy["filter_private_mentions"].as_bool(), Some(false));
+    assert!(policy["summary"].is_object(), "summary field missing");
+}
+
+/// PATCH /api/v2/notifications/policy updates filter settings.
+#[tokio::test]
+async fn test_notification_policy_update() {
+    let ctx = TestContext::new("notif-policy-update").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v2/notifications/policy",
+        Some(&ctx.alice_token),
+        &json!({"filter_not_following": true}),
+    ).await;
+    // PATCH endpoint but we use post_json — need to use the HTTP client directly.
+    drop(resp);
+
+    let patch_resp = ctx.api.http
+        .patch(ctx.api.url("/api/v2/notifications/policy"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"filter_not_following": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patch_resp.status(), StatusCode::OK);
+    let policy: Value = patch_resp.json().await.unwrap();
+    assert_eq!(policy["filter_not_following"].as_bool(), Some(true));
+    assert_eq!(policy["filter_not_followers"].as_bool(), Some(false), "unchanged field should stay false");
+}
+
+/// GET /api/v1/notifications/requests returns an empty list initially.
+#[tokio::test]
+async fn test_notification_requests_empty_by_default() {
+    let ctx = TestContext::new("notif-req-empty").await;
+
+    let resp = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.is_empty(), "expected empty notification requests");
+}
+
 /// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
 #[tokio::test]
 async fn test_notifications_limit_80_is_accepted() {
