@@ -6,13 +6,5 @@ description = "Run the Rust server with hot-reload"
 run = "cargo watch -x run -w src -w migrations"
 
 [tasks.elk]
-description = "Build Elk static output (adds submodule if needed, patches plugin, generates)"
-run = '''
-if [ ! -f elk/package.json ]; then
-  git submodule add https://github.com/elk-zone/elk elk
-fi
-mkdir -p elk/plugins
-cp elk-patches/plugins/eunha.client.ts elk/app/plugins/eunha.client.ts
-sed -i.bak 's/params\.server as string || useRuntimeConfig()\.public\.defaultServer/(params.server as string) || (typeof window !== "undefined" \&\& (window as any).__eunha_instance) || useRuntimeConfig().public.defaultServer/' elk/app/plugins/0.setup-users.ts
-cd elk && pnpm install && pnpm generate
-'''
+description = "Build Elk static output"
+run = "cd elk && pnpm install && pnpm generate"
