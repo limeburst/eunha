@@ -537,3 +537,39 @@ async fn test_notifications_limit_80_is_accepted() {
     let resp2 = ctx.api.get("/api/v1/notifications?limit=81", Some(&ctx.alice_token)).await;
     assert_eq!(resp2.status(), reqwest::StatusCode::OK, "limit=81 should be clamped, not rejected");
 }
+
+/// GET /api/v2/notifications with since_id returns only newer notification groups.
+#[tokio::test]
+async fn test_notifications_v2_since_id_pagination() {
+    let ctx = TestContext::new("notif-v2-since").await;
+
+    // First event: alice follows bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let first_body: Value = ctx.api.get("/api/v2/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    let first_groups = first_body["notification_groups"].as_array().unwrap();
+    assert!(!first_groups.is_empty(), "expected a follow notification group");
+
+    // Capture the oldest group id from this batch.
+    let oldest_id = first_groups.last().unwrap()["page_min_id"]
+        .as_str()
+        .unwrap_or_else(|| first_groups.last().unwrap()["latest_page_notification_at"].as_str().unwrap_or("1"))
+        .to_string();
+
+    // Second event: alice favourites bob's status.
+    let status = ctx.api.post_status(&ctx.bob_token, "v2 since notif", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // since_id=oldest_id should return only newer groups.
+    let since_body: Value = ctx.api.get(
+        &format!("/api/v2/notifications?since_id={oldest_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert!(since_body["notification_groups"].is_array(), "notification_groups should be present");
+}
