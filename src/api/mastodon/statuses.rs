@@ -498,7 +498,8 @@ pub async fn favourite_status(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:favourites")?;
-    fetch_status_with_account(&state, id).await?;
+    let (s, _) = fetch_status_with_account(&state, id).await?;
+    check_status_visible(&state, &s, auth.account_id).await?;
 
     sqlx::query!(
         "INSERT INTO favourites (account_id, status_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
@@ -546,7 +547,8 @@ pub async fn unfavourite_status(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:favourites")?;
-    let (_, account) = fetch_status_with_account(&state, id).await?;
+    let (s, account) = fetch_status_with_account(&state, id).await?;
+    check_status_visible(&state, &s, auth.account_id).await?;
 
     sqlx::query!(
         "DELETE FROM favourites WHERE account_id = $1 AND status_id = $2",
@@ -579,6 +581,8 @@ pub async fn reblog_status(
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
     let (original, _) = fetch_status_with_account(&state, id).await?;
+    // visibility check: 404 if not visible, 403 if visible but not rebloggable
+    check_status_visible(&state, &original, auth.account_id).await?;
     if original.visibility == "private" || original.visibility == "direct" {
         return Err(AppError::Forbidden);
     }
@@ -732,6 +736,7 @@ pub async fn unreblog_status(
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
     let (status_raw, _) = fetch_status_with_account(&state, id).await?;
+    check_status_visible(&state, &status_raw, auth.account_id).await?;
 
     // Accept both the original status ID and the reblog's own ID.
     // When iOS sends the reblog wrapper's ID, resolve it to the original.
@@ -768,7 +773,8 @@ pub async fn bookmark_status(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:bookmarks")?;
-    let (_, account) = fetch_status_with_account(&state, id).await?;
+    let (s, account) = fetch_status_with_account(&state, id).await?;
+    check_status_visible(&state, &s, auth.account_id).await?;
 
     sqlx::query!(
         "INSERT INTO bookmarks (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -792,7 +798,8 @@ pub async fn unbookmark_status(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:bookmarks")?;
-    let (_, account) = fetch_status_with_account(&state, id).await?;
+    let (s, account) = fetch_status_with_account(&state, id).await?;
+    check_status_visible(&state, &s, auth.account_id).await?;
 
     sqlx::query!(
         "DELETE FROM bookmarks WHERE account_id = $1 AND status_id = $2",
@@ -818,7 +825,7 @@ pub async fn pin_status(
     auth.require_scope("write:accounts")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     if status.account_id != auth.account_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Unprocessable("Validation failed: You can only pin your own statuses".into()));
     }
     sqlx::query!(
         "INSERT INTO status_pins (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -1097,6 +1104,38 @@ pub async fn get_status_source(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// Return NotFound if `viewer_id` cannot see `status` (private/direct visibility).
+async fn check_status_visible(
+    state: &AppState,
+    status: &DbStatus,
+    viewer_id: Uuid,
+) -> AppResult<()> {
+    match status.visibility.as_str() {
+        "private" => {
+            if status.account_id == viewer_id {
+                return Ok(());
+            }
+            let is_follower = sqlx::query_scalar!(
+                "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                viewer_id, status.account_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if !is_follower {
+                return Err(AppError::NotFound);
+            }
+        }
+        "direct" => {
+            if status.account_id != viewer_id {
+                return Err(AppError::NotFound);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
 
 async fn fetch_status_with_account(state: &AppState, id: i64) -> AppResult<(DbStatus, Account)> {
     let status = sqlx::query_as!(

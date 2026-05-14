@@ -104,6 +104,39 @@ async fn test_get_direct_status_author() {
 
 // ── reblog restrictions ───────────────────────────────────────────────────────
 
+/// Reblogging a private status of a non-followed account → 404 (status not visible).
+#[tokio::test]
+async fn test_reblog_private_status_of_stranger_returns_404() {
+    let ctx = TestContext::new("reblog-prv-stranger").await;
+
+    // Alice posts private; Bob does NOT follow Alice.
+    let status = ctx.api.post_status(&ctx.alice_token, "private from stranger", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Unreblogs of a private status from a non-followed account → 404.
+#[tokio::test]
+async fn test_unreblog_private_status_of_stranger_returns_404() {
+    let ctx = TestContext::new("unreblog-prv-stranger").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "private never reblogged", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unreblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 /// Reblogging a private status → 403.
 #[tokio::test]
 async fn test_reblog_private_returns_403() {
@@ -227,6 +260,92 @@ async fn test_delete_status_by_non_author_returns_403() {
 }
 
 // ── favourites ────────────────────────────────────────────────────────────────
+
+/// Favouriting a private status of a non-followed account → 404.
+#[tokio::test]
+async fn test_favourite_private_status_of_stranger_returns_404() {
+    let ctx = TestContext::new("fav-prv-stranger").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private fav", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Favouriting a private status of a followed account → 200.
+#[tokio::test]
+async fn test_favourite_private_status_of_followed_returns_200() {
+    let ctx = TestContext::new("fav-prv-followed").await;
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private fav followed", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["favourited"].as_bool(), Some(true));
+}
+
+/// Favouriting without auth → 401.
+#[tokio::test]
+async fn test_favourite_requires_auth() {
+    let ctx = TestContext::new("fav-401").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "fav auth test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/favourite"),
+        None,
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Unfavouriting a status that was not favourited returns 200 (idempotent).
+#[tokio::test]
+async fn test_unfavourite_not_favourited_is_200() {
+    let ctx = TestContext::new("unfav-noop").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "never favourited", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unfavourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["favourited"].as_bool(), Some(false));
+}
+
+/// Unfavouriting a private status of a non-followed account → 404.
+#[tokio::test]
+async fn test_unfavourite_private_status_of_stranger_returns_404() {
+    let ctx = TestContext::new("unfav-prv-stranger").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private unfav", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unfavourite"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
 
 /// Favouriting a status increments its favourites_count by 1.
 #[tokio::test]
@@ -569,6 +688,105 @@ async fn test_spoiler_text_preserved() {
 
 // ── bookmarks ────────────────────────────────────────────────────────────────
 
+/// Bookmarking a private status of a non-followed account → 404.
+#[tokio::test]
+async fn test_bookmark_private_status_of_stranger_returns_404() {
+    let ctx = TestContext::new("bk-prv-stranger").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private bk", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/bookmark"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Bookmarking a private status of a followed account → 200.
+#[tokio::test]
+async fn test_bookmark_private_status_of_followed_returns_200() {
+    let ctx = TestContext::new("bk-prv-followed").await;
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private bk followed", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/bookmark"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["bookmarked"].as_bool(), Some(true));
+}
+
+/// Bookmarking a nonexistent status → 404.
+#[tokio::test]
+async fn test_bookmark_nonexistent_returns_404() {
+    let ctx = TestContext::new("bk-404").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses/999999999/bookmark",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Bookmarking without auth → 401.
+#[tokio::test]
+async fn test_bookmark_requires_auth() {
+    let ctx = TestContext::new("bk-401").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "bk auth test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/bookmark"),
+        None,
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Unbookmarking a status that was not bookmarked returns 200 (idempotent).
+#[tokio::test]
+async fn test_unbookmark_not_bookmarked_is_200() {
+    let ctx = TestContext::new("ubk-noop").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "never bookmarked", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unbookmark"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["bookmarked"].as_bool(), Some(false));
+}
+
+/// Unbookmarking a private status of a non-followed account → 404.
+#[tokio::test]
+async fn test_unbookmark_private_status_of_stranger_returns_404() {
+    let ctx = TestContext::new("ubk-prv-stranger").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice private ubk", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unbookmark"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 /// Bookmarking and unbookmarking a status.
 #[tokio::test]
 async fn test_bookmark_and_unbookmark() {
@@ -643,6 +861,116 @@ async fn test_pin_and_unpin() {
     assert_eq!(unpin_resp.status(), StatusCode::OK);
     let unpinned: Value = unpin_resp.json().await.unwrap();
     assert_eq!(unpinned["pinned"].as_bool(), Some(false));
+}
+
+/// Pinning a private (own) status succeeds.
+#[tokio::test]
+async fn test_pin_private_status() {
+    let ctx = TestContext::new("pin-private").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "pin my private post", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/pin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["pinned"].as_bool(), Some(true));
+}
+
+/// Pinning another user's status returns 422.
+#[tokio::test]
+async fn test_pin_other_users_status_returns_422() {
+    let ctx = TestContext::new("pin-other").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "bob's pinnable post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/pin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Pinning a nonexistent status returns 404.
+#[tokio::test]
+async fn test_pin_nonexistent_status_returns_404() {
+    let ctx = TestContext::new("pin-404").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses/999999999/pin",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Pinning without auth returns 401.
+#[tokio::test]
+async fn test_pin_requires_auth() {
+    let ctx = TestContext::new("pin-401").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "pin auth test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/pin"),
+        None,
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Unpinning a status that is not pinned returns 200 (idempotent).
+#[tokio::test]
+async fn test_unpin_not_pinned_is_200() {
+    let ctx = TestContext::new("unpin-noop").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "never pinned", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unpin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["pinned"].as_bool(), Some(false));
+}
+
+/// Unpinning a nonexistent status returns 404.
+#[tokio::test]
+async fn test_unpin_nonexistent_status_returns_404() {
+    let ctx = TestContext::new("unpin-404").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses/999999999/unpin",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Unpinning without auth returns 401.
+#[tokio::test]
+async fn test_unpin_requires_auth() {
+    let ctx = TestContext::new("unpin-401").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "unpin auth test", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unpin"),
+        None,
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── favourited_by / reblogged_by ──────────────────────────────────────────────
