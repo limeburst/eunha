@@ -62,6 +62,8 @@ pub async fn search(
     let statuses = if (search_type.is_none() || search_type == Some("statuses")) && auth.is_some() {
         let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
         let fts_query = q.q.trim().to_string();
+        let filter_account_id: Option<uuid::Uuid> = q.account_id.as_deref()
+            .and_then(|s| s.parse().ok());
         let rows = sqlx::query_as!(
             crate::db::models::Status,
             r#"SELECT s.* FROM statuses s
@@ -73,10 +75,11 @@ pub async fn search(
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
+                 AND ($4::uuid IS NULL OR s.account_id = $4)
                  AND to_tsvector('simple', coalesce(s.content, '') || ' ' || coalesce(s.text, ''))
                      @@ websearch_to_tsquery('simple', $2)
                ORDER BY s.id DESC LIMIT $3"#,
-            instance.id, fts_query, limit
+            instance.id, fts_query, limit, filter_account_id
         )
         .fetch_all(&state.db)
         .await?;

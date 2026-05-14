@@ -121,3 +121,27 @@ async fn test_search_hashtags() {
         "hashtag not found in search results",
     );
 }
+
+/// GET /api/v2/search?account_id= filters statuses to the specified account.
+#[tokio::test]
+async fn test_search_account_id_filter() {
+    let ctx = TestContext::new("search-acct-id").await;
+
+    ctx.api.post_status(&ctx.alice_token, "alicesearch uniqueword9876", "public").await;
+    ctx.api.post_status(&ctx.bob_token, "bobsearch uniqueword9876", "public").await;
+
+    // Search filtered to alice's account should only return alice's status.
+    let body: Value = ctx.api.get(
+        &format!("/api/v2/search?q=uniqueword9876&type=statuses&account_id={}", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let statuses = body["statuses"].as_array().unwrap();
+    assert!(
+        statuses.iter().all(|s| s["account"]["id"].as_str() == Some(ctx.alice_id.as_str())),
+        "search with account_id should only return that account's statuses, got: {statuses:?}",
+    );
+    assert!(
+        !statuses.is_empty(),
+        "alice's status should appear in filtered search",
+    );
+}
