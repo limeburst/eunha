@@ -574,6 +574,27 @@ async fn test_reply_sets_in_reply_to_id() {
     assert_eq!(reply["in_reply_to_id"].as_str(), Some(parent_id));
 }
 
+/// A cross-account reply sets in_reply_to_account_id to the parent author's id.
+#[tokio::test]
+async fn test_reply_sets_in_reply_to_account_id() {
+    let ctx = TestContext::new("reply-acct-id").await;
+
+    let parent = ctx.api.post_status(&ctx.alice_token, "parent for account id test", "public").await;
+    let parent_id = parent["id"].as_str().unwrap();
+
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply for acct-id", "in_reply_to_id": parent_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+
+    assert_eq!(
+        reply["in_reply_to_account_id"].as_str(),
+        Some(ctx.alice_id.as_str()),
+        "in_reply_to_account_id should be alice's id",
+    );
+}
+
 /// GET /api/v1/statuses/:id/context returns ancestors and descendants.
 #[tokio::test]
 async fn test_status_context_ancestors_and_descendants() {
@@ -1561,4 +1582,90 @@ async fn test_list_scheduled_statuses() {
         .await.json().await.unwrap();
     assert!(!list.is_empty(), "scheduled status not in list");
     assert!(list[0]["scheduled_at"].as_str().is_some());
+}
+
+// ── mentions and tags in status response ──────────────────────────────────────
+
+/// A status with @username mention includes the mentioned account in the mentions array.
+#[tokio::test]
+async fn test_status_mentions_field() {
+    let ctx = TestContext::new("status-mentions").await;
+
+    let status = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": &format!("@bob hello there"),
+            "visibility": "public"
+        }),
+    ).await.json::<Value>().await.unwrap();
+
+    let mentions = status["mentions"].as_array().expect("mentions field missing");
+    assert!(
+        mentions.iter().any(|m| m["username"].as_str() == Some("bob")),
+        "bob not in mentions: {mentions:?}",
+    );
+}
+
+/// A status with #hashtag includes the tag in the tags array.
+#[tokio::test]
+async fn test_status_tags_field() {
+    let ctx = TestContext::new("status-tags").await;
+
+    let status = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "testing #uniquetag5555 here",
+            "visibility": "public"
+        }),
+    ).await.json::<Value>().await.unwrap();
+
+    let tags = status["tags"].as_array().expect("tags field missing");
+    assert!(
+        tags.iter().any(|t| t["name"].as_str() == Some("uniquetag5555")),
+        "uniquetag5555 not in tags: {tags:?}",
+    );
+    // Each tag should have a url field.
+    for tag in tags {
+        assert!(tag["url"].as_str().is_some(), "tag missing url: {tag:?}");
+    }
+}
+
+/// GET /api/v1/notifications?since_id=X excludes the anchor and older notifications.
+#[tokio::test]
+async fn test_notifications_since_id_excludes_anchor() {
+    let ctx = TestContext::new("notif-since-anchor").await;
+
+    // First notification: alice follows bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let first_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!first_notifs.is_empty());
+    let first_id = first_notifs.last().unwrap()["id"].as_str().unwrap().to_string();
+
+    // Second notification: alice favourites bob's status.
+    let status = ctx.api.post_status(&ctx.bob_token, "since-anchor target", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // since_id=first_id excludes first_id and anything older.
+    let since_notifs: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/notifications?since_id={first_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !since_notifs.iter().any(|n| n["id"].as_str() == Some(&first_id)),
+        "since_id anchor itself should be excluded",
+    );
+    assert!(
+        since_notifs.iter().any(|n| n["type"].as_str() == Some("favourite")),
+        "favourite notification should appear after since_id anchor",
+    );
 }

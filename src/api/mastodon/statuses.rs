@@ -114,6 +114,18 @@ pub async fn post_status(
     let visibility = form.visibility.as_deref().unwrap_or("public");
     let in_reply_to_id = form.in_reply_to_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
+    // Look up the parent author for in_reply_to_account_id
+    let in_reply_to_account_id: Option<uuid::Uuid> = if let Some(parent_id) = in_reply_to_id {
+        sqlx::query_scalar!(
+            "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            parent_id,
+        )
+        .fetch_optional(&state.db)
+        .await?
+    } else {
+        None
+    };
+
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
     let resolved = resolve_mention_accounts(&state, instance.id, &mention_handles).await;
@@ -124,8 +136,8 @@ pub async fn post_status(
         DbStatus,
         r#"INSERT INTO statuses
              (instance_id, account_id, text, content, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING *"#,
         instance.id,
         account.id,
@@ -136,6 +148,7 @@ pub async fn post_status(
         form.language,
         form.sensitive.unwrap_or(false),
         in_reply_to_id,
+        in_reply_to_account_id,
     )
     .fetch_one(&state.db)
     .await?;
