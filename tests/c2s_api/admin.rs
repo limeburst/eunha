@@ -459,3 +459,30 @@ async fn test_admin_email_domain_blocks_crud() {
     ).await;
     assert_eq!(del.status(), StatusCode::OK);
 }
+
+/// PUT /api/v1/admin/ip_blocks/:id updates an existing IP block.
+#[tokio::test]
+async fn test_admin_update_ip_block() {
+    let ctx = TestContext::new("admin-ipblock-upd").await;
+    make_admin(&ctx).await;
+
+    let block: Value = ctx.api.post_json(
+        "/api/v1/admin/ip_blocks",
+        Some(&ctx.alice_token),
+        &json!({"ip": "192.0.2.99", "severity": "sign_up_block"}),
+    ).await.json().await.unwrap();
+    let block_id = block["id"].as_str().unwrap();
+
+    let update_resp = ctx.api.put_json(
+        &format!("/api/v1/admin/ip_blocks/{block_id}"),
+        Some(&ctx.alice_token),
+        &json!({"ip": "192.0.2.99", "severity": "noop", "comment": "updated"}),
+    ).await;
+    assert_eq!(update_resp.status(), StatusCode::OK);
+    let updated: Value = update_resp.json().await.unwrap();
+    assert_eq!(updated["severity"].as_str(), Some("noop"));
+    assert_eq!(updated["comment"].as_str(), Some("updated"));
+
+    // Clean up.
+    ctx.api.delete(&format!("/api/v1/admin/ip_blocks/{block_id}"), &ctx.alice_token).await;
+}
