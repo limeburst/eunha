@@ -277,6 +277,26 @@ async fn test_account_statuses_tagged_returns_200() {
     );
 }
 
+/// ?only_media=true excludes text-only statuses.
+#[tokio::test]
+async fn test_account_statuses_only_media() {
+    let ctx = TestContext::new("acct-only-media").await;
+
+    let text_status = ctx.api.post_status(&ctx.alice_token, "text only status no media", "public").await;
+    let text_id = text_status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?only_media=true", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK, "only_media=true should return 200");
+    let statuses: Vec<Value> = resp.json().await.unwrap();
+    assert!(
+        !statuses.iter().any(|s| s["id"].as_str() == Some(text_id)),
+        "text-only status should not appear with only_media=true",
+    );
+}
+
 // ── follow lifecycle ──────────────────────────────────────────────────────────
 
 /// Following your own account returns 403.

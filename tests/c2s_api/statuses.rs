@@ -2529,6 +2529,49 @@ async fn test_context_hides_blocked_account_statuses() {
     );
 }
 
+/// POST /api/v1/statuses with Idempotency-Key is idempotent — same key returns the same status.
+#[tokio::test]
+async fn test_post_status_idempotency_key() {
+    let ctx = TestContext::new("idempotency-key").await;
+
+    let key = "test-idempotency-key-abc123";
+    let client = reqwest::Client::new();
+
+    // First request — creates the status.
+    let resp1: Value = client
+        .post(format!("{}/api/v1/statuses", ctx.api.base_url))
+        .header("Host", &ctx.domain)
+        .bearer_auth(&ctx.alice_token)
+        .header("Idempotency-Key", key)
+        .json(&json!({"status": "idempotency test post"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let id1 = resp1["id"].as_str().expect("first response must have id");
+
+    // Second request with the same key — must return the same status, not create a new one.
+    let resp2: Value = client
+        .post(format!("{}/api/v1/statuses", ctx.api.base_url))
+        .header("Host", &ctx.domain)
+        .bearer_auth(&ctx.alice_token)
+        .header("Idempotency-Key", key)
+        .json(&json!({"status": "idempotency test post"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let id2 = resp2["id"].as_str().expect("second response must have id");
+
+    assert_eq!(id1, id2, "idempotent post should return the same status id");
+}
+
 /// A "warn" filter in thread context keeps the status but sets the filtered field.
 #[tokio::test]
 async fn test_context_thread_filter_warn_annotates_status() {

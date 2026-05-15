@@ -24,26 +24,41 @@ pub async fn get_bookmarks(
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let rows = sqlx::query!(
-        r#"SELECT s.id as status_id FROM statuses s
-           JOIN bookmarks b ON b.status_id = s.id
-           WHERE b.account_id = $1
-             AND s.deleted_at IS NULL
-             AND ($2::bigint IS NULL OR s.id < $2)
-             AND ($3::bigint IS NULL OR s.id > $3)
-           ORDER BY b.created_at DESC LIMIT $4"#,
-        auth.account_id, max_id, since_id, limit
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let status_ids: Vec<i64> = if min_id.is_some() {
+        sqlx::query_scalar!(
+            r#"SELECT s.id FROM statuses s
+               JOIN bookmarks b ON b.status_id = s.id
+               WHERE b.account_id = $1
+                 AND s.deleted_at IS NULL
+                 AND ($2::bigint IS NULL OR s.id > $2)
+               ORDER BY s.id ASC LIMIT $3"#,
+            auth.account_id, min_id, limit
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_scalar!(
+            r#"SELECT s.id FROM statuses s
+               JOIN bookmarks b ON b.status_id = s.id
+               WHERE b.account_id = $1
+                 AND s.deleted_at IS NULL
+                 AND ($2::bigint IS NULL OR s.id < $2)
+                 AND ($3::bigint IS NULL OR s.id > $3)
+               ORDER BY b.created_at DESC LIMIT $4"#,
+            auth.account_id, max_id, since_id, limit
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
-    let mut result = Vec::with_capacity(rows.len());
-    for row in &rows {
+    let mut result = Vec::with_capacity(status_ids.len());
+    for sid in &status_ids {
         let status = sqlx::query_as!(
             crate::db::models::Status,
             "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
-            row.status_id
+            sid
         )
         .fetch_optional(&state.db)
         .await?;

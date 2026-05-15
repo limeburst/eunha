@@ -67,6 +67,32 @@ pub async fn post_status(
 ) -> AppResult<axum::response::Response> {
     use axum::response::IntoResponse;
     auth.require_scope("write:statuses")?;
+
+    let idempotency_key = request
+        .headers()
+        .get("Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
+
+    // If idempotency key provided, check for an existing status.
+    if let Some(ref key) = idempotency_key {
+        let existing = sqlx::query_as!(
+            crate::db::models::Status,
+            "SELECT * FROM statuses WHERE account_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL",
+            auth.account_id, key,
+        )
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some(s) = existing {
+            let account = fetch_account(&state, s.account_id).await?;
+            let media = fetch_status_media(&state, s.id).await?;
+            let reblog = fetch_reblog_data(&state, &s).await?;
+            let ctx = build_viewer_context(&state, auth.account_id, s.id).await.ok();
+            let status = build_status(&state, &s, &account, media, reblog, ctx).await?;
+            return Ok((axum::http::StatusCode::OK, Json(status)).into_response());
+        }
+    }
+
     let form = extract_post_status_form(request).await?;
     let account = fetch_account(&state, auth.account_id).await?;
     let text = form.status.clone().unwrap_or_default();
@@ -154,8 +180,8 @@ pub async fn post_status(
         DbStatus,
         r#"INSERT INTO statuses
              (instance_id, account_id, text, content, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, in_reply_to_account_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, idempotency_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            RETURNING *"#,
         instance.id,
         account.id,
@@ -167,6 +193,7 @@ pub async fn post_status(
         sensitive,
         in_reply_to_id,
         in_reply_to_account_id,
+        idempotency_key,
     )
     .fetch_one(&state.db)
     .await?;
@@ -936,7 +963,7 @@ pub async fn get_status_context(
                   in_reply_to_id, in_reply_to_account_id, reblog_of_id,
                   visibility, language, sensitive, url, uri,
                   replies_count, reblogs_count, favourites_count,
-                  deleted_at, edited_at, created_at, conversation_id
+                  deleted_at, edited_at, created_at, conversation_id, idempotency_key
            FROM reply_tree ORDER BY id ASC LIMIT $2"#
     )
     .bind(id)

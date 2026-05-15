@@ -206,3 +206,44 @@ async fn test_bookmarks_limit_param() {
     let body: Vec<Value> = resp.json().await.unwrap();
     assert_eq!(body.len(), 2, "limit=2 should return exactly 2 items");
 }
+
+/// min_id pagination returns bookmarks newer than the anchor in ascending order.
+#[tokio::test]
+async fn test_bookmarks_min_id_pagination() {
+    let ctx = TestContext::new("bmarks-min-id").await;
+
+    let s1 = ctx.api.post_status(&ctx.alice_token, "min-id bmark 1", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "min-id bmark 2", "public").await;
+    let s3 = ctx.api.post_status(&ctx.alice_token, "min-id bmark 3", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+    let s3_id = s3["id"].as_str().unwrap().to_string();
+
+    for id in [&s1_id, &s2_id, &s3_id] {
+        ctx.api.post_json(
+            &format!("/api/v1/statuses/{id}/bookmark"),
+            Some(&ctx.bob_token),
+            &serde_json::json!({}),
+        ).await;
+    }
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/bookmarks?min_id={s1_id}"),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let paged: Vec<Value> = resp.json().await.unwrap();
+
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s1_id.as_str())),
+        "min_id anchor should be excluded",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s2_id.as_str())),
+        "s2 should appear after min_id=s1",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s3_id.as_str())),
+        "s3 should appear after min_id=s1",
+    );
+}
