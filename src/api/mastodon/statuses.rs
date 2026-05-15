@@ -917,9 +917,44 @@ pub async fn get_status_context(
     .fetch_all(&state.db)
     .await?;
 
+    // Collect blocked account IDs for the viewer (batch query, avoids n+1 per status).
+    let blocked_accounts: std::collections::HashSet<uuid::Uuid> = if let Some(vid) = viewer_id {
+        let all_account_ids: Vec<uuid::Uuid> = ancestor_rows.iter()
+            .chain(descendant_rows.iter())
+            .map(|s| s.account_id)
+            .filter(|aid| *aid != vid)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        if all_account_ids.is_empty() {
+            Default::default()
+        } else {
+            sqlx::query_scalar!(
+                r#"SELECT target_account_id FROM blocks
+                   WHERE account_id = $1 AND target_account_id = ANY($2::uuid[])
+                   UNION
+                   SELECT account_id FROM blocks
+                   WHERE target_account_id = $1 AND account_id = ANY($2::uuid[])"#,
+                vid,
+                &all_account_ids,
+            )
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect()
+        }
+    } else {
+        Default::default()
+    };
+
     // Filter by visibility first, then apply "thread" context custom filters.
     let visible_ancestors: Vec<&DbStatus> = ancestor_rows.iter()
         .filter(|s| {
+            if viewer_id.map_or(false, |vid| vid != s.account_id) && blocked_accounts.contains(&s.account_id) {
+                return false;
+            }
             if matches!(s.visibility.as_str(), "private" | "direct") {
                 viewer_id.is_some()
             } else {
@@ -929,6 +964,9 @@ pub async fn get_status_context(
         .collect();
     let visible_descendants: Vec<&DbStatus> = descendant_rows.iter()
         .filter(|s| {
+            if viewer_id.map_or(false, |vid| vid != s.account_id) && blocked_accounts.contains(&s.account_id) {
+                return false;
+            }
             if matches!(s.visibility.as_str(), "private" | "direct") {
                 viewer_id.is_some()
             } else {

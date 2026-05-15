@@ -2339,6 +2339,48 @@ async fn test_context_thread_filter_hides_matching_descendant() {
     );
 }
 
+/// Thread context hides statuses from blocked accounts.
+#[tokio::test]
+async fn test_context_hides_blocked_account_statuses() {
+    let ctx = TestContext::new("ctx-blocked-acct").await;
+
+    // Alice posts a public root.
+    let root = ctx.api.post_status(&ctx.alice_token, "public root for block test", "public").await;
+    let root_id = root["id"].as_str().unwrap();
+
+    // Bob replies.
+    let bob_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob's reply", "in_reply_to_id": root_id}),
+    ).await.json().await.unwrap();
+    let bob_reply_id = bob_reply["id"].as_str().unwrap();
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Alice fetches context — Bob's reply should be hidden.
+    let context: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{root_id}/context"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let desc_ids: Vec<&str> = context["descendants"]
+        .as_array().unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+
+    assert!(
+        !desc_ids.contains(&bob_reply_id),
+        "blocked account's reply should be hidden in thread context",
+    );
+}
+
 /// A "warn" filter in thread context keeps the status but sets the filtered field.
 #[tokio::test]
 async fn test_context_thread_filter_warn_annotates_status() {
