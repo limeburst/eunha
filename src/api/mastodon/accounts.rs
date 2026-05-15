@@ -1138,6 +1138,7 @@ pub async fn get_mutes(
         r#"SELECT a.* FROM accounts a
            JOIN mutes m ON m.target_account_id = a.id
            WHERE m.account_id = $1
+             AND (m.expires_at IS NULL OR m.expires_at > now())
            ORDER BY m.created_at DESC LIMIT $2"#,
         auth.account_id, limit,
     )
@@ -1496,7 +1497,7 @@ async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) 
     .is_some();
 
     let muting = sqlx::query!(
-        "SELECT hide_notifications, expires_at FROM mutes WHERE account_id = $1 AND target_account_id = $2",
+        "SELECT hide_notifications, expires_at FROM mutes WHERE account_id = $1 AND target_account_id = $2 AND (expires_at IS NULL OR expires_at > now())",
         source_id, target_id
     )
     .fetch_optional(&state.db)
