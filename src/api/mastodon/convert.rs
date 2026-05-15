@@ -33,7 +33,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         followers_count: a.followers_count,
         following_count: a.following_count,
         statuses_count: a.statuses_count,
-        last_status_at: None,
+        last_status_at: a.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         emojis: vec![],
         fields: fields_from_db(&a.fields),
         roles: vec![],

@@ -236,9 +236,9 @@ pub async fn post_status(
         }
     }
 
-    // Increment statuses count
+    // Increment statuses count and update last_status_at
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1",
+        "UPDATE accounts SET statuses_count = statuses_count + 1, last_status_at = now() WHERE id = $1",
         account.id
     )
     .execute(&state.db)
@@ -587,7 +587,10 @@ pub async fn delete_status(
     .await?;
 
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
+        r#"UPDATE accounts SET
+             statuses_count = GREATEST(statuses_count - 1, 0),
+             last_status_at = (SELECT MAX(s.created_at) FROM statuses s WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.reblog_of_id IS NULL)
+           WHERE id = $1"#,
         account.id
     )
     .execute(&state.db)

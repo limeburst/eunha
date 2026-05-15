@@ -380,7 +380,7 @@ pub async fn get_notification_requests(
                   a.public_key, a.private_key, a.followers_count, a.following_count,
                   a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
                   a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
-                  a.suspended_at, a.silenced_at, a.hide_collections, a.fields,
+                  a.suspended_at, a.silenced_at, a.hide_collections, a.last_status_at, a.fields,
                   a.instance_id, a.created_at AS account_created_at, a.updated_at AS account_updated_at
            FROM notification_requests nr
            JOIN accounts a ON a.id = nr.from_account_id
@@ -423,6 +423,7 @@ pub async fn get_notification_requests(
             suspended_at: r.suspended_at,
             silenced_at: r.silenced_at,
             hide_collections: r.hide_collections,
+            last_status_at: r.last_status_at,
             fields: r.fields,
             created_at: r.account_created_at,
             updated_at: r.account_updated_at,
@@ -489,7 +490,7 @@ pub async fn get_notification_request(
                   a.public_key, a.private_key, a.followers_count, a.following_count,
                   a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
                   a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
-                  a.suspended_at, a.silenced_at, a.hide_collections, a.fields,
+                  a.suspended_at, a.silenced_at, a.hide_collections, a.last_status_at, a.fields,
                   a.instance_id, a.created_at AS account_created_at, a.updated_at AS account_updated_at
            FROM notification_requests nr
            JOIN accounts a ON a.id = nr.from_account_id
@@ -530,6 +531,7 @@ pub async fn get_notification_request(
         suspended_at: r.suspended_at,
         silenced_at: r.silenced_at,
         hide_collections: r.hide_collections,
+        last_status_at: r.last_status_at,
         fields: r.fields,
         created_at: r.account_created_at,
         updated_at: r.account_updated_at,

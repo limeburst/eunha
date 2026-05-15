@@ -79,6 +79,7 @@ pub struct Account {
     pub suspended_at: Option<DateTime<Utc>>,
     pub silenced_at: Option<DateTime<Utc>>,
     pub hide_collections: bool,
+    pub last_status_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub fields: serde_json::Value,
