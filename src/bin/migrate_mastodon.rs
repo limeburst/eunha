@@ -1,13 +1,19 @@
 /// Migrates data from a Mastodon pg_dump (custom format) into eunha's schema.
 ///
-/// Usage:
+/// Usage (via config file):
 ///   1. Restore the Mastodon dump into a temp database:
 ///        pg_restore -d mastodon_src pg_dump.custom
 ///   2. Run this tool:
 ///        eunha-migrate-mastodon \
+///          --config /etc/eunha/config.toml \
 ///          --mastodon-db postgres://user@localhost/mastodon_src \
-///          --eunha-db postgres://eunha:eunha@localhost/eunha \
 ///          --domain seoul.earth
+///
+/// Usage (individual flags):
+///   eunha-migrate-mastodon \
+///     --mastodon-db postgres://user@localhost/mastodon_src \
+///     --eunha-db postgres://eunha:eunha@localhost/eunha \
+///     --domain seoul.earth
 use anyhow::{Context, Result};
 use clap::Parser;
 use sqlx::{PgPool, PgConnection, Row};
@@ -19,10 +25,14 @@ use serde_yaml;
 #[derive(Parser, Debug)]
 #[command(about = "Migrate a Mastodon database into eunha")]
 struct Args {
+    /// Path to the server config TOML file (database_url is used for --eunha-db).
+    #[arg(long)]
+    config: Option<String>,
     #[arg(long)]
     mastodon_db: String,
+    /// eunha database URL (overrides config database_url).
     #[arg(long)]
-    eunha_db: String,
+    eunha_db: Option<String>,
     #[arg(long)]
     domain: String,
     #[arg(long)]
@@ -40,8 +50,13 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    let cfg = args.config.as_deref().map(eunha::config::Config::from_file).transpose()?;
+    let eunha_db_url = args.eunha_db
+        .or_else(|| cfg.as_ref().map(|c| c.database_url.clone()))
+        .context("--eunha-db <url> or --config <path> with database_url")?;
+
     let src = PgPool::connect(&args.mastodon_db).await.context("connecting to Mastodon DB")?;
-    let dst = PgPool::connect(&args.eunha_db).await.context("connecting to eunha DB")?;
+    let dst = PgPool::connect(&eunha_db_url).await.context("connecting to eunha DB")?;
 
     // Schema migrations run outside the transaction — they manage their own state.
     sqlx::migrate!("./migrations").run(&dst).await?;

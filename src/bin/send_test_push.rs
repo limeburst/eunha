@@ -1,7 +1,10 @@
 /// Send a test push notification to all active web push subscriptions for a
 /// given user account.
 ///
-/// Usage:
+/// Usage (via config file):
+///   eunha-send-test-push --config /etc/eunha/config.toml --acct alice@seoul.earth
+///
+/// Usage (individual flags):
 ///   eunha-send-test-push \
 ///     --db postgres://localhost/eunha \
 ///     --acct alice@seoul.earth
@@ -16,9 +19,13 @@ use web_push::{
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// PostgreSQL connection string for the eunha database.
+    /// Path to the server config TOML file (database_url is used).
     #[arg(long)]
-    db: String,
+    config: Option<String>,
+
+    /// PostgreSQL connection string for the eunha database (overrides config).
+    #[arg(long)]
+    db: Option<String>,
 
     /// Account to notify, as `username` (local) or `username@domain`.
     #[arg(long)]
@@ -37,9 +44,14 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    let cfg = args.config.as_deref().map(eunha::config::Config::from_file).transpose()?;
+    let db_url = args.db
+        .or_else(|| cfg.as_ref().map(|c| c.database_url.clone()))
+        .context("--db <url> or --config <path> with database_url")?;
+
     let db = PgPoolOptions::new()
         .max_connections(3)
-        .connect(&args.db)
+        .connect(&db_url)
         .await
         .context("connect to database")?;
 

@@ -4,7 +4,10 @@
 ///   avatars/original/missing.png  — placeholder shown when no avatar is set
 ///   headers/original/missing.png  — placeholder shown when no header is set
 ///
-/// Usage:
+/// Usage (via config file):
+///   eunha-init-r2 --config /etc/eunha/config.toml
+///
+/// Usage (individual flags):
 ///   eunha-init-r2 \
 ///     --bucket eunha-social \
 ///     --endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com \
@@ -20,14 +23,17 @@ static HEADER_MISSING: &[u8] = include_bytes!("../../assets/header_missing.png")
 #[derive(Parser, Debug)]
 #[command(about = "Initialize the eunha R2 bucket with required static assets")]
 struct Args {
+    /// Path to the server config TOML file (media_storage section is used).
     #[arg(long)]
-    bucket: String,
+    config: Option<String>,
     #[arg(long)]
-    endpoint: String,
+    bucket: Option<String>,
     #[arg(long)]
-    access_key_id: String,
+    endpoint: Option<String>,
     #[arg(long)]
-    secret_access_key: String,
+    access_key_id: Option<String>,
+    #[arg(long)]
+    secret_access_key: Option<String>,
 }
 
 #[tokio::main]
@@ -35,9 +41,25 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    let cfg = args.config.as_deref().map(eunha::config::Config::from_file).transpose()?;
+    let ms = cfg.as_ref().map(|c| &c.media_storage);
+
+    let bucket = args.bucket
+        .or_else(|| ms.map(|m| m.bucket.clone()))
+        .context("--bucket (or --config with media_storage.bucket)")?;
+    let endpoint = args.endpoint
+        .or_else(|| ms.and_then(|m| m.endpoint.clone()))
+        .context("--endpoint (or --config with media_storage.endpoint)")?;
+    let access_key_id = args.access_key_id
+        .or_else(|| ms.map(|m| m.access_key_id.clone()))
+        .context("--access-key-id (or --config with media_storage.access_key_id)")?;
+    let secret_access_key = args.secret_access_key
+        .or_else(|| ms.map(|m| m.secret_access_key.clone()))
+        .context("--secret-access-key (or --config with media_storage.secret_access_key)")?;
+
     let creds = aws_sdk_s3::config::Credentials::new(
-        &args.access_key_id,
-        &args.secret_access_key,
+        &access_key_id,
+        &secret_access_key,
         None,
         None,
         "static",
@@ -45,7 +67,7 @@ async fn main() -> Result<()> {
     let s3_conf = aws_sdk_s3::config::Builder::new()
         .region(aws_sdk_s3::config::Region::new("auto"))
         .credentials_provider(creds)
-        .endpoint_url(&args.endpoint)
+        .endpoint_url(&endpoint)
         .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
         .build();
     let s3 = aws_sdk_s3::Client::from_conf(s3_conf);
@@ -58,7 +80,7 @@ async fn main() -> Result<()> {
     for (key, data) in assets {
         tracing::info!("uploading {} ({} bytes) ...", key, data.len());
         s3.put_object()
-            .bucket(&args.bucket)
+            .bucket(&bucket)
             .key(*key)
             .body(ByteStream::from(data.to_vec()))
             .content_type("image/png")

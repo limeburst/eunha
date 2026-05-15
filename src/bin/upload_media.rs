@@ -2,7 +2,14 @@
 /// Objects are stored under <instance-uuid>/ in the bucket, derived automatically from
 /// the instance domain in the eunha DB (stable across domain renames).
 ///
-/// Usage:
+/// Usage (via config file):
+///   eunha-upload-media \
+///     --config /etc/eunha/config.toml \
+///     --mastodon-db postgres:///mastodon_src \
+///     --media-dir ~/seoulearth_dump/media \
+///     --domain seoul-earth.eunha.social
+///
+/// Usage (individual flags):
 ///   eunha-upload-media \
 ///     --mastodon-db postgres:///mastodon_src \
 ///     --eunha-db postgres:///eunha \
@@ -25,14 +32,22 @@ use uuid::Uuid;
 
 #[derive(Parser, Debug)]
 struct Args {
+    /// Path to the server config TOML file (database_url and media_storage are used).
+    #[arg(long)] config: Option<String>,
     #[arg(long)] mastodon_db: String,
-    #[arg(long)] eunha_db: String,
+    /// eunha database URL (overrides config database_url).
+    #[arg(long)] eunha_db: Option<String>,
     #[arg(long)] media_dir: String,
-    #[arg(long)] bucket: String,
-    #[arg(long)] endpoint: String,
-    #[arg(long)] access_key_id: String,
-    #[arg(long)] secret_access_key: String,
-    #[arg(long)] base_url: String,
+    /// S3 bucket name (overrides config media_storage.bucket).
+    #[arg(long)] bucket: Option<String>,
+    /// S3 endpoint URL (overrides config media_storage.endpoint).
+    #[arg(long)] endpoint: Option<String>,
+    /// S3 access key ID (overrides config media_storage.access_key_id).
+    #[arg(long)] access_key_id: Option<String>,
+    /// S3 secret access key (overrides config media_storage.secret_access_key).
+    #[arg(long)] secret_access_key: Option<String>,
+    /// Public base URL for uploaded media (overrides config media_storage.base_url).
+    #[arg(long)] base_url: Option<String>,
     /// Instance domain in eunha DB — its UUID is used as the R2 key prefix.
     #[arg(long)] domain: String,
     /// Number of concurrent S3 uploads (default: 32).
@@ -44,16 +59,38 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
+    let cfg = args.config.as_deref().map(eunha::config::Config::from_file).transpose()?;
+    let ms = cfg.as_ref().map(|c| &c.media_storage);
+
+    let eunha_db_url = args.eunha_db
+        .or_else(|| cfg.as_ref().map(|c| c.database_url.clone()))
+        .context("--eunha-db <url> or --config <path> with database_url")?;
+    let bucket_val = args.bucket
+        .or_else(|| ms.map(|m| m.bucket.clone()))
+        .context("--bucket or --config with media_storage.bucket")?;
+    let endpoint_val = args.endpoint
+        .or_else(|| ms.and_then(|m| m.endpoint.clone()))
+        .context("--endpoint or --config with media_storage.endpoint")?;
+    let access_key_id_val = args.access_key_id
+        .or_else(|| ms.map(|m| m.access_key_id.clone()))
+        .context("--access-key-id or --config with media_storage.access_key_id")?;
+    let secret_access_key_val = args.secret_access_key
+        .or_else(|| ms.map(|m| m.secret_access_key.clone()))
+        .context("--secret-access-key or --config with media_storage.secret_access_key")?;
+    let base_url_val = args.base_url
+        .or_else(|| ms.map(|m| m.base_url.clone()))
+        .context("--base-url or --config with media_storage.base_url")?;
+
     let src = PgPool::connect(&args.mastodon_db).await.context("mastodon_db")?;
-    let dst = PgPool::connect(&args.eunha_db).await.context("eunha_db")?;
+    let dst = PgPool::connect(&eunha_db_url).await.context("eunha_db")?;
 
     let creds = aws_sdk_s3::config::Credentials::new(
-        &args.access_key_id, &args.secret_access_key, None, None, "static",
+        &access_key_id_val, &secret_access_key_val, None, None, "static",
     );
     let s3_conf = aws_sdk_s3::config::Builder::new()
         .region(aws_sdk_s3::config::Region::new("auto".to_string()))
         .credentials_provider(creds)
-        .endpoint_url(&args.endpoint)
+        .endpoint_url(&endpoint_val)
         .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
         .build();
     let client = aws_sdk_s3::Client::from_conf(s3_conf);
@@ -130,7 +167,7 @@ async fn main() -> Result<()> {
     let total = files.len();
     tracing::info!("{} files to upload", total);
     let client = Arc::new(client);
-    let bucket = Arc::new(args.bucket.clone());
+    let bucket = Arc::new(bucket_val);
     let prefix_arc = Arc::new(prefix.clone());
     let media_dir_arc = Arc::new(media_dir.clone());
     let uploaded = upload_parallel(client.clone(), bucket.clone(), prefix_arc.clone(), media_dir_arc, files, args.concurrency).await?;
@@ -138,11 +175,11 @@ async fn main() -> Result<()> {
 
     // ── 4. Patch media_attachments URLs ──────────────────────────────────────
     tracing::info!("patching media_attachment URLs...");
-    patch_media_attachments(&src, &dst, &account_map, &status_map, &args.base_url, &prefix_arc).await?;
+    patch_media_attachments(&src, &dst, &account_map, &status_map, &base_url_val, &prefix_arc).await?;
 
     // ── 5. Patch account avatar/header URLs ──────────────────────────────────
     tracing::info!("patching account avatar/header URLs...");
-    patch_account_media(&src, &dst, &account_map, &args.base_url, &prefix_arc).await?;
+    patch_account_media(&src, &dst, &account_map, &base_url_val, &prefix_arc).await?;
 
     tracing::info!("done");
     Ok(())

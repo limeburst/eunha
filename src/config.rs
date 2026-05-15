@@ -44,4 +44,11 @@ impl Config {
             .build()?;
         Ok(cfg.try_deserialize()?)
     }
+
+    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+        let cfg = config::Config::builder()
+            .add_source(config::File::from(std::path::Path::new(path)))
+            .build()?;
+        Ok(cfg.try_deserialize()?)
+    }
 }
