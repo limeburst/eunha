@@ -705,6 +705,26 @@ pub async fn delete_status(
         return Err(AppError::Forbidden);
     }
 
+    // Cascade-delete any reblogs of this status before soft-deleting the original.
+    // Mastodon deletes reblogs when the original is removed.
+    let reblogger_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
+        "UPDATE statuses SET deleted_at = now() WHERE reblog_of_id = $1 AND deleted_at IS NULL RETURNING account_id",
+        id
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    for reblogger_id in &reblogger_ids {
+        let _ = sqlx::query!(
+            r#"UPDATE accounts SET
+                 statuses_count = GREATEST(statuses_count - 1, 0)
+               WHERE id = $1"#,
+            reblogger_id
+        )
+        .execute(&state.db)
+        .await;
+    }
+
     sqlx::query!(
         "UPDATE statuses SET deleted_at = now() WHERE id = $1",
         id

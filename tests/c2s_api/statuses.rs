@@ -2840,3 +2840,41 @@ async fn test_post_status_includes_application_field() {
         "status application field should be an object with a name, got: {status:?}",
     );
 }
+
+/// Deleting the original status cascade-deletes its reblogs.
+///
+/// Mastodon: when an original post is removed the server also removes all boosts
+/// of that post.  After deletion GET /api/v1/statuses/:reblog_id should return 404.
+#[tokio::test]
+async fn test_delete_original_cascades_to_reblogs() {
+    let ctx = TestContext::new("delete-cascade-reblog").await;
+
+    // Alice posts; Bob boosts it.
+    let original = ctx.api.post_status(&ctx.alice_token, "original to cascade-delete", "public").await;
+    let original_id = original["id"].as_str().unwrap().to_string();
+
+    let boost_resp = ctx.api
+        .post_json(&format!("/api/v1/statuses/{original_id}/reblog"), Some(&ctx.bob_token), &json!({}))
+        .await;
+    assert_eq!(boost_resp.status(), StatusCode::OK);
+    let boost: Value = boost_resp.json().await.unwrap();
+    let reblog_id = boost["id"].as_str().unwrap().to_string();
+
+    // Sanity: reblog is visible before deletion.
+    let before = ctx.api.get(&format!("/api/v1/statuses/{reblog_id}"), Some(&ctx.bob_token)).await;
+    assert_eq!(before.status(), StatusCode::OK, "reblog should be visible before original is deleted");
+
+    // Alice deletes the original.
+    let del = ctx.api
+        .delete(&format!("/api/v1/statuses/{original_id}"), &ctx.alice_token)
+        .await;
+    assert_eq!(del.status(), StatusCode::OK, "delete original should succeed");
+
+    // Bob's reblog should now be gone.
+    let after = ctx.api.get(&format!("/api/v1/statuses/{reblog_id}"), Some(&ctx.bob_token)).await;
+    assert_eq!(
+        after.status(),
+        StatusCode::NOT_FOUND,
+        "reblog should be 404 after original is deleted (cascade)",
+    );
+}
