@@ -1623,6 +1623,45 @@ async fn test_vote_poll_multiple_choice_allowed() {
     assert!(own_votes.contains(&json!(2)));
 }
 
+// ── default posting visibility ────────────────────────────────────────────────
+
+/// When the user has a default_privacy setting and no visibility is given, that default is used.
+#[tokio::test]
+async fn test_post_status_uses_default_privacy() {
+    let ctx = TestContext::new("default-privacy").await;
+
+    // Set default visibility to "unlisted" via update_credentials.
+    let form = reqwest::multipart::Form::new()
+        .text("source[privacy]", "unlisted");
+    ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Post a status without specifying visibility.
+    let status: Value = ctx.api.http
+        .post(ctx.api.url("/api/v1/statuses"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"status": "default visibility post"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        status["visibility"].as_str(),
+        Some("unlisted"),
+        "status should use the account's default visibility",
+    );
+}
+
 // ── status sensitive and language ─────────────────────────────────────────────
 
 /// Status with sensitive=true has sensitive=true in the response.

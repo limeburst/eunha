@@ -114,7 +114,17 @@ pub async fn post_status(
         return Ok((axum::http::StatusCode::CREATED, Json(resp)).into_response());
     }
 
-    let visibility = form.visibility.as_deref().unwrap_or("public");
+    let visibility = if let Some(ref v) = form.visibility {
+        v.as_str().to_owned()
+    } else {
+        sqlx::query_scalar!(
+            "SELECT default_privacy FROM users WHERE account_id = $1",
+            auth.account_id,
+        )
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or_else(|| "public".to_owned())
+    };
     let in_reply_to_id = form.in_reply_to_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     // Look up the parent author for in_reply_to_account_id
@@ -296,7 +306,7 @@ pub async fn post_status(
 
     spawn_card_fetch(&state, status.id, status.content.clone());
 
-    if matches!(visibility, "public" | "unlisted" | "private") {
+    if matches!(visibility.as_str(), "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {
             let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
             state.streaming.publish(Event::NewStatus {
