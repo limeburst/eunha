@@ -16,6 +16,21 @@ pub async fn get_translation_languages() -> Json<serde_json::Value> {
     Json(serde_json::json!({}))
 }
 
+// ── GET /api/v1/instance/rules ────────────────────────────────────────────
+
+pub async fn get_instance_rules(
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> Json<Vec<Rule>> {
+    let rules = instance.rules.as_array()
+        .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
+            id: (i + 1).to_string(),
+            text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }).collect())
+        .unwrap_or_default();
+    Json(rules)
+}
+
 // ── GET /api/v1/instance/privacy_policy ──────────────────────────────────
 
 pub async fn get_privacy_policy(

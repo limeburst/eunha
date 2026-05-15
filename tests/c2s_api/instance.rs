@@ -227,3 +227,16 @@ async fn test_instance_activity_returns_array() {
         assert!(entry["registrations"].is_string(), "registrations should be a string");
     }
 }
+
+
+/// GET /api/v1/instance/rules returns an array (may be empty).
+#[tokio::test]
+async fn test_instance_rules_returns_array() {
+    let ctx = TestContext::new("inst-rules").await;
+
+    let resp = ctx.api.get("/api/v1/instance/rules", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body.is_array(), "instance/rules should return an array, got: {body:?}");
+}
