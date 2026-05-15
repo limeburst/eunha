@@ -16,6 +16,11 @@ use super::{
     types::{Conversation, PaginationParams},
 };
 
+struct ConvRow {
+    id: i64,
+    unread: bool,
+}
+
 // ── GET /api/v1/conversations ─────────────────────────────────────────────
 
 pub async fn get_conversations(
@@ -26,23 +31,43 @@ pub async fn get_conversations(
     let limit = pagination.limit_clamped(20, 40);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let rows = sqlx::query!(
-        r#"SELECT c.id, cp.unread
-           FROM conversations c
-           JOIN conversation_participants cp ON cp.conversation_id = c.id
-           WHERE cp.account_id = $1
-             AND ($2::bigint IS NULL OR c.id < $2)
-             AND ($4::bigint IS NULL OR c.id > $4)
-           ORDER BY c.updated_at DESC
-           LIMIT $3"#,
-        auth.account_id,
-        max_id,
-        limit,
-        since_id,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows: Vec<ConvRow> = if min_id.is_some() {
+        sqlx::query_as!(
+            ConvRow,
+            r#"SELECT c.id, cp.unread
+               FROM conversations c
+               JOIN conversation_participants cp ON cp.conversation_id = c.id
+               WHERE cp.account_id = $1
+                 AND ($2::bigint IS NULL OR c.id > $2)
+               ORDER BY c.id ASC
+               LIMIT $3"#,
+            auth.account_id,
+            min_id,
+            limit,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as!(
+            ConvRow,
+            r#"SELECT c.id, cp.unread
+               FROM conversations c
+               JOIN conversation_participants cp ON cp.conversation_id = c.id
+               WHERE cp.account_id = $1
+                 AND ($2::bigint IS NULL OR c.id < $2)
+                 AND ($4::bigint IS NULL OR c.id > $4)
+               ORDER BY c.updated_at DESC
+               LIMIT $3"#,
+            auth.account_id,
+            max_id,
+            limit,
+            since_id,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let mut result = Vec::with_capacity(rows.len());
     for row in &rows {

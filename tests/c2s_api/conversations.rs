@@ -147,6 +147,54 @@ async fn test_conversations_max_id() {
     );
 }
 
+/// GET /api/v1/conversations?min_id= returns conversations newer than the anchor.
+#[tokio::test]
+async fn test_conversations_min_id() {
+    let ctx = TestContext::new("conv-minid").await;
+
+    // First DM — creates conversation c1.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "@bob conv minid first", "visibility": "direct"}),
+    ).await;
+
+    let convs_first: Vec<Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!convs_first.is_empty());
+    let c1_id = convs_first[0]["id"].as_str().unwrap().to_string();
+
+    // Delete c1 so the next DM creates a new conversation.
+    ctx.api.delete(&format!("/api/v1/conversations/{c1_id}"), &ctx.bob_token).await;
+
+    // Second DM — creates conversation c2 with a higher id.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "@bob conv minid second", "visibility": "direct"}),
+    ).await;
+
+    let convs_all: Vec<Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!convs_all.is_empty());
+    let c2_id = convs_all[0]["id"].as_str().unwrap().to_string();
+
+    // min_id=c1_id should return only c2 (newer than c1).
+    let with_min: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/conversations?min_id={c1_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        with_min.iter().any(|c| c["id"].as_str() == Some(c2_id.as_str())),
+        "c2 should appear with min_id=c1_id",
+    );
+    assert!(
+        !with_min.iter().any(|c| c["id"].as_str() == Some(c1_id.as_str())),
+        "c1 should be excluded by min_id",
+    );
+}
+
 /// Sender also sees their own conversation.
 #[tokio::test]
 async fn test_conversations_visible_to_sender() {
