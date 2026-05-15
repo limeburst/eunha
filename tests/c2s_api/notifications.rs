@@ -652,6 +652,32 @@ async fn test_mute_with_notifications_false_shows_notifications() {
     );
 }
 
+/// Editing a status you have favourited creates an "update" notification.
+#[tokio::test]
+async fn test_edit_creates_update_notification() {
+    let ctx = TestContext::new("notif-edit-update").await;
+
+    // Alice posts a status; Bob favourites it.
+    let status = ctx.api.post_status(&ctx.alice_token, "editable status", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(&format!("/api/v1/statuses/{sid}/favourite"), Some(&ctx.bob_token), &json!({})).await;
+
+    // Alice edits the status.
+    ctx.api.put_json(
+        &format!("/api/v1/statuses/{sid}"),
+        Some(&ctx.alice_token),
+        &json!({"status": "edited!", "visibility": "public"}),
+    ).await;
+
+    // Bob should receive an "update" notification.
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(
+        notifs.iter().any(|n| n["type"].as_str() == Some("update")),
+        "no update notification found: {notifs:?}",
+    );
+}
+
 /// GET /api/v1/notifications/unread_count returns a count of unread notifications.
 #[tokio::test]
 async fn test_notifications_unread_count() {

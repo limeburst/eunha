@@ -1279,6 +1279,37 @@ pub async fn edit_status(
     store_status_tags(&state, id, auth.account_id, &hashtags).await?;
     store_status_mentions(&state, id, &resolved).await?;
 
+    // Send "update" notifications to users who have interacted with this status
+    let interacted: Vec<uuid::Uuid> = sqlx::query_scalar!(
+        r#"SELECT account_id FROM favourites WHERE status_id = $1
+           UNION
+           SELECT account_id FROM statuses WHERE reblog_of_id = $1 AND deleted_at IS NULL
+           UNION
+           SELECT account_id FROM bookmarks WHERE status_id = $1"#,
+        id,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let notify_title = format!("{} edited a status", account.display_name);
+    for recipient_id in interacted {
+        push::create_and_push(
+            &state,
+            recipient_id,
+            auth.account_id,
+            "update",
+            Some(id),
+            notify_title.clone(),
+            "".into(),
+            account.avatar.clone().unwrap_or_default(),
+        )
+        .await;
+    }
+
     let (updated_status, _) = fetch_status_with_account(&state, id).await?;
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &updated_status).await?;
