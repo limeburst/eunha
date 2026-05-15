@@ -108,6 +108,7 @@ pub async fn api_create_account(
     let username = form.username.trim().to_lowercase();
     let email = form.email.trim().to_string();
     let password = &form.password;
+    let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
 
     if username.is_empty() || !username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(AppError::Unprocessable("Username can only contain letters, numbers, and underscores".into()));
@@ -121,127 +122,73 @@ pub async fn api_create_account(
 
     let email_normalized = email.to_lowercase();
 
+    // Reject if email already belongs to a confirmed account.
+    let email_confirmed = sqlx::query_scalar!(
+        "SELECT 1 FROM users WHERE email_normalized = $1 AND instance_id = $2 AND confirmed_at IS NOT NULL",
+        email_normalized, instance.id,
+    ).fetch_optional(&state.db).await?.is_some();
+    if email_confirmed {
+        return Err(AppError::Unprocessable("Email is already taken".into()));
+    }
+
+    // Reject if username is taken by a confirmed account or a pending signup for a different email.
     let username_taken = sqlx::query_scalar!(
-        "SELECT 1 FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL",
-        username, instance.id,
+        r#"SELECT 1 FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL
+           UNION ALL
+           SELECT 1 FROM pending_signups
+             WHERE username = $1 AND instance_id = $2
+               AND email_normalized != $3
+               AND expires_at > now()
+           LIMIT 1"#,
+        username, instance.id, email_normalized,
     ).fetch_optional(&state.db).await?.is_some();
     if username_taken {
         return Err(AppError::Unprocessable("Username is already taken".into()));
     }
 
-    let existing_email = sqlx::query!(
-        "SELECT account_id, confirmation_token, email FROM users WHERE email_normalized = $1 AND instance_id = $2",
-        email_normalized, instance.id,
-    ).fetch_optional(&state.db).await?;
-
-    if let Some(ref row) = existing_email {
-        // Confirmed account → hard conflict
-        if row.confirmation_token.is_none() {
-            return Err(AppError::Unprocessable("Email is already taken".into()));
-        }
-        // Unconfirmed → resend and return a fresh profile token
-        let tok = row.confirmation_token.clone().unwrap();
-        let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-        let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
-        let email = state.email.clone();
-        let to_addr = row.email.clone();
-        let uname = username.clone();
-        let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
-        tokio::spawn(async move {
-            if let Err(e) = email.send_confirmation(&to_addr, &uname, "", &confirm_url, &locale_str).await {
-                tracing::error!(error = %e, "failed to resend confirmation email");
-            }
-        });
-        let app_id = extract_app_from_bearer(&state, &req_headers).await;
-        let token_str = api_generate_token();
-        sqlx::query!(
-            r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
-               VALUES ($1, $2, $3, 'profile')"#,
-            app_id, row.account_id, token_str,
-        ).execute(&state.db).await?;
-        return Ok(Json(super::types::Token {
-            access_token: token_str,
-            token_type: "Bearer".to_string(),
-            scope: "profile".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-        }));
-    }
-
-    let (private_key, public_key) = crypto::generate_rsa_keypair()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("key generation failed")))?;
-
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-    let base_url = format!("https://{}", domain);
-    let uri = format!("https://{}/users/{}", instance.domain, username);
-    let url = format!("{}/@{}", base_url, username);
-
-    let new_account_id = crate::snowflake::next_id();
-    let account_id = sqlx::query_scalar!(
-        r#"INSERT INTO accounts
-             (id, instance_id, username, url, uri, private_key, public_key,
-              inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           RETURNING id"#,
-        new_account_id,
-        instance.id, username, url, uri, private_key, public_key,
-        format!("{}/inbox", uri),
-        format!("{}/outbox", uri),
-        format!("https://{}/inbox", instance.domain),
-    ).fetch_one(&state.db).await
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("account creation failed")))?;
-
     let password_hash = crypto::hash_password(password)
         .map_err(|_| AppError::Internal(anyhow::anyhow!("password hashing failed")))?;
-
-    let api_needs_approval = instance.approval_required && invite_id.is_none();
-    let api_reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-
+    let reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let confirmation_token = api_generate_token();
-    let scopes = "profile";
-
-    sqlx::query!(
-        r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id,
-              approved_at, reason, confirmation_token)
-           VALUES ($1,$2,$3,$4,$5,
-                   NULL,
-                   $6,
-                   CASE WHEN $7 THEN NULL ELSE now() END,
-                   $8, $9)"#,
-        account_id, instance.id, email, email_normalized, password_hash, invite_id,
-        api_needs_approval, api_reason, confirmation_token,
-    ).execute(&state.db).await
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("user creation failed")))?;
-
-    if let Some(id) = invite_id {
-        let _ = sqlx::query!("UPDATE invites SET uses = uses + 1 WHERE id = $1", id)
-            .execute(&state.db).await;
-    }
-
     let app_id = extract_app_from_bearer(&state, &req_headers).await;
-    let token_str = api_generate_token();
+
     sqlx::query!(
-        r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
-           VALUES ($1, $2, $3, $4)"#,
-        app_id, account_id, token_str, scopes,
-    ).execute(&state.db).await?;
+        r#"INSERT INTO pending_signups
+             (instance_id, username, email, email_normalized, password_hash,
+              invite_id, reason, locale, app_id, confirmation_token)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (instance_id, email_normalized) DO UPDATE SET
+             username           = EXCLUDED.username,
+             password_hash      = EXCLUDED.password_hash,
+             invite_id          = EXCLUDED.invite_id,
+             reason             = EXCLUDED.reason,
+             locale             = EXCLUDED.locale,
+             app_id             = EXCLUDED.app_id,
+             confirmation_token = EXCLUDED.confirmation_token,
+             expires_at         = now() + interval '24 hours'"#,
+        instance.id, username, email, email_normalized, password_hash,
+        invite_id, reason, locale_str, app_id, confirmation_token,
+    ).execute(&state.db).await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("pending signup failed")))?;
 
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let confirm_url = format!("https://{}/auth/confirm?token={}", domain, confirmation_token);
     let email_sender = state.email.clone();
     let to = email.clone();
     let uname = username.clone();
-    let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
+    let locale_for_email = locale_str.clone();
     tokio::spawn(async move {
-        if let Err(e) = email_sender.send_confirmation(&to, &uname, "", &confirm_url, &locale_str).await {
+        if let Err(e) = email_sender.send_confirmation(&to, &uname, "", &confirm_url, &locale_for_email).await {
             tracing::error!(error = %e, "failed to send confirmation email");
         }
     });
 
+    // Return a profile-scoped token placeholder. The token is not stored — it cannot
+    // be used to authenticate. A real token is issued after email confirmation.
     Ok(Json(super::types::Token {
-        access_token: token_str,
+        access_token: api_generate_token(),
         token_type: "Bearer".to_string(),
-        scope: scopes.to_string(),
+        scope: "profile".to_string(),
         created_at: chrono::Utc::now().timestamp(),
     }))
 }
@@ -257,11 +204,11 @@ pub async fn confirm_email(
     State(state): State<AppState>,
     Query(q): Query<ConfirmQuery>,
 ) -> Response {
-    let user = sqlx::query!(
-        r#"UPDATE users
-           SET confirmed_at = now(), confirmation_token = NULL
-           WHERE confirmation_token = $1 AND confirmed_at IS NULL
-           RETURNING account_id"#,
+    let pending = sqlx::query!(
+        r#"DELETE FROM pending_signups
+           WHERE confirmation_token = $1 AND expires_at > now()
+           RETURNING instance_id, username, email, email_normalized,
+                     password_hash, invite_id, reason, locale, app_id"#,
         q.token,
     )
     .fetch_optional(&state.db)
@@ -269,61 +216,84 @@ pub async fn confirm_email(
     .ok()
     .flatten();
 
-    let Some(user) = user else {
+    let Some(pending) = pending else {
         return (StatusCode::NOT_FOUND, Html(
-            "<h1>Invalid confirmation link</h1><p>This link may have already been used or is invalid.</p>".to_string()
+            "<h1>Invalid confirmation link</h1><p>This link may have already been used, expired, or is invalid.</p>".to_string()
         )).into_response();
     };
 
-    // Find the profile-scope token to discover which app the user signed up with.
-    let tok = sqlx::query!(
-        r#"SELECT id, application_id FROM oauth_access_tokens
-           WHERE account_id = $1 AND scopes = 'profile' AND revoked_at IS NULL
-           ORDER BY created_at DESC LIMIT 1"#,
-        user.account_id,
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let instance = match sqlx::query!(
+        "SELECT approval_required, domain, custom_domain FROM instances WHERE id = $1",
+        pending.instance_id,
+    ).fetch_optional(&state.db).await.ok().flatten() {
+        Some(i) => i,
+        None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
 
-    if let Some(tok) = tok {
-        if let Some(app_id) = tok.application_id {
-            if let Ok(Some(app)) = sqlx::query!(
-                "SELECT redirect_uris, scopes FROM oauth_applications WHERE id = $1",
-                app_id,
-            )
-            .fetch_optional(&state.db)
-            .await
-            {
-                // Revoke the profile token — the app will get a full-scope one via the code below.
-                let _ = sqlx::query!(
-                    "UPDATE oauth_access_tokens SET revoked_at = now() WHERE id = $1",
-                    tok.id,
-                )
-                .execute(&state.db)
-                .await;
+    let (private_key, public_key) = match crypto::generate_rsa_keypair() {
+        Ok(kp) => kp,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
 
-                let redirect_uri = app.redirect_uris.lines().next().unwrap_or("").to_string();
+    let uri = format!("https://{}/users/{}", instance.domain, pending.username);
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let url = format!("https://{}/@{}", domain, pending.username);
 
-                if !redirect_uri.is_empty() && redirect_uri != "urn:ietf:wg:oauth:2.0:oob" {
-                    let code = api_generate_token();
-                    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
+    let new_account_id = crate::snowflake::next_id();
+    let account_id = match sqlx::query_scalar!(
+        r#"INSERT INTO accounts
+             (id, instance_id, username, url, uri, private_key, public_key,
+              inbox_url, outbox_url, shared_inbox_url)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           RETURNING id"#,
+        new_account_id,
+        pending.instance_id, pending.username, url, uri, private_key, public_key,
+        format!("{}/inbox", uri),
+        format!("{}/outbox", uri),
+        format!("https://{}/inbox", instance.domain),
+    ).fetch_one(&state.db).await {
+        Ok(id) => id,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
 
-                    if sqlx::query!(
-                        r#"INSERT INTO oauth_authorization_codes
-                             (application_id, account_id, code, redirect_uri, scopes, expires_at)
-                           VALUES ($1, $2, $3, $4, $5, $6)"#,
-                        app_id, user.account_id, code, redirect_uri, app.scopes, expires_at,
-                    )
-                    .execute(&state.db)
-                    .await
-                    .is_ok()
-                    {
-                        let sep = if redirect_uri.contains('?') { '&' } else { '?' };
-                        return Redirect::to(&format!("{}{}code={}", redirect_uri, sep, code))
-                            .into_response();
-                    }
+    let needs_approval = instance.approval_required && pending.invite_id.is_none();
+    if sqlx::query!(
+        r#"INSERT INTO users
+             (account_id, instance_id, email, email_normalized, password_hash,
+              confirmed_at, invite_id, approved_at, reason)
+           VALUES ($1,$2,$3,$4,$5,
+                   now(), $6,
+                   CASE WHEN $7 THEN NULL ELSE now() END,
+                   $8)"#,
+        account_id, pending.instance_id, pending.email, pending.email_normalized,
+        pending.password_hash, pending.invite_id, needs_approval, pending.reason,
+    ).execute(&state.db).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    if let Some(id) = pending.invite_id {
+        let _ = sqlx::query!("UPDATE invites SET uses = uses + 1 WHERE id = $1", id)
+            .execute(&state.db).await;
+    }
+
+    if let Some(app_id) = pending.app_id {
+        if let Ok(Some(app)) = sqlx::query!(
+            "SELECT redirect_uris, scopes FROM oauth_applications WHERE id = $1",
+            app_id,
+        ).fetch_optional(&state.db).await {
+            let redirect_uri = app.redirect_uris.lines().next().unwrap_or("").to_string();
+            if !redirect_uri.is_empty() && redirect_uri != "urn:ietf:wg:oauth:2.0:oob" {
+                let code = api_generate_token();
+                let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
+                if sqlx::query!(
+                    r#"INSERT INTO oauth_authorization_codes
+                         (application_id, account_id, code, redirect_uri, scopes, expires_at)
+                       VALUES ($1, $2, $3, $4, $5, $6)"#,
+                    app_id, account_id, code, redirect_uri, app.scopes, expires_at,
+                ).execute(&state.db).await.is_ok() {
+                    let sep = if redirect_uri.contains('?') { '&' } else { '?' };
+                    return Redirect::to(&format!("{}{}code={}", redirect_uri, sep, code))
+                        .into_response();
                 }
             }
         }
