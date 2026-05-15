@@ -2336,7 +2336,7 @@ pub async fn build_status(
 }
 
 /// Look up an already-cached preview card for a status. Never does network I/O.
-async fn fetch_status_card(
+pub(super) async fn fetch_status_card(
     state: &AppState,
     status_id: i64,
 ) -> Option<super::types::PreviewCard> {

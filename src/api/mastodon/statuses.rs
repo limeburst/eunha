@@ -1602,6 +1602,40 @@ pub async fn get_status_source(
     }))
 }
 
+// ── GET /api/v1/statuses/:id/card ─────────────────────────────────────────
+
+pub async fn get_status_card(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
+) -> AppResult<Json<serde_json::Value>> {
+    let status = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+
+    match viewer_id {
+        Some(vid) => check_status_visible(&state, &status, vid).await?,
+        None => {
+            if status.visibility != "public" && status.visibility != "unlisted" {
+                return Err(AppError::NotFound);
+            }
+        }
+    }
+
+    let card = super::accounts::fetch_status_card(&state, id).await;
+    Ok(Json(match card {
+        Some(c) => serde_json::to_value(c).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    }))
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /// Return NotFound if `viewer_id` cannot see `status` (private/direct visibility).

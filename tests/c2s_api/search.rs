@@ -88,20 +88,32 @@ async fn test_search_offset_param_accepted() {
     assert!(body["statuses"].is_array(), "statuses field missing");
 }
 
-/// GET /api/v2/search?following=true is accepted (200) even if not fully implemented.
+/// GET /api/v2/search?following=true only returns accounts the viewer follows.
 #[tokio::test]
-async fn test_search_following_param_accepted() {
+async fn test_search_following_filter() {
     let ctx = TestContext::new("search-following").await;
 
-    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
-
-    let resp = ctx.api.get(
+    // Without following Bob, searching with following=true should return no results.
+    let no_follow: Value = ctx.api.get(
         "/api/v2/search?q=bob&type=accounts&following=true",
         Some(&ctx.alice_token),
-    ).await;
-    assert_eq!(resp.status(), StatusCode::OK, "following=true should return 200");
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["accounts"].is_array(), "accounts field missing");
+    ).await.json().await.unwrap();
+    assert!(
+        no_follow["accounts"].as_array().unwrap().is_empty(),
+        "following=true should return empty when not following bob",
+    );
+
+    // Now follow Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let after_follow: Value = ctx.api.get(
+        "/api/v2/search?q=bob&type=accounts&following=true",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        after_follow["accounts"].as_array().unwrap().iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "following=true should include bob after following",
+    );
 }
 
 /// GET /api/v2/search?type=hashtags finds tags created by posting.

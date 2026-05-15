@@ -267,6 +267,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/statuses/{id}/favourited_by", get(statuses::favourited_by))
         .route("/api/v1/statuses/{id}/reblogged_by", get(statuses::reblogged_by))
         .route("/api/v1/statuses/{id}/history", get(statuses::get_status_history))
+        .route("/api/v1/statuses/{id}/card", get(statuses::get_status_card))
         // Polls (public read)
         .route("/api/v1/polls/{id}", get(polls::get_poll))
         // Search

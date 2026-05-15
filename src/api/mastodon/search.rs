@@ -40,27 +40,48 @@ pub async fn search(
     let pattern = format!("%{}%", q.q.to_lowercase());
     let search_type = q.search_type.as_deref();
 
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     let accounts = if search_type.is_none() || search_type == Some("accounts") {
-        sqlx::query_as!(
-            crate::db::models::Account,
-            r#"SELECT * FROM accounts
-               WHERE instance_id = $1
-                 AND suspended_at IS NULL
-                 AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
-               ORDER BY followers_count DESC LIMIT $3"#,
-            instance.id, pattern, limit
-        )
-        .fetch_all(&state.db)
-        .await?
-        .iter()
-        .map(account_from_db)
-        .collect()
+        let following_filter = q.following.unwrap_or(false);
+        if following_filter {
+            let vid = viewer_id.ok_or(crate::error::AppError::Unauthorized)?;
+            sqlx::query_as!(
+                crate::db::models::Account,
+                r#"SELECT a.* FROM accounts a
+                   JOIN follows f ON f.target_account_id = a.id AND f.state = 'accepted'
+                   WHERE a.instance_id = $1
+                     AND a.suspended_at IS NULL
+                     AND f.account_id = $4
+                     AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
+                   ORDER BY a.followers_count DESC LIMIT $3"#,
+                instance.id, pattern, limit, vid
+            )
+            .fetch_all(&state.db)
+            .await?
+            .iter()
+            .map(account_from_db)
+            .collect()
+        } else {
+            sqlx::query_as!(
+                crate::db::models::Account,
+                r#"SELECT * FROM accounts
+                   WHERE instance_id = $1
+                     AND suspended_at IS NULL
+                     AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
+                   ORDER BY followers_count DESC LIMIT $3"#,
+                instance.id, pattern, limit
+            )
+            .fetch_all(&state.db)
+            .await?
+            .iter()
+            .map(account_from_db)
+            .collect()
+        }
     } else {
         vec![]
     };
 
     let statuses = if (search_type.is_none() || search_type == Some("statuses")) && auth.is_some() {
-        let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
         let fts_query = q.q.trim().to_string();
         let filter_account_id: Option<uuid::Uuid> = q.account_id.as_deref()
             .and_then(|s| s.parse().ok());

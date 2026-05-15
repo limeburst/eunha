@@ -528,6 +528,50 @@ async fn test_admin_list_custom_emojis() {
     let _: Vec<Value> = resp.json().await.unwrap();
 }
 
+/// GET /api/v1/admin/accounts?status=suspended returns only suspended accounts.
+#[tokio::test]
+async fn test_admin_list_accounts_filter_by_status() {
+    let ctx = TestContext::new("admin-status-filter").await;
+    make_admin(&ctx).await;
+
+    // Before suspension, status=suspended should not include bob.
+    let before: Vec<Value> = ctx.api.get(
+        "/api/v1/admin/accounts?status=suspended",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        before.iter().all(|a| a["suspended"].as_bool() != Some(false)),
+        "status=suspended should only return suspended accounts",
+    );
+
+    // Suspend bob.
+    ctx.api.post_json(
+        &format!("/api/v1/admin/accounts/{}/suspend", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Now bob should appear in status=suspended results.
+    let after: Vec<Value> = ctx.api.get(
+        "/api/v1/admin/accounts?status=suspended",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        after.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "bob should appear in status=suspended after suspension",
+    );
+
+    // status=active should NOT include bob now.
+    let active: Vec<Value> = ctx.api.get(
+        "/api/v1/admin/accounts?status=active",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        active.iter().all(|a| a["id"].as_str() != Some(ctx.bob_id.as_str())),
+        "suspended bob should not appear in status=active",
+    );
+}
+
 /// POST /api/v1/admin/accounts/:id/reject returns 200 (suspends account).
 #[tokio::test]
 async fn test_admin_reject_account() {

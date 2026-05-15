@@ -2749,3 +2749,38 @@ async fn test_context_thread_filter_warn_annotates_status() {
         "filtered entry should reference the warn filter",
     );
 }
+
+/// GET /api/v1/statuses/:id/card returns null when no preview card exists.
+#[tokio::test]
+async fn test_status_card_null_when_no_url() {
+    let ctx = TestContext::new("status-card-null").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "no links here at all", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/card"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body.is_null(), "card should be null when status has no link, got: {body}");
+}
+
+/// GET /api/v1/statuses/:id/card returns 404 for a non-existent status.
+#[tokio::test]
+async fn test_status_card_not_found() {
+    let ctx = TestContext::new("status-card-404").await;
+
+    let resp = ctx.api.get("/api/v1/statuses/999999999/card", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/statuses/:id/card returns 404 for a private status viewed without auth.
+#[tokio::test]
+async fn test_status_card_private_unauthenticated_is_404() {
+    let ctx = TestContext::new("status-card-priv").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "private status for card", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/card"), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

@@ -176,9 +176,14 @@ pub async fn list_admin_accounts(
            WHERE a.instance_id = $1
              AND a.domain IS NULL
              AND ($3::text IS NULL OR a.username = $3)
+             AND ($4::text IS NULL OR
+                  ($4 = 'suspended' AND a.suspended_at IS NOT NULL) OR
+                  ($4 = 'silenced' AND a.silenced_at IS NOT NULL) OR
+                  ($4 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL)
+             )
            ORDER BY a.created_at DESC
            LIMIT $2"#,
-        instance_id, limit, params.username.as_deref(),
+        instance_id, limit, params.username.as_deref(), params.status.as_deref(),
     )
     .fetch_all(&state.db)
     .await?;
