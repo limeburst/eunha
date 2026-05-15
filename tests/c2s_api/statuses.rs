@@ -147,6 +147,48 @@ async fn test_get_direct_status_non_recipient() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND, "non-recipient should not see direct status");
 }
 
+// ── block visibility ─────────────────────────────────────────────────────────
+
+/// GET a public status when the viewer has been blocked by the author → 404.
+#[tokio::test]
+async fn test_get_status_blocked_by_author_returns_404() {
+    let ctx = TestContext::new("status-blocked-by-author").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "public post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND,
+        "blocked user should not be able to view the blocker's status");
+}
+
+/// GET a public status when the viewer has blocked the author → 404.
+#[tokio::test]
+async fn test_get_status_viewer_blocked_author_returns_404() {
+    let ctx = TestContext::new("status-viewer-blocks").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "public post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Bob blocks Alice.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND,
+        "blocker should not see blocked account's status via direct lookup");
+}
+
 // ── reblog restrictions ───────────────────────────────────────────────────────
 
 /// Reblogging a private status of a non-followed account → 404 (status not visible).
@@ -2235,5 +2277,64 @@ async fn test_reblog_increments_booster_statuses_count() {
         after_unboost["statuses_count"].as_i64().unwrap_or(0),
         count_before,
         "statuses_count should decrement when unboosting",
+    );
+}
+
+/// A "hide" filter with context=thread removes matching statuses from /context descendants.
+#[tokio::test]
+async fn test_context_thread_filter_hides_matching_descendant() {
+    let ctx = TestContext::new("ctx-thread-filter").await;
+
+    // Alice creates a "thread" hide filter for "spamword".
+    ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Thread spam filter",
+            "context": ["thread"],
+            "filter_action": "hide",
+            "keywords_attributes": [{"keyword": "spamword", "whole_word": false}]
+        }),
+    ).await;
+
+    // Bob posts a public root.
+    let root = ctx.api.post_status(&ctx.bob_token, "root post", "public").await;
+    let root_id = root["id"].as_str().unwrap();
+
+    // Bob replies with a clean reply.
+    let clean_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "clean reply", "in_reply_to_id": root_id}),
+    ).await.json().await.unwrap();
+    let clean_id = clean_reply["id"].as_str().unwrap();
+
+    // Bob replies with a spammy reply.
+    let spam_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "this contains spamword", "in_reply_to_id": root_id}),
+    ).await.json().await.unwrap();
+    let spam_id = spam_reply["id"].as_str().unwrap();
+
+    // Alice fetches context — spam reply should be hidden.
+    let context: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{root_id}/context"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let desc_ids: Vec<&str> = context["descendants"]
+        .as_array().unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+
+    assert!(
+        desc_ids.contains(&clean_id),
+        "clean reply should still appear in thread context",
+    );
+    assert!(
+        !desc_ids.contains(&spam_id),
+        "spam reply should be hidden by thread filter",
     );
 }

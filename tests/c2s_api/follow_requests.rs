@@ -129,3 +129,58 @@ async fn test_follow_requests_reject() {
     let list: Vec<Value> = list_resp.json().await.unwrap();
     assert!(list.is_empty(), "follow request still listed after rejection");
 }
+
+/// Authorizing a follow request creates a "follow" notification for the requester.
+#[tokio::test]
+async fn test_authorize_follow_request_creates_notification() {
+    let ctx = TestContext::new("freq-notif").await;
+
+    // Lock alice's account.
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("locked", "true")],
+    ).await;
+
+    // Bob sends a follow request.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    // Alice accepts it.
+    ctx.api.post_json(
+        &format!("/api/v1/follow_requests/{}/authorize", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    // Bob should have a "follow" notification from Alice.
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+
+    let follow_notif = notifs.iter().find(|n| {
+        n["type"].as_str() == Some("follow")
+        && n["account"]["id"].as_str() == Some(ctx.alice_id.as_str())
+    });
+    assert!(follow_notif.is_some(), "Bob should receive a follow notification when his request is accepted");
+}
+
+/// Follow request limit pagination returns at most `limit` items.
+#[tokio::test]
+async fn test_follow_requests_limit_param() {
+    let ctx = TestContext::new("freq-limit").await;
+
+    // Lock charlie's account (we create a separate user via API).
+    // Use alice and lock her account so we can generate requests.
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("locked", "true")],
+    ).await;
+
+    // Bob follows alice (pending).
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let resp = ctx.api.get("/api/v1/follow_requests?limit=1", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.len() <= 1, "limit=1 should return at most 1 request");
+}

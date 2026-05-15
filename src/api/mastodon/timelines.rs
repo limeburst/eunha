@@ -501,7 +501,7 @@ pub async fn tag_timeline(
 /// Returns a map from status_id → (should_hide, filtered_results_json).
 /// - should_hide = true means the status should be excluded from results (filter_action = "hide")
 /// - filtered_results_json is the value for the `filtered` field on the status
-async fn compute_filter_results(
+pub(super) async fn compute_filter_results(
     state: &AppState,
     viewer_id: uuid::Uuid,
     statuses: &[DbStatus],

@@ -529,6 +529,24 @@ pub async fn get_status(
 
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
+    // Block check: if viewer is not the author and there's a block in either direction, 404.
+    if let Some(vid) = viewer_id {
+        if vid != status.account_id {
+            let blocked = sqlx::query_scalar!(
+                r#"SELECT 1 FROM blocks
+                   WHERE (account_id = $1 AND target_account_id = $2)
+                      OR (account_id = $2 AND target_account_id = $1)"#,
+                vid, status.account_id
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if blocked {
+                return Err(AppError::NotFound);
+            }
+        }
+    }
+
     match status.visibility.as_str() {
         "private" => {
             let is_author = viewer_id == Some(status.account_id);
@@ -899,18 +917,68 @@ pub async fn get_status_context(
     .fetch_all(&state.db)
     .await?;
 
-    let mut ancestors = Vec::with_capacity(ancestor_rows.len());
-    for s in &ancestor_rows {
-        // Skip statuses the viewer can't see
-        if matches!(s.visibility.as_str(), "private" | "direct") {
-            match viewer_id {
-                None => continue,
-                Some(vid) => {
+    // Filter by visibility first, then apply "thread" context custom filters.
+    let visible_ancestors: Vec<&DbStatus> = ancestor_rows.iter()
+        .filter(|s| {
+            if matches!(s.visibility.as_str(), "private" | "direct") {
+                viewer_id.is_some()
+            } else {
+                true
+            }
+        })
+        .collect();
+    let visible_descendants: Vec<&DbStatus> = descendant_rows.iter()
+        .filter(|s| {
+            if matches!(s.visibility.as_str(), "private" | "direct") {
+                viewer_id.is_some()
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // For private/direct: do the per-status visibility check and compute thread filters.
+    let anc_owned: Vec<DbStatus> = {
+        let mut v = Vec::new();
+        for s in &visible_ancestors {
+            if matches!(s.visibility.as_str(), "private" | "direct") {
+                if let Some(vid) = viewer_id {
                     if check_status_visible(&state, s, vid).await.is_err() {
                         continue;
                     }
                 }
             }
+            v.push((*s).clone());
+        }
+        v
+    };
+    let desc_owned: Vec<DbStatus> = {
+        let mut v = Vec::new();
+        for s in &visible_descendants {
+            if matches!(s.visibility.as_str(), "private" | "direct") {
+                if let Some(vid) = viewer_id {
+                    if check_status_visible(&state, s, vid).await.is_err() {
+                        continue;
+                    }
+                }
+            }
+            v.push((*s).clone());
+        }
+        v
+    };
+
+    let (anc_filters, desc_filters) = if let Some(vid) = viewer_id {
+        let af = super::timelines::compute_filter_results(&state, vid, &anc_owned, "thread").await;
+        let df = super::timelines::compute_filter_results(&state, vid, &desc_owned, "thread").await;
+        (af, df)
+    } else {
+        (Default::default(), Default::default())
+    };
+
+    let mut ancestors = Vec::with_capacity(anc_owned.len());
+    for s in &anc_owned {
+        if anc_filters.get(&s.id).map_or(false, |(hide, _)| *hide) {
+            continue;
         }
         let acct = fetch_account(&state, s.account_id).await?;
         let media = fetch_status_media(&state, s.id).await?;
@@ -920,21 +988,19 @@ pub async fn get_status_context(
         } else {
             None
         };
-        ancestors.push(build_status(&state, s, &acct, media, reblog, ctx).await?);
+        let mut status = build_status(&state, s, &acct, media, reblog, ctx).await?;
+        if let Some((_, ref fj)) = anc_filters.get(&s.id) {
+            if !fj.as_array().map_or(true, |a| a.is_empty()) {
+                status.filtered = Some(vec![fj.clone()]);
+            }
+        }
+        ancestors.push(status);
     }
 
-    let mut descendants = Vec::with_capacity(descendant_rows.len());
-    for s in &descendant_rows {
-        // Skip statuses the viewer can't see
-        if matches!(s.visibility.as_str(), "private" | "direct") {
-            match viewer_id {
-                None => continue,
-                Some(vid) => {
-                    if check_status_visible(&state, s, vid).await.is_err() {
-                        continue;
-                    }
-                }
-            }
+    let mut descendants = Vec::with_capacity(desc_owned.len());
+    for s in &desc_owned {
+        if desc_filters.get(&s.id).map_or(false, |(hide, _)| *hide) {
+            continue;
         }
         let acct = fetch_account(&state, s.account_id).await?;
         let media = fetch_status_media(&state, s.id).await?;
@@ -944,7 +1010,13 @@ pub async fn get_status_context(
         } else {
             None
         };
-        descendants.push(build_status(&state, s, &acct, media, reblog, ctx).await?);
+        let mut status = build_status(&state, s, &acct, media, reblog, ctx).await?;
+        if let Some((_, ref fj)) = desc_filters.get(&s.id) {
+            if !fj.as_array().map_or(true, |a| a.is_empty()) {
+                status.filtered = Some(vec![fj.clone()]);
+            }
+        }
+        descendants.push(status);
     }
 
     Ok(Json(StatusContext { ancestors, descendants }))
