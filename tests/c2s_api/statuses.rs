@@ -1662,6 +1662,43 @@ async fn test_post_status_uses_default_privacy() {
     );
 }
 
+/// When the user has default_sensitive=true and no sensitive flag is given, status is sensitive.
+#[tokio::test]
+async fn test_post_status_uses_default_sensitive() {
+    let ctx = TestContext::new("default-sensitive").await;
+
+    // Set default sensitive via update_credentials.
+    let form = reqwest::multipart::Form::new()
+        .text("source[sensitive]", "true");
+    ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Post a status without specifying sensitive.
+    let status: Value = ctx.api.http
+        .post(ctx.api.url("/api/v1/statuses"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"status": "default sensitive post", "visibility": "public"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        status["sensitive"].as_bool(),
+        Some(true),
+        "status should inherit account's default sensitive setting",
+    );
+}
+
 // ── status sensitive and language ─────────────────────────────────────────────
 
 /// Status with sensitive=true has sensitive=true in the response.
