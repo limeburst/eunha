@@ -789,6 +789,13 @@ pub async fn reblog_status(
     .execute(&state.db)
     .await?;
 
+    sqlx::query!(
+        "UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1",
+        auth.account_id
+    )
+    .execute(&state.db)
+    .await?;
+
     // Notify original author
     push::create_and_push(
         &state,
@@ -956,6 +963,12 @@ pub async fn unreblog_status(
         sqlx::query!(
             "UPDATE statuses SET reblogs_count = GREATEST(reblogs_count - 1, 0) WHERE id = $1",
             original_id
+        )
+        .execute(&state.db)
+        .await?;
+        sqlx::query!(
+            "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
+            auth.account_id
         )
         .execute(&state.db)
         .await?;

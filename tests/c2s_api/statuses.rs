@@ -2151,3 +2151,44 @@ async fn test_context_hides_private_status_unauthenticated() {
         "private reply should not appear in context for unauthenticated viewer",
     );
 }
+
+/// Boosting a status increments the booster's statuses_count; unboosting decrements it.
+#[tokio::test]
+async fn test_reblog_increments_booster_statuses_count() {
+    let ctx = TestContext::new("boost-stat-count").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "to boost for count", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let before: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    let count_before = before["statuses_count"].as_i64().unwrap_or(0);
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let after_boost: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        after_boost["statuses_count"].as_i64().unwrap_or(0),
+        count_before + 1,
+        "statuses_count should increment when boosting",
+    );
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unreblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let after_unboost: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+    assert_eq!(
+        after_unboost["statuses_count"].as_i64().unwrap_or(0),
+        count_before,
+        "statuses_count should decrement when unboosting",
+    );
+}
