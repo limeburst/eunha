@@ -1665,6 +1665,57 @@ async fn test_vote_poll_multiple_choice_allowed() {
     assert!(own_votes.contains(&json!(2)));
 }
 
+/// POST /api/v1/statuses with a poll with only 1 option returns 422.
+#[tokio::test]
+async fn test_poll_with_one_option_returns_422() {
+    let ctx = TestContext::new("poll-1opt").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "single option poll",
+            "visibility": "public",
+            "poll": {"options": ["Only one"], "expires_in": 86400}
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// POST /api/v1/statuses with a poll with 5 options returns 422.
+#[tokio::test]
+async fn test_poll_with_five_options_returns_422() {
+    let ctx = TestContext::new("poll-5opt").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "five option poll",
+            "visibility": "public",
+            "poll": {"options": ["A", "B", "C", "D", "E"], "expires_in": 86400}
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// POST /api/v1/statuses with a poll with a blank option returns 422.
+#[tokio::test]
+async fn test_poll_with_blank_option_returns_422() {
+    let ctx = TestContext::new("poll-blank").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "blank option poll",
+            "visibility": "public",
+            "poll": {"options": ["Valid", ""], "expires_in": 86400}
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 // ── default posting visibility ────────────────────────────────────────────────
 
 /// When the user has a default_privacy setting and no visibility is given, that default is used.

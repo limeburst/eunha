@@ -103,6 +103,19 @@ pub async fn post_status(
         return Err(AppError::Unprocessable("Validation failed: Text character limit of 500 exceeded".into()));
     }
 
+    // Validate poll options before inserting anything
+    if let Some(ref poll_form) = form.poll {
+        if poll_form.options.len() < 2 {
+            return Err(AppError::Unprocessable("Validation failed: Poll must have at least 2 options".into()));
+        }
+        if poll_form.options.len() > 4 {
+            return Err(AppError::Unprocessable("Validation failed: Poll must have at most 4 options".into()));
+        }
+        if poll_form.options.iter().any(|o| o.trim().is_empty()) {
+            return Err(AppError::Unprocessable("Validation failed: Poll options cannot be blank".into()));
+        }
+    }
+
     // Handle scheduled statuses
     if let Some(ref scheduled_at_str) = form.scheduled_at {
         let scheduled_at = chrono::DateTime::parse_from_rfc3339(scheduled_at_str)
@@ -307,23 +320,21 @@ pub async fn post_status(
         }
     }
 
-    // Create poll if requested
+    // Create poll if requested (options already validated above)
     if let Some(ref poll_form) = form.poll {
-        if poll_form.options.len() >= 2 {
-            let expires_at = poll_form.expires_in.map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
-            let options_json: serde_json::Value = serde_json::Value::Array(
-                poll_form.options.iter().map(|o| serde_json::json!({ "title": o, "votes_count": 0 })).collect()
-            );
-            sqlx::query!(
-                r#"INSERT INTO polls (status_id, account_id, options, multiple, expires_at)
-                   VALUES ($1, $2, $3, $4, $5)"#,
-                status.id, account.id, options_json,
-                poll_form.multiple.unwrap_or(false),
-                expires_at,
-            )
-            .execute(&state.db)
-            .await?;
-        }
+        let expires_at = poll_form.expires_in.map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+        let options_json: serde_json::Value = serde_json::Value::Array(
+            poll_form.options.iter().map(|o| serde_json::json!({ "title": o, "votes_count": 0 })).collect()
+        );
+        sqlx::query!(
+            r#"INSERT INTO polls (status_id, account_id, options, multiple, expires_at)
+               VALUES ($1, $2, $3, $4, $5)"#,
+            status.id, account.id, options_json,
+            poll_form.multiple.unwrap_or(false),
+            expires_at,
+        )
+        .execute(&state.db)
+        .await?;
     }
 
     let mut status = status;
