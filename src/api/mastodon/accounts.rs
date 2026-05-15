@@ -195,6 +195,9 @@ pub async fn get_account_statuses(
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<impl IntoResponse> {
     let account = fetch_account(&state, id).await?;
+    if account.suspended_at.is_some() {
+        return Err(AppError::Gone("Account is suspended".into()));
+    }
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
     if q.pinned == Some(true) {
@@ -592,6 +595,9 @@ pub async fn get_account_followers(
     viewer: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let target = fetch_account(&state, id).await?;
+    if target.suspended_at.is_some() {
+        return Err(AppError::Gone("Account is suspended".into()));
+    }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
     if target.hide_collections && viewer_id != Some(id) {
@@ -638,6 +644,9 @@ pub async fn get_account_following(
     viewer: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let target = fetch_account(&state, id).await?;
+    if target.suspended_at.is_some() {
+        return Err(AppError::Gone("Account is suspended".into()));
+    }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
     if target.hide_collections && viewer_id != Some(id) {
