@@ -870,6 +870,48 @@ async fn test_status_source_forbidden_for_non_author() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+/// Editing a status owned by another user returns 403.
+#[tokio::test]
+async fn test_edit_status_by_non_author_returns_403() {
+    let ctx = TestContext::new("edit-non-author").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice's status", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.put_json(
+        &format!("/api/v1/statuses/{id}"),
+        Some(&ctx.bob_token),
+        &json!({"status": "bob tries to edit alice's status"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// Favouriting a nonexistent status returns 404.
+#[tokio::test]
+async fn test_favourite_nonexistent_status_returns_404() {
+    let ctx = TestContext::new("fav-nonexist").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses/999999999/favourite",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Reblogging a nonexistent status returns 404.
+#[tokio::test]
+async fn test_reblog_nonexistent_status_returns_404() {
+    let ctx = TestContext::new("reblog-nonexist").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses/999999999/reblog",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 /// Status content warning (spoiler_text) round-trips correctly.
 #[tokio::test]
 async fn test_spoiler_text_preserved() {
