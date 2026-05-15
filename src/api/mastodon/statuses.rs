@@ -1241,6 +1241,9 @@ pub async fn edit_status(
     .await?;
 
     let new_text = form.status.unwrap_or_else(|| status.text.clone());
+    if new_text.chars().count() > 500 {
+        return Err(AppError::Unprocessable("Validation failed: Text character limit of 500 exceeded".into()));
+    }
     let hashtags = extract_hashtags(&new_text);
     let mention_handles = extract_mention_handles(&new_text);
     let resolved = resolve_mention_accounts(&state, status.instance_id, &mention_handles).await;

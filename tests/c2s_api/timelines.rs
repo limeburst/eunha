@@ -609,3 +609,48 @@ async fn test_home_timeline_followed_tag_muted_account_excluded() {
         "muted account's status should not appear in home timeline even if it has a followed tag",
     );
 }
+
+/// A "hide" filter removes matching statuses from the home timeline.
+#[tokio::test]
+async fn test_home_timeline_hide_filter_excludes_matching_status() {
+    let ctx = TestContext::new("filter-hide-home").await;
+
+    // Create a hide filter for the word "badword"
+    let filter_resp: Value = ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Hide bad words",
+            "context": ["home"],
+            "filter_action": "hide",
+            "keywords_attributes": [{"keyword": "badword", "whole_word": false}]
+        }),
+    ).await.json().await.unwrap();
+
+    let filter_id = filter_resp["id"].as_str().unwrap();
+    assert!(!filter_id.is_empty(), "filter should be created");
+
+    // Bob posts a status containing "badword"
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let bad_status = ctx.api.post_status(&ctx.bob_token, "this has badword in it", "public").await;
+    let bad_id = bad_status["id"].as_str().unwrap();
+
+    // Bob posts a clean status
+    let clean_status = ctx.api.post_status(&ctx.bob_token, "this is fine", "public").await;
+    let clean_id = clean_status["id"].as_str().unwrap();
+
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let ids: Vec<&str> = home.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(
+        !ids.contains(&bad_id),
+        "status with filtered word should be excluded from home timeline",
+    );
+    assert!(
+        ids.contains(&clean_id),
+        "clean status should still appear in home timeline",
+    );
+}

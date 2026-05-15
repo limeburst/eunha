@@ -125,7 +125,7 @@ pub async fn public_timeline(
         .await?
     };
 
-    let result = build_status_list(&state, statuses, viewer_id).await?;
+    let result = build_status_list_with_context(&state, statuses, viewer_id, "public").await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }
@@ -261,7 +261,7 @@ pub async fn home_timeline(
         .await?
     };
 
-    let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
+    let result = build_status_list_with_context(&state, statuses, Some(auth.account_id), "home").await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }
@@ -357,7 +357,7 @@ pub async fn list_timeline(
             .await?
     };
 
-    let result = build_status_list(&state, statuses, Some(auth.account_id)).await?;
+    let result = build_status_list_with_context(&state, statuses, Some(auth.account_id), "home").await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }
@@ -468,12 +468,140 @@ pub async fn tag_timeline(
             .fetch_all(&state.db)
             .await?
     };
-    let result = build_status_list(&state, statuses, viewer_id).await?;
+    let result = build_status_list_with_context(&state, statuses, viewer_id, "public").await?;
     let resp = with_pagination_link(&req_headers, &uri, result);
     Ok(resp)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// Apply active custom filters for the viewer against a list of statuses.
+/// Returns a map from status_id → (should_hide, filtered_results_json).
+/// - should_hide = true means the status should be excluded from results (filter_action = "hide")
+/// - filtered_results_json is the value for the `filtered` field on the status
+async fn compute_filter_results(
+    state: &AppState,
+    viewer_id: uuid::Uuid,
+    statuses: &[DbStatus],
+    context: &str,
+) -> std::collections::HashMap<i64, (bool, serde_json::Value)> {
+    let mut result = std::collections::HashMap::new();
+
+    // Load active filters for viewer applicable to this context
+    let filters = match sqlx::query!(
+        r#"SELECT cf.id, cf.action as filter_action
+           FROM custom_filters cf
+           WHERE cf.account_id = $1
+             AND (cf.expires_at IS NULL OR cf.expires_at > now())
+             AND $2::text = ANY(cf.context)"#,
+        viewer_id, context,
+    )
+    .fetch_all(&state.db)
+    .await {
+        Ok(f) => f,
+        Err(_) => return result,
+    };
+
+    if filters.is_empty() {
+        return result;
+    }
+
+    // Load all keywords for these filters
+    let filter_ids: Vec<i64> = filters.iter().map(|f| f.id).collect();
+    let keywords = match sqlx::query!(
+        "SELECT custom_filter_id, keyword, whole_word FROM custom_filter_keywords WHERE custom_filter_id = ANY($1::bigint[])",
+        &filter_ids,
+    )
+    .fetch_all(&state.db)
+    .await {
+        Ok(k) => k,
+        Err(_) => return result,
+    };
+
+    // Group keywords by filter id
+    let mut kw_map: std::collections::HashMap<i64, Vec<(String, bool)>> = std::collections::HashMap::new();
+    for kw in keywords {
+        kw_map.entry(kw.custom_filter_id).or_default().push((kw.keyword, kw.whole_word));
+    }
+
+    for s in statuses {
+        let text = format!("{} {}", s.text, s.spoiler_text);
+        let text_lower = text.to_lowercase();
+        let mut filter_results = Vec::new();
+        let mut should_hide = false;
+
+        for f in &filters {
+            let kws = kw_map.get(&f.id);
+            let Some(kws) = kws else { continue };
+
+            let mut matched_keywords: Vec<String> = Vec::new();
+            for (kw, whole_word) in kws {
+                let kw_lower = kw.to_lowercase();
+                let matches = if *whole_word {
+                    let pattern = format!(r"(?i)(^|[^a-zA-Z0-9_]){}($|[^a-zA-Z0-9_])", regex::escape(&kw_lower));
+                    regex::Regex::new(&pattern).map(|re| re.is_match(&text_lower)).unwrap_or(false)
+                } else {
+                    text_lower.contains(&kw_lower)
+                };
+                if matches {
+                    matched_keywords.push(kw.clone());
+                }
+            }
+
+            if !matched_keywords.is_empty() {
+                if f.filter_action == "hide" {
+                    should_hide = true;
+                }
+                filter_results.push(serde_json::json!({
+                    "filter": { "id": f.id.to_string(), "title": "", "context": [context], "filter_action": f.filter_action },
+                    "keyword_matches": matched_keywords,
+                    "status_matches": serde_json::Value::Null,
+                }));
+            }
+        }
+
+        if !filter_results.is_empty() || should_hide {
+            result.insert(s.id, (should_hide, serde_json::Value::Array(filter_results)));
+        }
+    }
+
+    result
+}
+
+async fn build_status_list_with_context(
+    state: &AppState,
+    statuses: Vec<DbStatus>,
+    viewer_id: Option<uuid::Uuid>,
+    filter_context: &str,
+) -> AppResult<Vec<Status>> {
+    let filter_results = if let Some(vid) = viewer_id {
+        compute_filter_results(state, vid, &statuses, filter_context).await
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // Exclude statuses matching hide filters
+    let statuses: Vec<DbStatus> = statuses.into_iter()
+        .filter(|s| {
+            let effective_id = s.reblog_of_id.unwrap_or(s.id);
+            !filter_results.get(&effective_id).map_or(false, |(hide, _)| *hide)
+        })
+        .collect();
+
+    let mut result = build_status_list(state, statuses, viewer_id).await?;
+
+    // Populate filtered field for warn matches
+    for s in &mut result {
+        let id: i64 = s.id.parse().unwrap_or(0);
+        if let Some((_, ref filter_json)) = filter_results.get(&id) {
+            if !filter_json.as_array().map_or(true, |a| a.is_empty()) {
+                s.filtered = Some(vec![filter_json.clone()]);
+            }
+        }
+    }
+
+    Ok(result)
+}
 
 async fn build_status_list(
     state: &AppState,
