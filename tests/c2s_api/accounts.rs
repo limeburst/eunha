@@ -968,6 +968,49 @@ async fn test_familiar_followers_deduplicates_ids() {
     assert_eq!(list.len(), 1, "duplicate id[] should be collapsed to one entry");
 }
 
+/// familiar_followers returns accounts the viewer follows who also follow the target.
+#[tokio::test]
+async fn test_familiar_followers_correctness() {
+    let ctx = TestContext::new("familiar-correct").await;
+
+    // Create charlie as a 3rd user
+    let (charlie_uuid, charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie", "charlie@test.invalid").await;
+    let charlie_id = charlie_uuid.to_string();
+
+    // Alice follows Charlie
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{charlie_id}/follow"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Charlie follows Bob
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&charlie_token),
+        &json!({}),
+    ).await;
+
+    // Alice checks familiar followers for Bob — should see Charlie (alice follows charlie, charlie follows bob)
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/familiar_followers?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    let list: Vec<Value> = resp.json().await.unwrap();
+    let entry = &list[0];
+    let familiar: Vec<&str> = entry["accounts"].as_array().unwrap()
+        .iter().filter_map(|a| a["id"].as_str()).collect();
+    assert!(
+        familiar.contains(&charlie_id.as_str()),
+        "charlie should be a familiar follower (alice follows charlie, charlie follows bob)",
+    );
+    assert!(
+        !familiar.contains(&ctx.alice_id.as_str()),
+        "alice should not appear in her own familiar followers list",
+    );
+}
+
 // ── suggestions ───────────────────────────────────────────────────────────────
 
 /// GET /api/v1/suggestions returns a JSON array.

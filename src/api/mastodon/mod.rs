@@ -128,6 +128,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Notifications
         .route("/api/v1/notifications", get(notifications::get_notifications))
         .route("/api/v1/notifications/clear", post(notifications::clear_notifications))
+        .route("/api/v1/notifications/unread_count", get(notifications::get_notifications_unread_count))
         .route("/api/v1/notifications/requests", get(notifications::get_notification_requests))
         .route("/api/v1/notifications/requests/{id}", get(notifications::get_notification_request))
         .route("/api/v1/notifications/requests/{id}/accept", post(notifications::accept_notification_request))

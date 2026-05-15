@@ -603,6 +603,16 @@ pub async fn delete_status(
         .await;
     }
 
+    // Decrement original's reblogs_count if this was a boost
+    if let Some(original_id) = status.reblog_of_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET reblogs_count = GREATEST(reblogs_count - 1, 0) WHERE id = $1",
+            original_id
+        )
+        .execute(&state.db)
+        .await;
+    }
+
     // Recalculate featured_tags counts now that this status is soft-deleted
     sqlx::query!(
         r#"UPDATE featured_tags ft

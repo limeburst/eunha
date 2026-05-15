@@ -235,6 +235,47 @@ pub async fn get_notifications_v2(
     }))
 }
 
+// ── GET /api/v1/notifications/unread_count ───────────────────────────────
+
+pub async fn get_notifications_unread_count(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("read:notifications")?;
+
+    // Find last read ID from markers (empty string means never read)
+    let last_read_id: Option<String> = sqlx::query_scalar!(
+        "SELECT NULLIF(last_read_id, '') FROM markers WHERE account_id = $1 AND timeline = 'notifications'",
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let count: i64 = if let Some(last_id) = last_read_id {
+        let last_id_int: i64 = last_id.parse().unwrap_or(0);
+        sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM notifications WHERE account_id = $1 AND id > $2",
+            auth.account_id, last_id_int,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(0)
+        .min(100)
+    } else {
+        sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM notifications WHERE account_id = $1",
+            auth.account_id,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(0)
+        .min(100)
+    };
+
+    Ok(Json(serde_json::json!({ "count": count })))
+}
+
 // ── GET /api/v2/notifications/policy ─────────────────────────────────────
 
 pub async fn get_notification_policy(

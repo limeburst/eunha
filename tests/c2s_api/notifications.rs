@@ -651,3 +651,23 @@ async fn test_mute_with_notifications_false_shows_notifications() {
         "muted account's follow notification should appear when hide_notifications=false",
     );
 }
+
+/// GET /api/v1/notifications/unread_count returns a count of unread notifications.
+#[tokio::test]
+async fn test_notifications_unread_count() {
+    let ctx = TestContext::new("notif-unread-count").await;
+
+    // Initially no notifications
+    let body: Value = ctx.api.get("/api/v1/notifications/unread_count", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let initial = body["count"].as_i64().unwrap_or(-1);
+    assert!(initial >= 0, "unread count should be a non-negative number");
+
+    // Bob follows Alice → generates a follow notification
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let body2: Value = ctx.api.get("/api/v1/notifications/unread_count", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let after = body2["count"].as_i64().unwrap_or(-1);
+    assert!(after > initial, "unread count should increase after a new notification");
+}

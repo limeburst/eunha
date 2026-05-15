@@ -1948,11 +1948,12 @@ pub async fn get_familiar_followers(
     let mut result = Vec::with_capacity(ids.len());
     for target_id in &ids {
         // Find followers of target_id that also follow the viewer (auth.account_id)
+        // Find accounts that: (1) follow the target, and (2) are followed by the viewer
         let accounts = sqlx::query_as!(
             crate::db::models::Account,
             r#"SELECT a.* FROM accounts a
                JOIN follows f1 ON f1.account_id = a.id AND f1.target_account_id = $1 AND f1.state = 'accepted'
-               JOIN follows f2 ON f2.account_id = a.id AND f2.target_account_id = $2 AND f2.state = 'accepted'
+               JOIN follows f2 ON f2.account_id = $2 AND f2.target_account_id = a.id AND f2.state = 'accepted'
                LIMIT 10"#,
             target_id,
             auth.account_id,
