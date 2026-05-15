@@ -43,6 +43,11 @@ struct Args {
     /// VAPID public key from the Mastodon instance (base64url).
     #[arg(long)]
     vapid_public_key: Option<String>,
+    /// Email of the console user to set as instance administrator.
+    /// If the user already exists they are linked; otherwise a confirmed account is created
+    /// (no password — they can set one via the console login flow).
+    #[arg(long)]
+    admin_email: Option<String>,
 }
 
 #[tokio::main]
@@ -192,8 +197,43 @@ async fn main() -> Result<()> {
         .await?;
     }
 
+    if let Some(email) = &args.admin_email {
+        tracing::info!("setting up admin console user: {}", email);
+        setup_admin_user(&mut *tx, instance_id, email).await?;
+    }
+
     tx.commit().await.context("committing transaction")?;
     tracing::info!("migration complete");
+    Ok(())
+}
+
+async fn setup_admin_user(
+    dst: &mut PgConnection,
+    instance_id: Uuid,
+    email: &str,
+) -> Result<()> {
+    let email_normalized = email.to_lowercase();
+
+    let console_user_id: Uuid = sqlx::query_scalar(
+        r#"INSERT INTO console_users (email, email_normalized, confirmed_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (email_normalized) DO UPDATE SET email = EXCLUDED.email
+           RETURNING id"#,
+    )
+    .bind(email)
+    .bind(&email_normalized)
+    .fetch_one(&mut *dst)
+    .await
+    .context("upsert console user")?;
+
+    sqlx::query("UPDATE instances SET console_user_id = $1 WHERE id = $2")
+        .bind(console_user_id)
+        .bind(instance_id)
+        .execute(&mut *dst)
+        .await
+        .context("link instance to console user")?;
+
+    tracing::info!("instance linked to console user {} ({})", email, console_user_id);
     Ok(())
 }
 
