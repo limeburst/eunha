@@ -2784,3 +2784,19 @@ async fn test_status_card_private_unauthenticated_is_404() {
     let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/card"), None).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+/// POST /api/v1/statuses/:id/translate returns 503 when translation is disabled.
+#[tokio::test]
+async fn test_status_translate_returns_503() {
+    let ctx = TestContext::new("status-translate").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "hola mundo", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/translate"),
+        Some(&ctx.alice_token),
+        &json!({"lang": "en"}),
+    ).await;
+    assert_eq!(resp.status().as_u16(), 503, "translate should return 503 when not supported");
+}

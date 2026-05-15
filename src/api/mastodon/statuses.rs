@@ -1602,6 +1602,21 @@ pub async fn get_status_source(
     }))
 }
 
+// ── POST /api/v1/statuses/:id/translate ───────────────────────────────────
+
+pub async fn translate_status(
+    Path(_id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<axum::response::Response> {
+    use axum::response::IntoResponse;
+    auth.require_scope("write:statuses")?;
+    // Translation is not supported; return 503 as Mastodon does when disabled.
+    Ok((
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({"error": "Translation is not supported"})),
+    ).into_response())
+}
+
 // ── GET /api/v1/statuses/:id/card ─────────────────────────────────────────
 
 pub async fn get_status_card(
