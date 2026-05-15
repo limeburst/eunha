@@ -698,6 +698,40 @@ async fn test_notifications_unread_count() {
     assert!(after > initial, "unread count should increase after a new notification");
 }
 
+/// Replies in a muted thread do not create notifications for the muter.
+#[tokio::test]
+async fn test_muted_thread_suppresses_notifications() {
+    let ctx = TestContext::new("notif-muted-thread").await;
+
+    // Alice posts a root status.
+    let root = ctx.api.post_status(&ctx.alice_token, "thread root", "public").await;
+    let root_id = root["id"].as_str().unwrap();
+
+    // Alice mutes the thread.
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{root_id}/mute"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob replies to Alice's root status — this would normally create a mention notification.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "@alice reply!", "visibility": "public", "in_reply_to_id": root_id}),
+    ).await;
+
+    // Alice should NOT have a mention notification from Bob.
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let mention_from_bob = notifs.iter().find(|n| {
+        n["type"].as_str() == Some("mention")
+        && n["account"]["id"].as_str() == Some(ctx.bob_id.as_str())
+    });
+    assert!(mention_from_bob.is_none(),
+        "mention in muted thread should not create a notification");
+}
+
 /// Mention from a blocked account does not create a notification for the blocker.
 #[tokio::test]
 async fn test_blocked_account_mention_does_not_create_notification() {

@@ -270,6 +270,30 @@ pub async fn create_and_push(
         return;
     }
 
+    // Don't notify if the recipient has muted the conversation thread
+    if let Some(sid) = status_id {
+        let thread_muted = sqlx::query_scalar!(
+            r#"WITH RECURSIVE thread AS (
+                   SELECT id, in_reply_to_id FROM statuses WHERE id = $2
+                   UNION ALL
+                   SELECT s.id, s.in_reply_to_id FROM statuses s JOIN thread t ON s.id = t.in_reply_to_id
+               )
+               SELECT 1 FROM conversation_mutes cm
+               JOIN thread t ON t.id = cm.status_id
+               WHERE cm.account_id = $1
+               LIMIT 1"#,
+            recipient_id, sid,
+        )
+        .fetch_optional(&db)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if thread_muted {
+            return;
+        }
+    }
+
     // Check notification policy: route to notification_requests if filtered
     if should_filter_notification(&db, recipient_id, from_account_id, notification_type, status_id).await {
         route_to_request(&db, recipient_id, from_account_id, status_id).await;
