@@ -870,6 +870,28 @@ async fn test_status_source_forbidden_for_non_author() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+/// GET /api/v1/statuses/:id/source after edit returns the updated text.
+#[tokio::test]
+async fn test_status_source_reflects_edit() {
+    let ctx = TestContext::new("status-src-edit").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "original text", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.put_json(
+        &format!("/api/v1/statuses/{id}"),
+        Some(&ctx.alice_token),
+        &json!({"status": "updated text after edit"}),
+    ).await;
+
+    let src: Value = ctx.api.get(&format!("/api/v1/statuses/{id}/source"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        src["text"].as_str().unwrap_or("").contains("updated text after edit"),
+        "source should reflect the updated text after editing",
+    );
+}
+
 /// Editing a status owned by another user returns 403.
 #[tokio::test]
 async fn test_edit_status_by_non_author_returns_403() {
