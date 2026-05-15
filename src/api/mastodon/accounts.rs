@@ -164,6 +164,9 @@ pub async fn get_account(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, id).await?;
+    if account.suspended_at.is_some() {
+        return Err(AppError::Gone("Account is suspended".into()));
+    }
     Ok(Json(account_from_db(&account)))
 }
 

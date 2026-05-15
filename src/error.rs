@@ -17,6 +17,8 @@ pub enum AppError {
     Unprocessable(String),
     #[error("conflict")]
     Conflict,
+    #[error("gone")]
+    Gone(String),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("internal error: {0}")]
@@ -31,6 +33,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden => (StatusCode::FORBIDDEN, "This action is not allowed".to_string()),
             AppError::Unprocessable(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.clone()),
             AppError::Conflict => (StatusCode::CONFLICT, "Duplicate record".to_string()),
+            AppError::Gone(msg) => (StatusCode::GONE, msg.clone()),
             AppError::Database(e) => {
                 tracing::error!("database error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
