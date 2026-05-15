@@ -93,6 +93,38 @@ async fn test_list_add_and_remove_accounts() {
     assert!(!after.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())));
 }
 
+/// GET /api/v1/lists/:id/accounts respects limit parameter.
+#[tokio::test]
+async fn test_list_accounts_limit_param() {
+    let ctx = TestContext::new("list-acct-limit").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let (charlie_id, _charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlielimit", "charlielimit@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Limit List"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id, charlie_id]}),
+    ).await;
+
+    let limited: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/lists/{list_id}/accounts?limit=1"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(limited.len() <= 1, "limit=1 should return at most 1 account, got {}", limited.len());
+}
+
 /// GET /api/v1/lists/:id returns 404 when the list does not exist.
 #[tokio::test]
 async fn test_get_list_not_found() {

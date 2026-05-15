@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Json, Path, State},
+    extract::{Extension, Json, Path, Query, State},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -139,17 +139,28 @@ pub async fn get_list_accounts(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
+    Query(pagination): Query<super::types::PaginationParams>,
 ) -> AppResult<Json<Vec<Account>>> {
     auth.require_scope("read:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
+
+    let limit = pagination.limit_clamped(40, 80);
+    let max_id: Option<uuid::Uuid> = pagination.max_id.as_deref().and_then(|s| s.parse().ok());
+    let since_id: Option<uuid::Uuid> = pagination.since_id.as_deref().and_then(|s| s.parse().ok());
 
     let accounts = sqlx::query_as!(
         models::Account,
         r#"SELECT a.* FROM accounts a
            JOIN list_accounts la ON la.account_id = a.id
            WHERE la.list_id = $1
-           ORDER BY a.username ASC"#,
+             AND ($2::uuid IS NULL OR a.id < $2)
+             AND ($3::uuid IS NULL OR a.id > $3)
+           ORDER BY a.id DESC
+           LIMIT $4"#,
         id,
+        max_id,
+        since_id,
+        limit,
     )
     .fetch_all(&state.db)
     .await?;

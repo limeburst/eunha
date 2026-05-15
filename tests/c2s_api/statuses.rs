@@ -1848,3 +1848,52 @@ async fn test_post_status_empty_returns_422() {
         "posting empty status should return 422",
     );
 }
+
+/// Status exceeding 500 characters returns 422.
+#[tokio::test]
+async fn test_post_status_over_char_limit_returns_422() {
+    let ctx = TestContext::new("status-toolong").await;
+
+    let long_text = "a".repeat(501);
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": long_text, "visibility": "public"}),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "status over 500 chars should return 422",
+    );
+}
+
+/// Status of exactly 500 characters succeeds.
+#[tokio::test]
+async fn test_post_status_at_char_limit_succeeds() {
+    let ctx = TestContext::new("status-at-limit").await;
+
+    let exact_text = "a".repeat(500);
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": exact_text, "visibility": "public"}),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "status of exactly 500 chars should succeed",
+    );
+}
+
+/// Status response has a filtered field that is an array (not null).
+#[tokio::test]
+async fn test_status_filtered_field_is_array() {
+    let ctx = TestContext::new("status-filtered").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "check filtered field", "public").await;
+    assert!(
+        status["filtered"].is_array(),
+        "filtered field should be an array, got: {:?}",
+        status["filtered"],
+    );
+}

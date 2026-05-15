@@ -1651,3 +1651,29 @@ async fn test_verify_app_credentials_without_token_is_401() {
     let resp = ctx.api.get("/api/v1/apps/verify_credentials", None).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// Following an account that has blocked you does not create a follow.
+#[tokio::test]
+async fn test_follow_blocked_by_target_is_silently_rejected() {
+    let ctx = TestContext::new("follow-blocked-by").await;
+
+    // Bob blocks Alice first.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Alice tries to follow Bob — should return 200 but following=false.
+    let rel: Value = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+
+    assert_eq!(
+        rel["following"].as_bool(),
+        Some(false),
+        "alice should not be following bob after bob blocked her",
+    );
+}

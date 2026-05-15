@@ -445,6 +445,18 @@ pub async fn follow_account(
     let notify = params.notify.unwrap_or(false);
     let languages: Vec<String> = params.languages.unwrap_or_default();
 
+    // If the target has blocked the requester, silently return current relationship
+    let blocked_by_target = sqlx::query_scalar!(
+        "SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2",
+        target_id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+    if blocked_by_target {
+        return build_relationship(&state, auth.account_id, target_id).await.map(Json);
+    }
+
     // Check if follow already exists
     let existing = sqlx::query!(
         "SELECT state FROM follows WHERE account_id = $1 AND target_account_id = $2",

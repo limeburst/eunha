@@ -121,7 +121,7 @@ pub fn status_from_db(
         muted: viewer_context.as_ref().map(|c| c.muted),
         bookmarked: viewer_context.as_ref().map(|c| c.bookmarked),
         pinned: viewer_context.as_ref().map(|c| c.pinned),
-        filtered: None,
+        filtered: Some(vec![]),
         text: None,
     }
 }

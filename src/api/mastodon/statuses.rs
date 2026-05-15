@@ -73,6 +73,9 @@ pub async fn post_status(
     if text.is_empty() && form.media_ids.as_ref().map_or(true, |m| m.is_empty()) && form.poll.is_none() {
         return Err(AppError::Unprocessable("Status must have text or media".into()));
     }
+    if text.chars().count() > 500 {
+        return Err(AppError::Unprocessable("Validation failed: Text character limit of 500 exceeded".into()));
+    }
 
     // Handle scheduled statuses
     if let Some(ref scheduled_at_str) = form.scheduled_at {
