@@ -568,3 +568,33 @@ async fn test_list_timeline_replies_policy_list() {
         "reply to list member should be visible with replies_policy=list",
     );
 }
+
+/// GET /api/v1/timelines/list/:id returns 404 for a non-existent list.
+#[tokio::test]
+async fn test_list_timeline_not_found() {
+    let ctx = TestContext::new("list-tl-404").await;
+
+    let resp = ctx.api.get("/api/v1/timelines/list/99999999", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/timelines/list/:id returns 404 for another user's list.
+#[tokio::test]
+async fn test_list_timeline_other_user_is_404() {
+    let ctx = TestContext::new("list-tl-other").await;
+
+    // Alice creates a list.
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "alice list"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    // Bob trying to access Alice's list timeline should get 404.
+    let resp = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
