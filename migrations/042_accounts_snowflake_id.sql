@@ -19,9 +19,12 @@ SELECT
     ) AS new_id
 FROM accounts;
 
+-- Index enables hash-join / index-scan in all subsequent UPDATE ... FROM statements.
+CREATE INDEX ON _acct_map (old_id);
+
 -- ── Step 2: Add BIGINT id_new to accounts ────────────────────────────────────
 ALTER TABLE accounts ADD COLUMN id_new BIGINT;
-UPDATE accounts SET id_new = (SELECT new_id FROM _acct_map WHERE old_id = id);
+UPDATE accounts SET id_new = m.new_id FROM _acct_map m WHERE accounts.id = m.old_id;
 
 -- ── Step 3: Add BIGINT shadow columns to every referencing table ─────────────
 ALTER TABLE account_aliases           ADD COLUMN account_id_new               BIGINT;
@@ -79,61 +82,61 @@ ALTER TABLE user_domain_blocks        ADD COLUMN account_id_new               BI
 ALTER TABLE users                     ADD COLUMN account_id_new               BIGINT;
 ALTER TABLE web_push_subscriptions    ADD COLUMN account_id_new               BIGINT;
 
--- ── Step 4: Populate BIGINT shadow columns ───────────────────────────────────
-UPDATE account_aliases           SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE account_moderation_notes  SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE account_notes             SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE account_pins              SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE account_warnings          SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE admin_action_logs         SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE announcement_dismissals   SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE blocks                    SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE bookmarks                 SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE conversation_mutes        SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE conversation_participants SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE custom_filters            SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE favourites                SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE featured_tags             SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE follows                   SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE invites                   SET created_by_new = (SELECT new_id FROM _acct_map WHERE old_id = created_by);
-UPDATE list_accounts             SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE lists                     SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE markers                   SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE media_attachments         SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE mentions                  SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE mutes                     SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE notification_requests     SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     from_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = from_account_id);
-UPDATE notifications             SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     from_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = from_account_id);
-UPDATE oauth_access_tokens       SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE oauth_authorization_codes SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE outbox_queue              SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE poll_votes                SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE polls                     SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE report_notes              SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE reports                   SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     action_taken_by_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = action_taken_by_account_id),
-                                     assigned_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = assigned_account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE scheduled_statuses        SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE status_edits              SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE status_pins               SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE statuses                  SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     in_reply_to_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = in_reply_to_account_id);
-UPDATE suggestion_dismissals     SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id),
-                                     target_account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = target_account_id);
-UPDATE tag_follows               SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE user_domain_blocks        SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE users                     SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
-UPDATE web_push_subscriptions    SET account_id_new = (SELECT new_id FROM _acct_map WHERE old_id = account_id);
+-- ── Step 4: Populate BIGINT shadow columns (FROM join → hash join, O(n+m)) ───
+UPDATE account_aliases           SET account_id_new = m.new_id FROM _acct_map m WHERE account_aliases.account_id = m.old_id;
+UPDATE account_moderation_notes  SET account_id_new = m.new_id FROM _acct_map m WHERE account_moderation_notes.account_id = m.old_id;
+UPDATE account_moderation_notes  SET target_account_id_new = m.new_id FROM _acct_map m WHERE account_moderation_notes.target_account_id = m.old_id;
+UPDATE account_notes             SET account_id_new = m.new_id FROM _acct_map m WHERE account_notes.account_id = m.old_id;
+UPDATE account_notes             SET target_account_id_new = m.new_id FROM _acct_map m WHERE account_notes.target_account_id = m.old_id;
+UPDATE account_pins              SET account_id_new = m.new_id FROM _acct_map m WHERE account_pins.account_id = m.old_id;
+UPDATE account_pins              SET target_account_id_new = m.new_id FROM _acct_map m WHERE account_pins.target_account_id = m.old_id;
+UPDATE account_warnings          SET account_id_new = m.new_id FROM _acct_map m WHERE account_warnings.account_id = m.old_id;
+UPDATE account_warnings          SET target_account_id_new = m.new_id FROM _acct_map m WHERE account_warnings.target_account_id = m.old_id;
+UPDATE admin_action_logs         SET account_id_new = m.new_id FROM _acct_map m WHERE admin_action_logs.account_id = m.old_id;
+UPDATE announcement_dismissals   SET account_id_new = m.new_id FROM _acct_map m WHERE announcement_dismissals.account_id = m.old_id;
+UPDATE blocks                    SET account_id_new = m.new_id FROM _acct_map m WHERE blocks.account_id = m.old_id;
+UPDATE blocks                    SET target_account_id_new = m.new_id FROM _acct_map m WHERE blocks.target_account_id = m.old_id;
+UPDATE bookmarks                 SET account_id_new = m.new_id FROM _acct_map m WHERE bookmarks.account_id = m.old_id;
+UPDATE conversation_mutes        SET account_id_new = m.new_id FROM _acct_map m WHERE conversation_mutes.account_id = m.old_id;
+UPDATE conversation_participants SET account_id_new = m.new_id FROM _acct_map m WHERE conversation_participants.account_id = m.old_id;
+UPDATE custom_filters            SET account_id_new = m.new_id FROM _acct_map m WHERE custom_filters.account_id = m.old_id;
+UPDATE favourites                SET account_id_new = m.new_id FROM _acct_map m WHERE favourites.account_id = m.old_id;
+UPDATE featured_tags             SET account_id_new = m.new_id FROM _acct_map m WHERE featured_tags.account_id = m.old_id;
+UPDATE follows                   SET account_id_new = m.new_id FROM _acct_map m WHERE follows.account_id = m.old_id;
+UPDATE follows                   SET target_account_id_new = m.new_id FROM _acct_map m WHERE follows.target_account_id = m.old_id;
+UPDATE invites                   SET created_by_new = m.new_id FROM _acct_map m WHERE invites.created_by = m.old_id;
+UPDATE list_accounts             SET account_id_new = m.new_id FROM _acct_map m WHERE list_accounts.account_id = m.old_id;
+UPDATE lists                     SET account_id_new = m.new_id FROM _acct_map m WHERE lists.account_id = m.old_id;
+UPDATE markers                   SET account_id_new = m.new_id FROM _acct_map m WHERE markers.account_id = m.old_id;
+UPDATE media_attachments         SET account_id_new = m.new_id FROM _acct_map m WHERE media_attachments.account_id = m.old_id;
+UPDATE mentions                  SET account_id_new = m.new_id FROM _acct_map m WHERE mentions.account_id = m.old_id;
+UPDATE mutes                     SET account_id_new = m.new_id FROM _acct_map m WHERE mutes.account_id = m.old_id;
+UPDATE mutes                     SET target_account_id_new = m.new_id FROM _acct_map m WHERE mutes.target_account_id = m.old_id;
+UPDATE notification_requests     SET account_id_new = m.new_id FROM _acct_map m WHERE notification_requests.account_id = m.old_id;
+UPDATE notification_requests     SET from_account_id_new = m.new_id FROM _acct_map m WHERE notification_requests.from_account_id = m.old_id;
+UPDATE notifications             SET account_id_new = m.new_id FROM _acct_map m WHERE notifications.account_id = m.old_id;
+UPDATE notifications             SET from_account_id_new = m.new_id FROM _acct_map m WHERE notifications.from_account_id = m.old_id;
+UPDATE oauth_access_tokens       SET account_id_new = m.new_id FROM _acct_map m WHERE oauth_access_tokens.account_id = m.old_id;
+UPDATE oauth_authorization_codes SET account_id_new = m.new_id FROM _acct_map m WHERE oauth_authorization_codes.account_id = m.old_id;
+UPDATE outbox_queue              SET account_id_new = m.new_id FROM _acct_map m WHERE outbox_queue.account_id = m.old_id;
+UPDATE poll_votes                SET account_id_new = m.new_id FROM _acct_map m WHERE poll_votes.account_id = m.old_id;
+UPDATE polls                     SET account_id_new = m.new_id FROM _acct_map m WHERE polls.account_id = m.old_id;
+UPDATE report_notes              SET account_id_new = m.new_id FROM _acct_map m WHERE report_notes.account_id = m.old_id;
+UPDATE reports                   SET account_id_new = m.new_id FROM _acct_map m WHERE reports.account_id = m.old_id;
+UPDATE reports                   SET action_taken_by_account_id_new = m.new_id FROM _acct_map m WHERE reports.action_taken_by_account_id = m.old_id;
+UPDATE reports                   SET assigned_account_id_new = m.new_id FROM _acct_map m WHERE reports.assigned_account_id = m.old_id;
+UPDATE reports                   SET target_account_id_new = m.new_id FROM _acct_map m WHERE reports.target_account_id = m.old_id;
+UPDATE scheduled_statuses        SET account_id_new = m.new_id FROM _acct_map m WHERE scheduled_statuses.account_id = m.old_id;
+UPDATE status_edits              SET account_id_new = m.new_id FROM _acct_map m WHERE status_edits.account_id = m.old_id;
+UPDATE status_pins               SET account_id_new = m.new_id FROM _acct_map m WHERE status_pins.account_id = m.old_id;
+UPDATE statuses                  SET account_id_new = m.new_id FROM _acct_map m WHERE statuses.account_id = m.old_id;
+UPDATE statuses                  SET in_reply_to_account_id_new = m.new_id FROM _acct_map m WHERE statuses.in_reply_to_account_id = m.old_id;
+UPDATE suggestion_dismissals     SET account_id_new = m.new_id FROM _acct_map m WHERE suggestion_dismissals.account_id = m.old_id;
+UPDATE suggestion_dismissals     SET target_account_id_new = m.new_id FROM _acct_map m WHERE suggestion_dismissals.target_account_id = m.old_id;
+UPDATE tag_follows               SET account_id_new = m.new_id FROM _acct_map m WHERE tag_follows.account_id = m.old_id;
+UPDATE user_domain_blocks        SET account_id_new = m.new_id FROM _acct_map m WHERE user_domain_blocks.account_id = m.old_id;
+UPDATE users                     SET account_id_new = m.new_id FROM _acct_map m WHERE users.account_id = m.old_id;
+UPDATE web_push_subscriptions    SET account_id_new = m.new_id FROM _acct_map m WHERE web_push_subscriptions.account_id = m.old_id;
 
 -- ── Step 5: Drop all FK constraints referencing accounts.id ──────────────────
 ALTER TABLE account_aliases           DROP CONSTRAINT account_aliases_account_id_fkey;
