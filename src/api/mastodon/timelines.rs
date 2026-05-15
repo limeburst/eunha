@@ -616,8 +616,10 @@ async fn build_status_list_with_context(
     for s in &mut result {
         let id: i64 = s.id.parse().unwrap_or(0);
         if let Some((_, ref filter_json)) = filter_results.get(&id) {
-            if !filter_json.as_array().map_or(true, |a| a.is_empty()) {
-                s.filtered = Some(vec![filter_json.clone()]);
+            if let Some(arr) = filter_json.as_array() {
+                if !arr.is_empty() {
+                    s.filtered = Some(arr.clone());
+                }
             }
         }
     }

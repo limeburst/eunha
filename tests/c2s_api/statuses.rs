@@ -2338,3 +2338,48 @@ async fn test_context_thread_filter_hides_matching_descendant() {
         "spam reply should be hidden by thread filter",
     );
 }
+
+/// A "warn" filter in thread context keeps the status but sets the filtered field.
+#[tokio::test]
+async fn test_context_thread_filter_warn_annotates_status() {
+    let ctx = TestContext::new("ctx-thread-warn").await;
+
+    // Alice creates a "thread" warn filter for "warnword".
+    ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Thread warn filter",
+            "context": ["thread"],
+            "filter_action": "warn",
+            "keywords_attributes": [{"keyword": "warnword", "whole_word": false}]
+        }),
+    ).await;
+
+    let root = ctx.api.post_status(&ctx.bob_token, "root post for warn", "public").await;
+    let root_id = root["id"].as_str().unwrap();
+
+    let warned_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply with warnword", "in_reply_to_id": root_id}),
+    ).await.json().await.unwrap();
+    let warned_id = warned_reply["id"].as_str().unwrap();
+
+    let context: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{root_id}/context"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let descendants = context["descendants"].as_array().unwrap();
+    let warned_status = descendants.iter().find(|s| s["id"].as_str() == Some(warned_id));
+
+    assert!(warned_status.is_some(), "warned reply should still appear in thread context");
+    let filtered = warned_status.unwrap()["filtered"].as_array().unwrap();
+    assert!(!filtered.is_empty(), "warned reply should have non-empty filtered array");
+    assert_eq!(
+        filtered[0]["filter"]["filter_action"].as_str(),
+        Some("warn"),
+        "filtered entry should reference the warn filter",
+    );
+}

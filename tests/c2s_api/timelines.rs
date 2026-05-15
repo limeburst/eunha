@@ -704,3 +704,41 @@ async fn test_home_timeline_includes_addressed_dms() {
         "DM addressed to viewer should appear in home timeline",
     );
 }
+
+/// A "warn" filter in home context keeps the status but populates the filtered field.
+#[tokio::test]
+async fn test_home_timeline_warn_filter_annotates_status() {
+    let ctx = TestContext::new("home-tl-warn").await;
+
+    // Alice follows Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Alice creates a "home" warn filter for "warnableword".
+    ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &json!({
+            "title": "Home warn filter",
+            "context": ["home"],
+            "filter_action": "warn",
+            "keywords_attributes": [{"keyword": "warnableword", "whole_word": false}]
+        }),
+    ).await;
+
+    // Bob posts a status containing the filtered word.
+    let warned_status = ctx.api.post_status(&ctx.bob_token, "post about warnableword stuff", "public").await;
+    let warned_id = warned_status["id"].as_str().unwrap();
+
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let found = home.iter().find(|s| s["id"].as_str() == Some(warned_id));
+    assert!(found.is_some(), "warned status should still appear in home timeline");
+    let filtered = found.unwrap()["filtered"].as_array().unwrap();
+    assert!(!filtered.is_empty(), "warned status should have non-empty filtered array");
+    assert_eq!(
+        filtered[0]["filter"]["filter_action"].as_str(),
+        Some("warn"),
+        "filtered entry should reference the warn filter",
+    );
+}

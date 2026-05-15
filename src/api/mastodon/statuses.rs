@@ -990,8 +990,10 @@ pub async fn get_status_context(
         };
         let mut status = build_status(&state, s, &acct, media, reblog, ctx).await?;
         if let Some((_, ref fj)) = anc_filters.get(&s.id) {
-            if !fj.as_array().map_or(true, |a| a.is_empty()) {
-                status.filtered = Some(vec![fj.clone()]);
+            if let Some(arr) = fj.as_array() {
+                if !arr.is_empty() {
+                    status.filtered = Some(arr.clone());
+                }
             }
         }
         ancestors.push(status);
@@ -1012,8 +1014,10 @@ pub async fn get_status_context(
         };
         let mut status = build_status(&state, s, &acct, media, reblog, ctx).await?;
         if let Some((_, ref fj)) = desc_filters.get(&s.id) {
-            if !fj.as_array().map_or(true, |a| a.is_empty()) {
-                status.filtered = Some(vec![fj.clone()]);
+            if let Some(arr) = fj.as_array() {
+                if !arr.is_empty() {
+                    status.filtered = Some(arr.clone());
+                }
             }
         }
         descendants.push(status);
