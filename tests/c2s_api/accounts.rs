@@ -46,6 +46,25 @@ async fn test_account_statuses_hides_private_from_non_follower() {
     assert!(!ids.contains(&prv["id"].as_str().unwrap()), "private status visible to non-follower");
 }
 
+/// Direct statuses never appear in account statuses for non-participants.
+#[tokio::test]
+async fn test_account_statuses_hides_direct_from_non_participant() {
+    let ctx = TestContext::new("acct-stat-direct").await;
+
+    let dir = ctx.api.post_status(&ctx.alice_token, "alice direct nobody", "direct").await;
+    let dir_id = dir["id"].as_str().unwrap();
+
+    // Bob (not mentioned) should not see alice's direct status.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert!(
+        !statuses.iter().any(|s| s["id"].as_str() == Some(dir_id)),
+        "direct status should not appear in account statuses for non-participants",
+    );
+}
+
 /// Private statuses appear in account statuses for accepted followers.
 #[tokio::test]
 async fn test_account_statuses_shows_private_to_follower() {
