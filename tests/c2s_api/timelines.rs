@@ -738,6 +738,51 @@ async fn test_home_timeline_hides_blocked_accounts() {
         "blocked account's status should be hidden from home timeline");
 }
 
+/// A boost of a blocked account's status does not appear in the home timeline.
+#[tokio::test]
+async fn test_home_timeline_hides_boosts_of_blocked_account() {
+    let ctx = TestContext::new("home-tl-boost-blocked").await;
+
+    // Seed a third user: Charlie.
+    let (charlie_uuid, charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie", "charlie@test.invalid").await;
+    let charlie_id = charlie_uuid.to_string();
+
+    // Alice follows Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Charlie posts a public status.
+    let charlie_status = ctx.api.post_status(&charlie_token, "charlies post to boost", "public").await;
+    let charlie_status_id = charlie_status["id"].as_str().unwrap();
+
+    // Bob boosts Charlie's status.
+    let boost: Value = ctx.api.post_json(
+        &format!("/api/v1/statuses/{charlie_status_id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    let boost_id = boost["id"].as_str().unwrap();
+
+    // Before block: Bob's boost should appear in Alice's home timeline.
+    let before: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(before.iter().any(|s| s["id"].as_str() == Some(boost_id)),
+        "Bob's boost should appear before Alice blocks Charlie");
+
+    // Alice blocks Charlie.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{charlie_id}/block"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // After block: the boost should be hidden even though it's from Bob (who is not blocked).
+    let after: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!after.iter().any(|s| s["id"].as_str() == Some(boost_id)),
+        "boost of blocked account's status should be hidden from home timeline");
+}
+
 /// A "warn" filter in home context keeps the status but populates the filtered field.
 #[tokio::test]
 async fn test_home_timeline_warn_filter_annotates_status() {

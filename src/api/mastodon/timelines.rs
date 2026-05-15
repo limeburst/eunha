@@ -187,6 +187,14 @@ pub async fn home_timeline(
                    WHERE (b.account_id = $1 AND b.target_account_id = s.account_id)
                       OR (b.account_id = s.account_id AND b.target_account_id = $1)
                ))
+               AND (s.reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM statuses orig
+                   JOIN blocks b ON (
+                       (b.account_id = $1 AND b.target_account_id = orig.account_id)
+                       OR (b.account_id = orig.account_id AND b.target_account_id = $1)
+                   )
+                   WHERE orig.id = s.reblog_of_id
+               ))
                AND NOT (
                    s.reblog_of_id IS NOT NULL
                    AND EXISTS (
@@ -255,6 +263,14 @@ pub async fn home_timeline(
                    SELECT 1 FROM blocks b
                    WHERE (b.account_id = $1 AND b.target_account_id = s.account_id)
                       OR (b.account_id = s.account_id AND b.target_account_id = $1)
+               ))
+               AND (s.reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM statuses orig
+                   JOIN blocks b ON (
+                       (b.account_id = $1 AND b.target_account_id = orig.account_id)
+                       OR (b.account_id = orig.account_id AND b.target_account_id = $1)
+                   )
+                   WHERE orig.id = s.reblog_of_id
                ))
                AND NOT (
                    s.reblog_of_id IS NOT NULL
