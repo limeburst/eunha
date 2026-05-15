@@ -908,6 +908,40 @@ pub async fn update_credentials(
     if let Some(l) = locked {
         sqlx::query!("UPDATE accounts SET locked = $1 WHERE id = $2", l, auth.account_id)
             .execute(&state.db).await?;
+        // Auto-approve pending follow requests when account becomes unlocked
+        if !l {
+            let pending = sqlx::query!(
+                "UPDATE follows SET state = 'accepted' WHERE target_account_id = $1 AND state = 'pending' RETURNING account_id",
+                auth.account_id,
+            )
+            .fetch_all(&state.db)
+            .await?;
+            for row in &pending {
+                let _ = sqlx::query!(
+                    "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
+                    auth.account_id
+                )
+                .execute(&state.db)
+                .await;
+                let _ = sqlx::query!(
+                    "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
+                    row.account_id
+                )
+                .execute(&state.db)
+                .await;
+                crate::push::create_and_push(
+                    &state,
+                    auth.account_id,
+                    row.account_id,
+                    "follow",
+                    None,
+                    "New follower".into(),
+                    "".into(),
+                    "".into(),
+                )
+                .await;
+            }
+        }
     }
     if let Some(b) = bot {
         sqlx::query!("UPDATE accounts SET bot = $1 WHERE id = $2", b, auth.account_id)

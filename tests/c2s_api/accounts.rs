@@ -1747,3 +1747,40 @@ async fn test_get_suspended_account_returns_410() {
         "suspended account should return 410 Gone",
     );
 }
+
+/// Unlocking a locked account auto-approves pending follow requests.
+#[tokio::test]
+async fn test_unlock_account_approves_pending_follows() {
+    let ctx = TestContext::new("unlock-approve").await;
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+
+    // Lock Alice's account.
+    sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", alice_uuid)
+        .execute(&db).await.unwrap();
+
+    // Bob sends a follow request (becomes pending because account is locked).
+    let follow_resp: Value = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    assert_eq!(follow_resp["requested"].as_bool(), Some(true), "follow should be pending");
+
+    // Alice unlocks her account.
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("locked", "false")],
+    ).await;
+
+    // Bob's follow should now be accepted.
+    let rel: Value = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await.json::<Vec<Value>>().await.unwrap().remove(0);
+    assert_eq!(rel["following"].as_bool(), Some(true), "follow should be accepted after unlock");
+    assert_eq!(rel["requested"].as_bool(), Some(false), "follow should not be pending after unlock");
+}
