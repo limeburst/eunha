@@ -504,6 +504,38 @@ pub async fn dismiss_notification_request(
     Ok(Json(serde_json::json!({})))
 }
 
+// ── POST /api/v1/notifications/requests/accept_all ───────────────────────
+
+pub async fn accept_all_notification_requests(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
+    sqlx::query!(
+        "UPDATE notification_requests SET dismissed = false WHERE account_id = $1",
+        auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── POST /api/v1/notifications/requests/dismiss_all ──────────────────────
+
+pub async fn dismiss_all_notification_requests(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
+    sqlx::query!(
+        "UPDATE notification_requests SET dismissed = true WHERE account_id = $1",
+        auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    Ok(Json(serde_json::json!({})))
+}
+
 // ── GET /api/v1/notifications/requests/:id ───────────────────────────────
 
 pub async fn get_notification_request(

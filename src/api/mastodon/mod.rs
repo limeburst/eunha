@@ -133,6 +133,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/notifications/requests/{id}", get(notifications::get_notification_request))
         .route("/api/v1/notifications/requests/{id}/accept", post(notifications::accept_notification_request))
         .route("/api/v1/notifications/requests/{id}/dismiss", post(notifications::dismiss_notification_request))
+        .route("/api/v1/notifications/requests/accept_all", post(notifications::accept_all_notification_requests))
+        .route("/api/v1/notifications/requests/dismiss_all", post(notifications::dismiss_all_notification_requests))
         .route("/api/v1/notifications/{id}", get(notifications::get_notification))
         .route("/api/v1/notifications/{id}/dismiss", post(notifications::dismiss_notification))
         .route("/api/v2/notifications", get(notifications::get_notifications_v2))

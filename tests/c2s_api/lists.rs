@@ -637,6 +637,56 @@ async fn test_list_timeline_min_id_pagination() {
     assert_eq!(ids, sorted, "min_id results should be in ascending order");
 }
 
+/// List timeline with replies_policy=followed shows replies only when the viewer follows the parent's author.
+#[tokio::test]
+async fn test_list_timeline_replies_policy_followed() {
+    let ctx = TestContext::new("list-rep-followed").await;
+
+    let (charlie_id, charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie-lrf", "charlie-lrf@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+
+    // Alice follows Bob and Charlie.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+
+    // Alice creates a list with Bob and replies_policy=followed.
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "FollowedPolicy", "replies_policy": "followed"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    // Charlie posts a status.
+    let charlie_post = ctx.api.post_status(&charlie_token, "charlie original post", "public").await;
+    let charlie_post_id = charlie_post["id"].as_str().unwrap();
+
+    // Bob replies to Charlie (Alice follows Charlie) → should appear.
+    let reply_to_followed: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply to charlie who alice follows", "visibility": "public", "in_reply_to_id": charlie_post_id}),
+    ).await.json().await.unwrap();
+    let reply_to_followed_id = reply_to_followed["id"].as_str().unwrap();
+
+    let list_tl: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        list_tl.iter().any(|s| s["id"].as_str() == Some(reply_to_followed_id)),
+        "reply to an account alice follows should appear with replies_policy=followed",
+    );
+}
+
 /// GET /api/v1/timelines/list/:id returns 404 for another user's list.
 #[tokio::test]
 async fn test_list_timeline_other_user_is_404() {
