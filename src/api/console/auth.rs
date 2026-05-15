@@ -106,17 +106,11 @@ pub async fn signup(
         "https://{}/confirm-account?token={}&request_token={}",
         state.config.console_domain, confirmation_token, request_token
     );
-    let http = state.http.clone();
-    let api_key = state.config.resend.api_key.clone();
-    let from = state.config.resend.from.clone();
+    let email = state.email.clone();
     let to = user.email.clone();
     let code = confirmation_token.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::email::send_confirmation(
-            &http, &api_key, &from, &to, &to, &code, &confirm_url, &locale_str,
-        )
-        .await
-        {
+        if let Err(e) = email.send_confirmation(&to, &to, &code, &confirm_url, &locale_str).await {
             tracing::error!(error = %e, "failed to send console confirmation email");
         }
     });

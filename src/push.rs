@@ -378,15 +378,12 @@ pub async fn create_and_push(
                 } else {
                     row.display_name.clone()
                 };
-                let http = state.http.clone();
-                let api_key = state.config.resend.api_key.clone();
-                let from_addr = state.config.resend.from.clone();
+                let email = state.email.clone();
                 let to_addr = row.email.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = crate::email::send_notification(
-                        &http, &api_key, &from_addr, &to_addr,
-                        &recipient_name, notification_type, &actor_name,
-                        &instance_url, "en",
+                    if let Err(e) = email.send_notification(
+                        &to_addr, &recipient_name, notification_type,
+                        &actor_name, &instance_url, "en",
                     ).await {
                         tracing::debug!(error = %e, "notification email failed (non-fatal)");
                     }

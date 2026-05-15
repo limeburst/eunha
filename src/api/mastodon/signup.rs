@@ -143,16 +143,12 @@ pub async fn api_create_account(
         let tok = row.confirmation_token.clone().unwrap();
         let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
         let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
-        let http = state.http.clone();
-        let api_key = state.config.resend.api_key.clone();
-        let from = state.config.resend.from.clone();
+        let email = state.email.clone();
         let to_addr = row.email.clone();
         let uname = username.clone();
         let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
         tokio::spawn(async move {
-            if let Err(e) = crate::email::send_confirmation(
-                &http, &api_key, &from, &to_addr, &uname, "", &confirm_url, &locale_str,
-            ).await {
+            if let Err(e) = email.send_confirmation(&to_addr, &uname, "", &confirm_url, &locale_str).await {
                 tracing::error!(error = %e, "failed to resend confirmation email");
             }
         });
@@ -232,14 +228,12 @@ pub async fn api_create_account(
 
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let confirm_url = format!("https://{}/auth/confirm?token={}", domain, confirmation_token);
-    let http = state.http.clone();
-    let api_key = state.config.resend.api_key.clone();
-    let from = state.config.resend.from.clone();
+    let email_sender = state.email.clone();
     let to = email.clone();
     let uname = username.clone();
     let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
     tokio::spawn(async move {
-        if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, "", &confirm_url, &locale_str).await {
+        if let Err(e) = email_sender.send_confirmation(&to, &uname, "", &confirm_url, &locale_str).await {
             tracing::error!(error = %e, "failed to send confirmation email");
         }
     });
@@ -379,15 +373,11 @@ pub async fn request_password_reset(
 
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let reset_url = format!("https://{}/auth/password/reset?token={}", domain, token);
-    let http = state.http.clone();
-    let api_key = state.config.resend.api_key.clone();
-    let from = state.config.resend.from.clone();
+    let email = state.email.clone();
     let to = row.email.clone();
     let name = row.username.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::email::send_password_reset(
-            &http, &api_key, &from, &to, &name, &reset_url, "en",
-        ).await {
+        if let Err(e) = email.send_password_reset(&to, &name, &reset_url, "en").await {
             tracing::error!(error = %e, "failed to send password reset email");
         }
     });
