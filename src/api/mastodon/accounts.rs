@@ -107,6 +107,9 @@ pub async fn lookup_account(
     };
 
     if let Some(account) = found {
+        if account.suspended_at.is_some() {
+            return Err(AppError::Gone("Account is suspended".into()));
+        }
         return Ok(Json(account_from_db(&account)));
     }
 
@@ -1073,7 +1076,24 @@ pub async fn block_account(
     .execute(&state.db)
     .await?;
 
-    // Remove any follow relationship in both directions
+    // Remove any follow relationship in both directions and update counts
+    let deleted = sqlx::query!(
+        "DELETE FROM follows WHERE ((account_id = $1 AND target_account_id = $2) OR (account_id = $2 AND target_account_id = $1)) AND state = 'accepted' RETURNING account_id, target_account_id",
+        auth.account_id, target_id
+    )
+    .fetch_all(&state.db)
+    .await?;
+    for row in &deleted {
+        let _ = sqlx::query!(
+            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            row.account_id,
+        ).execute(&state.db).await;
+        let _ = sqlx::query!(
+            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            row.target_account_id,
+        ).execute(&state.db).await;
+    }
+    // Also delete any pending follow requests
     sqlx::query!(
         "DELETE FROM follows WHERE (account_id = $1 AND target_account_id = $2) OR (account_id = $2 AND target_account_id = $1)",
         auth.account_id, target_id
