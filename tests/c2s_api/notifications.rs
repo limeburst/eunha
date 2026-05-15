@@ -697,3 +697,34 @@ async fn test_notifications_unread_count() {
     let after = body2["count"].as_i64().unwrap_or(-1);
     assert!(after > initial, "unread count should increase after a new notification");
 }
+
+/// Mention from a blocked account does not create a notification for the blocker.
+#[tokio::test]
+async fn test_blocked_account_mention_does_not_create_notification() {
+    let ctx = TestContext::new("notif-blocked-mention").await;
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob creates a status mentioning Alice (the status is created from Bob's perspective,
+    // but Alice should not receive a mention notification since Bob is blocked).
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "@alice hey!", "visibility": "public"}),
+    ).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let bob_mention = notifs.iter().find(|n| {
+        n["type"].as_str() == Some("mention")
+        && n["account"]["id"].as_str() == Some(ctx.bob_id.as_str())
+    });
+    assert!(bob_mention.is_none(),
+        "mention from blocked account should not appear as notification for the blocker");
+}

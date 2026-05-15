@@ -254,6 +254,22 @@ pub async fn create_and_push(
         return;
     }
 
+    // Don't notify if there is a block in either direction
+    let is_blocked = sqlx::query_scalar!(
+        r#"SELECT 1 FROM blocks
+           WHERE (account_id = $1 AND target_account_id = $2)
+              OR (account_id = $2 AND target_account_id = $1)"#,
+        recipient_id, from_account_id,
+    )
+    .fetch_optional(&db)
+    .await
+    .ok()
+    .flatten()
+    .is_some();
+    if is_blocked {
+        return;
+    }
+
     // Check notification policy: route to notification_requests if filtered
     if should_filter_notification(&db, recipient_id, from_account_id, notification_type, status_id).await {
         route_to_request(&db, recipient_id, from_account_id, status_id).await;
