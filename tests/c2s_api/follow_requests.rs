@@ -163,6 +163,31 @@ async fn test_authorize_follow_request_creates_notification() {
     assert!(follow_notif.is_some(), "Bob should receive a follow notification when his request is accepted");
 }
 
+/// Following a locked account creates a follow_request notification for the target.
+#[tokio::test]
+async fn test_follow_locked_account_creates_follow_request_notification() {
+    let ctx = TestContext::new("freq-notif-type").await;
+
+    // Lock alice's account.
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("locked", "true")],
+    ).await;
+
+    // Bob follows alice — should create a follow_request notification for alice.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let req_notif = notifs.iter().find(|n| {
+        n["type"].as_str() == Some("follow_request")
+        && n["account"]["id"].as_str() == Some(ctx.bob_id.as_str())
+    });
+    assert!(req_notif.is_some(), "locked account should receive a follow_request notification");
+}
+
 /// Follow request limit pagination returns at most `limit` items.
 #[tokio::test]
 async fn test_follow_requests_limit_param() {

@@ -2800,3 +2800,18 @@ async fn test_status_translate_returns_503() {
     ).await;
     assert_eq!(resp.status().as_u16(), 503, "translate should return 503 when not supported");
 }
+
+/// POST /api/v1/statuses response includes the application field for the author.
+#[tokio::test]
+async fn test_post_status_includes_application_field() {
+    let ctx = TestContext::new("status-app-field").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "application field test", "public").await;
+
+    // The application field should be present (and have a name).
+    let app = &status["application"];
+    assert!(
+        app.is_object() && app["name"].as_str().is_some(),
+        "status application field should be an object with a name, got: {status:?}",
+    );
+}

@@ -2318,8 +2318,20 @@ pub async fn build_status(
     reblog: Option<(crate::db::models::Status, Account, Vec<crate::db::models::MediaAttachment>)>,
     viewer_ctx: Option<super::convert::StatusViewerContext>,
 ) -> AppResult<super::types::Status> {
+    build_status_with_app(state, s, account, media, reblog, viewer_ctx, None).await
+}
+
+pub async fn build_status_with_app(
+    state: &AppState,
+    s: &crate::db::models::Status,
+    account: &Account,
+    media: Vec<crate::db::models::MediaAttachment>,
+    reblog: Option<(crate::db::models::Status, Account, Vec<crate::db::models::MediaAttachment>)>,
+    viewer_ctx: Option<super::convert::StatusViewerContext>,
+    application: Option<super::types::Application>,
+) -> AppResult<super::types::Status> {
     let viewer_account_id = viewer_ctx.as_ref().map(|c| c.account_id);
-    let mut api = super::convert::status_from_db(s, account, media, reblog, viewer_ctx);
+    let mut api = super::convert::status_from_db_with_app(s, account, media, reblog, viewer_ctx, application);
     let id: i64 = api.id.parse().unwrap_or(0);
     api.tags = fetch_status_tags(state, id).await?;
     api.mentions = fetch_status_mentions(state, id).await?;

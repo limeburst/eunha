@@ -86,6 +86,17 @@ pub fn status_from_db(
     reblog: Option<(models::Status, models::Account, Vec<models::MediaAttachment>)>,
     viewer_context: Option<StatusViewerContext>,
 ) -> types::Status {
+    status_from_db_with_app(s, account, media, reblog, viewer_context, None)
+}
+
+pub fn status_from_db_with_app(
+    s: &models::Status,
+    account: &models::Account,
+    media: Vec<models::MediaAttachment>,
+    reblog: Option<(models::Status, models::Account, Vec<models::MediaAttachment>)>,
+    viewer_context: Option<StatusViewerContext>,
+    application: Option<types::Application>,
+) -> types::Status {
     let reblog_status = reblog.map(|(rs, ra, rm)| {
         Box::new(status_from_db(&rs, &ra, rm, None, viewer_context.clone()))
     });
@@ -108,9 +119,12 @@ pub fn status_from_db(
         edited_at: s.edited_at.map(|t| t.to_rfc3339()),
         content: s.content.clone(),
         reblog: reblog_status,
-        application: None,
+        application,
         account: account_from_db(account),
-        media_attachments: media.iter().map(media_from_db).collect(),
+        media_attachments: media.iter()
+            .map(media_from_db)
+            .filter(|m| m.url.is_some() || m.remote_url.as_deref().map_or(false, |u| !u.is_empty()))
+            .collect(),
         mentions: vec![],
         tags: vec![],
         emojis: vec![],

@@ -127,6 +127,7 @@ pub struct Status {
     pub id: i64,
     pub instance_id: Uuid,
     pub account_id: Uuid,
+    pub application_id: Option<Uuid>,
     pub text: String,
     pub content: String,
     pub spoiler_text: String,

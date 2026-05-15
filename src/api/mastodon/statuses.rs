@@ -192,9 +192,9 @@ pub async fn post_status(
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
-             (instance_id, account_id, text, content, spoiler_text, visibility,
+             (instance_id, account_id, application_id, text, content, spoiler_text, visibility,
               language, sensitive, in_reply_to_id, in_reply_to_account_id, idempotency_key)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           VALUES ($1,$2,$12,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            RETURNING *"#,
         instance.id,
         account.id,
@@ -207,6 +207,7 @@ pub async fn post_status(
         in_reply_to_id,
         in_reply_to_account_id,
         idempotency_key,
+        auth.application_id,
     )
     .fetch_one(&state.db)
     .await?;
@@ -340,8 +341,23 @@ pub async fn post_status(
     let mut status = status;
     status.uri = Some(uri);
 
+    // Load the application that created this status (for the author's view)
+    let application = if let Some(app_id) = auth.application_id {
+        sqlx::query!(
+            "SELECT name, website FROM oauth_applications WHERE id = $1",
+            app_id,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| super::types::Application { name: r.name, website: r.website })
+    } else {
+        None
+    };
+
     let media = fetch_status_media(&state, status.id).await?;
-    let api_status = build_status(&state, &status, &account, media, None, None).await?;
+    let api_status = super::accounts::build_status_with_app(&state, &status, &account, media, None, None, application).await?;
 
     spawn_card_fetch(&state, status.id, status.content.clone());
 
@@ -970,7 +986,7 @@ pub async fn get_status_context(
                JOIN reply_tree r ON s.in_reply_to_id = r.id
              WHERE s.deleted_at IS NULL AND r.depth < $3
            )
-           SELECT id, instance_id, account_id, text, content, spoiler_text,
+           SELECT id, instance_id, account_id, application_id, text, content, spoiler_text,
                   in_reply_to_id, in_reply_to_account_id, reblog_of_id,
                   visibility, language, sensitive, url, uri,
                   replies_count, reblogs_count, favourites_count,
