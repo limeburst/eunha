@@ -102,6 +102,51 @@ async fn test_get_direct_status_author() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
+/// GET a direct status as a mentioned recipient → 200.
+#[tokio::test]
+async fn test_get_direct_status_mentioned_recipient() {
+    let ctx = TestContext::new("dir-recipient").await;
+
+    // Alice DMs Bob.
+    let status: serde_json::Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "@bob hello dm",
+            "visibility": "direct",
+        }),
+    ).await.json().await.unwrap();
+    let id = status["id"].as_str().unwrap();
+
+    // Bob (mentioned recipient) should be able to see it.
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK, "mentioned recipient should see direct status");
+}
+
+/// GET a direct status as a non-mentioned third party → 404.
+#[tokio::test]
+async fn test_get_direct_status_non_recipient() {
+    let ctx = TestContext::new("dir-non-recipient").await;
+
+    // Alice DMs Bob (NOT Charlie).
+    let status: serde_json::Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "@bob private hello",
+            "visibility": "direct",
+        }),
+    ).await.json().await.unwrap();
+    let id = status["id"].as_str().unwrap();
+
+    // Charlie is not mentioned → should not see it.
+    let (_, charlie_token) = super::helpers::seed_user(
+        &ctx.db, &ctx.domain, "charlie-dir-nonrec", "charlie-dir-nonrec@test.invalid"
+    ).await;
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&charlie_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "non-recipient should not see direct status");
+}
+
 // ── reblog restrictions ───────────────────────────────────────────────────────
 
 /// Reblogging a private status of a non-followed account → 404 (status not visible).

@@ -549,7 +549,20 @@ pub async fn get_status(
         }
         "direct" => {
             if viewer_id != Some(status.account_id) {
-                return Err(AppError::NotFound);
+                let is_mentioned = if let Some(vid) = viewer_id {
+                    sqlx::query_scalar!(
+                        "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
+                        id, vid,
+                    )
+                    .fetch_optional(&state.db)
+                    .await?
+                    .is_some()
+                } else {
+                    false
+                };
+                if !is_mentioned {
+                    return Err(AppError::NotFound);
+                }
             }
         }
         _ => {}
@@ -1429,7 +1442,16 @@ async fn check_status_visible(
         }
         "direct" => {
             if status.account_id != viewer_id {
-                return Err(AppError::NotFound);
+                let is_mentioned = sqlx::query_scalar!(
+                    "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
+                    status.id, viewer_id,
+                )
+                .fetch_optional(&state.db)
+                .await?
+                .is_some();
+                if !is_mentioned {
+                    return Err(AppError::NotFound);
+                }
             }
         }
         _ => {}
