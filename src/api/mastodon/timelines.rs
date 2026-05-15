@@ -63,6 +63,9 @@ pub async fn public_timeline(
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
+                 AND ($7::uuid IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM user_domain_blocks udb WHERE udb.account_id = $7 AND udb.domain = a.domain
+                 ))
                  AND ($3::bigint IS NULL OR s.id > $3)
                  AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
@@ -99,6 +102,9 @@ pub async fn public_timeline(
                  AND a.suspended_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+                 ))
+                 AND ($8::uuid IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM user_domain_blocks udb WHERE udb.account_id = $8 AND udb.domain = a.domain
                  ))
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($5::bigint IS NULL OR s.id > $5)

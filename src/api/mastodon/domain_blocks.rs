@@ -65,14 +65,44 @@ pub async fn block_domain(
     Json(form): Json<DomainBlockForm>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:blocks")?;
+    let domain = form.domain.to_lowercase();
     sqlx::query!(
         r#"INSERT INTO user_domain_blocks (account_id, domain) VALUES ($1, $2)
            ON CONFLICT (account_id, domain) DO NOTHING"#,
         auth.account_id,
-        form.domain.to_lowercase(),
+        domain,
     )
     .execute(&state.db)
     .await?;
+
+    // Remove follows to and from accounts on the blocked domain
+    let removed = sqlx::query!(
+        r#"DELETE FROM follows
+           WHERE (account_id = $1 AND target_account_id IN (
+               SELECT id FROM accounts WHERE domain = $2
+           ))
+           OR (target_account_id = $1 AND account_id IN (
+               SELECT id FROM accounts WHERE domain = $2
+           ))
+           AND state = 'accepted'
+           RETURNING account_id, target_account_id"#,
+        auth.account_id,
+        domain,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    for row in &removed {
+        let _ = sqlx::query!(
+            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            row.account_id
+        ).execute(&state.db).await;
+        let _ = sqlx::query!(
+            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            row.target_account_id
+        ).execute(&state.db).await;
+    }
 
     Ok(Json(serde_json::json!({})))
 }
