@@ -403,6 +403,38 @@ async fn test_lookup_account() {
     assert_eq!(body["username"].as_str(), Some("alice"));
 }
 
+/// GET /api/v1/accounts/lookup?acct= returns 404 for an unknown username.
+#[tokio::test]
+async fn test_lookup_account_not_found() {
+    let ctx = TestContext::new("lookup-404").await;
+
+    let resp = ctx.api.get("/api/v1/accounts/lookup?acct=nobody_here_xyz999", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v1/accounts/lookup?acct= returns 410 for a suspended account.
+#[tokio::test]
+async fn test_lookup_account_suspended_returns_410() {
+    let ctx = TestContext::new("lookup-suspend").await;
+
+    // Elevate alice to admin via direct DB.
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let admin_db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    sqlx::query!("UPDATE users SET role = 'admin' WHERE account_id = $1", alice_uuid)
+        .execute(&admin_db).await.unwrap();
+
+    // Suspend bob via admin endpoint.
+    ctx.api.post_json(
+        &format!("/api/v1/admin/accounts/{}/suspend", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.get("/api/v1/accounts/lookup?acct=bob", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::GONE);
+}
+
 /// GET /api/v1/accounts/:id/followers returns a list after a follow.
 #[tokio::test]
 async fn test_get_account_followers() {
