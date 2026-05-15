@@ -1943,6 +1943,31 @@ async fn test_batch_get_statuses_skips_invisible() {
     assert!(ids.contains(&pub_id), "public status should be in batch result");
 }
 
+/// GET /api/v1/statuses?id[]=... shows a direct status to the mentioned recipient.
+#[tokio::test]
+async fn test_batch_get_statuses_shows_direct_to_mentioned() {
+    let ctx = TestContext::new("batch-direct-mention").await;
+
+    // Alice sends a DM mentioning Bob.
+    let dm: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "@bob direct batch test",
+            "visibility": "direct"
+        }),
+    ).await.json().await.unwrap();
+    let dm_id = dm["id"].as_str().unwrap();
+
+    // Bob (the recipient) can see the DM in a batch request.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses?id[]={dm_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&dm_id), "mentioned recipient should see direct status in batch");
+}
+
 // ── scheduled statuses ────────────────────────────────────────────────────────
 
 /// POST /api/v1/statuses with scheduled_at returns a scheduled status (201).

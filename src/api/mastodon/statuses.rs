@@ -583,7 +583,20 @@ pub async fn get_statuses_batch(
             }
             "direct" => {
                 if viewer_id != Some(status.account_id) {
-                    continue;
+                    let is_mentioned = if let Some(vid) = viewer_id {
+                        sqlx::query_scalar!(
+                            "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
+                            id, vid,
+                        )
+                        .fetch_optional(&state.db)
+                        .await?
+                        .is_some()
+                    } else {
+                        false
+                    };
+                    if !is_mentioned {
+                        continue;
+                    }
                 }
             }
             _ => {}
