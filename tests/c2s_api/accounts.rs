@@ -251,7 +251,7 @@ async fn test_account_statuses_min_id_pagination() {
     assert!(s2_pos < s3_pos, "results should be in ascending order for min_id");
 }
 
-/// ?tagged=<name> endpoint returns 200 (filtering implementation tracked separately).
+/// ?tagged=<name> returns only statuses with that tag; untagged statuses are excluded.
 #[tokio::test]
 async fn test_account_statuses_tagged_returns_200() {
     let ctx = TestContext::new("acct-tagged-ok").await;

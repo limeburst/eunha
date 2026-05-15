@@ -578,6 +578,65 @@ async fn test_list_timeline_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// List timeline min_id returns statuses after the anchor in ascending order.
+#[tokio::test]
+async fn test_list_timeline_min_id_pagination() {
+    let ctx = TestContext::new("list-tl-minid").await;
+
+    // Alice follows Bob so Bob can be added to a list.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "minid list"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let s1 = ctx.api.post_status(&ctx.bob_token, "list minid first", "public").await;
+    let s2 = ctx.api.post_status(&ctx.bob_token, "list minid second", "public").await;
+    let s3 = ctx.api.post_status(&ctx.bob_token, "list minid third", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+    let s3_id = s3["id"].as_str().unwrap().to_string();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}?min_id={s1_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let paged: Vec<Value> = resp.json().await.unwrap();
+
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s1_id.as_str())),
+        "min_id anchor should be excluded",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s2_id.as_str())),
+        "s2 should appear after min_id=s1",
+    );
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s3_id.as_str())),
+        "s3 should appear after min_id=s1",
+    );
+    // min_id returns results in ascending order (oldest first)
+    let ids: Vec<i64> = paged.iter()
+        .filter_map(|s| s["id"].as_str()?.parse::<i64>().ok())
+        .collect();
+    let sorted = {
+        let mut s = ids.clone();
+        s.sort();
+        s
+    };
+    assert_eq!(ids, sorted, "min_id results should be in ascending order");
+}
+
 /// GET /api/v1/timelines/list/:id returns 404 for another user's list.
 #[tokio::test]
 async fn test_list_timeline_other_user_is_404() {
