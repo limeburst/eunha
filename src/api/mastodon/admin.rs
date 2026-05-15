@@ -179,7 +179,11 @@ pub async fn list_admin_accounts(
              AND ($4::text IS NULL OR
                   ($4 = 'suspended' AND a.suspended_at IS NOT NULL) OR
                   ($4 = 'silenced' AND a.silenced_at IS NOT NULL) OR
-                  ($4 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL)
+                  ($4 = 'pending' AND EXISTS (
+                      SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL
+                  )) OR
+                  ($4 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL))
              )
            ORDER BY a.created_at DESC
            LIMIT $2"#,
