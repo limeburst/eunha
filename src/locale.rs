@@ -53,6 +53,8 @@ impl Locale {
             (Self::Ko, "sign_in")            => "로그인",
             (Self::En, "invalid_credentials") => "Invalid email or password.",
             (Self::Ko, "invalid_credentials") => "이메일 또는 비밀번호가 올바르지 않습니다.",
+            (Self::En, "check_email")        => "Check your email and click the confirmation link to activate your account.",
+            (Self::Ko, "check_email")        => "이메일을 확인하여 인증 링크를 클릭해 계정을 활성화하세요.",
             (Self::En, "no_account")         => "Don't have an account?",
             (Self::Ko, "no_account")         => "계정이 없으신가요?",
             (Self::En, "sign_up")            => "Sign up",

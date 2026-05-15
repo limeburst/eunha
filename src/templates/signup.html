@@ -13,10 +13,11 @@ h1{font-size:1.1rem;font-weight:600;margin-bottom:.25rem}
 label{display:block;font-size:.8rem;color:#aaa;margin-bottom:.25rem;margin-top:1rem}
 input[type=text],input[type=email],input[type=password],textarea{width:100%;padding:.6rem .75rem;background:#111;border:1px solid #333;border-radius:4px;color:#e8e8e8;font-size:.9rem}
 textarea{resize:vertical;min-height:80px}
-.pending-msg{background:#1a2a1a;border:1px solid #2a5a2a;color:#8f8;padding:.75rem;border-radius:4px;font-size:.85rem;line-height:1.5}
+.pending-msg,.check-email-msg{background:#1a2a1a;border:1px solid #2a5a2a;color:#8f8;padding:.75rem;border-radius:4px;font-size:.85rem;line-height:1.5}
 input:focus{outline:none;border-color:#555}
 button{margin-top:1.5rem;width:100%;padding:.7rem;background:#e8e8e8;color:#111;border:none;border-radius:4px;font-size:.9rem;font-weight:600;cursor:pointer}
 button:hover{background:#fff}
+button:disabled{opacity:.5;cursor:not-allowed}
 .error{background:#3a1a1a;border:1px solid #6a2a2a;color:#f88;padding:.6rem .75rem;border-radius:4px;font-size:.8rem;margin-bottom:1rem}
 .footer{margin-top:1.25rem;font-size:.8rem;color:#666;text-align:center}
 .footer a{color:#aaa}
@@ -42,37 +43,87 @@ button:hover{background:#fff}
   {% if pending %}
   <div class="pending-msg">{{ t_pending_approval }}</div>
   {% elif show_form %}
-  <form method="POST" action="/auth/signup">
-    {% if invite %}<input type="hidden" name="invite" value="{{ invite }}">{% endif %}
-    <input type="hidden" name="lang" value="{{ lang }}">
-    <label for="username">{{ t_username }}</label>
-    <input type="text" id="username" name="username" required autocomplete="username"
-           pattern="[a-zA-Z0-9_]+" title="Letters, numbers, and underscores only">
-    <label for="email">{{ t_email }}</label>
-    <input type="email" id="email" name="email" required autocomplete="email">
-    <label for="password">{{ t_password }}</label>
-    <input type="password" id="password" name="password" required
-           minlength="8" autocomplete="new-password">
-    <label for="password_confirmation">{{ t_confirm_password }}</label>
-    <input type="password" id="password_confirmation" name="password_confirmation"
-           required minlength="8" autocomplete="new-password">
-    {% if approval_required and not invite %}
-    <label for="reason">{{ t_reason }}</label>
-    <textarea id="reason" name="reason" required placeholder="{{ t_reason_hint }}"></textarea>
-    {% endif %}
-    <button type="submit">{% if approval_required and not invite %}{{ t_apply_for_account }}{% else %}{{ t_create_account }}{% endif %}</button>
-  </form>
+  <div id="signup-error" class="error" style="display:none"></div>
+  <div id="signup-check-email" class="check-email-msg" style="display:none">{{ t_check_email }}</div>
+  <div id="signup-form-wrap">
+    <form
+      hx-post="/api/v1/accounts"
+      hx-swap="none"
+      hx-on::before-request="signupBeforeRequest(event)"
+      hx-on::after-request="signupAfterRequest(event)"
+    >
+      <input type="hidden" name="locale" value="{{ lang }}">
+      {% if invite %}<input type="hidden" name="invite_code" value="{{ invite }}">{% endif %}
+      <label for="username">{{ t_username }}</label>
+      <input type="text" id="username" name="username" required autocomplete="username"
+             pattern="[a-zA-Z0-9_]+" title="Letters, numbers, and underscores only">
+      <label for="email">{{ t_email }}</label>
+      <input type="email" id="email" name="email" required autocomplete="email">
+      <label for="password">{{ t_password }}</label>
+      <input type="password" id="password" name="password" required
+             minlength="8" autocomplete="new-password">
+      <label for="password_confirmation">{{ t_confirm_password }}</label>
+      <input type="password" id="password_confirmation"
+             required minlength="8" autocomplete="new-password">
+      {% if approval_required and not invite %}
+      <label for="reason">{{ t_reason }}</label>
+      <textarea id="reason" name="reason" required placeholder="{{ t_reason_hint }}"></textarea>
+      {% endif %}
+      <button type="submit" id="signup-btn">{% if approval_required and not invite %}{{ t_apply_for_account }}{% else %}{{ t_create_account }}{% endif %}</button>
+    </form>
+  </div>
   <p class="footer">{{ t_already_account }} <a href="/auth/sign_in">{{ t_sign_in }}</a></p>
   {% else %}
   <p class="closed-msg">{{ t_registrations_closed }}</p>
   <form method="GET" action="/auth/signup">
     <input type="hidden" name="lang" value="{{ lang }}">
     <label for="invite">{{ t_invite_code }}</label>
-    <input type="text" id="invite" name="invite" required autocomplete="off"
-           placeholder="">
+    <input type="text" id="invite" name="invite" required autocomplete="off">
     <button type="submit">{{ t_continue_btn }}</button>
   </form>
   {% endif %}
 </div>
+<script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>
+<script>
+var _msgs = {
+  pwMismatch: {{ t_err_password_mismatch | tojson }},
+  serverError: {{ t_err_server | tojson }}
+};
+function signupBeforeRequest(evt) {
+  var p = document.getElementById('password').value;
+  var c = document.getElementById('password_confirmation').value;
+  if (p !== c) {
+    showError(_msgs.pwMismatch);
+    evt.preventDefault();
+    return;
+  }
+  document.getElementById('signup-error').style.display = 'none';
+  document.getElementById('signup-btn').disabled = true;
+}
+function signupAfterRequest(evt) {
+  document.getElementById('signup-btn').disabled = false;
+  if (evt.detail.successful) {
+    var data = JSON.parse(evt.detail.xhr.responseText);
+    if (data.scope === 'profile') {
+      document.getElementById('signup-form-wrap').style.display = 'none';
+      document.getElementById('signup-check-email').style.display = 'block';
+    } else {
+      window.location.href = '/auth/sign_in';
+    }
+  } else {
+    try {
+      var err = JSON.parse(evt.detail.xhr.responseText);
+      showError(err.error || _msgs.serverError);
+    } catch(e) {
+      showError(_msgs.serverError);
+    }
+  }
+}
+function showError(msg) {
+  var el = document.getElementById('signup-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+</script>
 </body>
 </html>

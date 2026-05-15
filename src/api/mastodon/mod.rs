@@ -280,8 +280,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/timelines/tag/{hashtag}", get(timelines::tag_timeline))
         // Account registration (Mastodon C2S API)
         .route("/api/v1/accounts", post(signup::api_create_account))
-        // Sign-up (server-rendered form)
-        .route("/auth/signup", get(signup::signup_get).post(signup::signup_post))
+        .route("/auth/signup", get(signup::signup_get))
         // Email confirmation
         .route("/auth/confirm", get(signup::confirm_email))
         // Password reset

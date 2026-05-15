@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Form, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json, Redirect, Response},
 };
 use serde::Deserialize;
@@ -23,17 +23,6 @@ pub struct SignUpQuery {
     lang: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SignUpForm {
-    username: Option<String>,
-    email: Option<String>,
-    password: Option<String>,
-    password_confirmation: Option<String>,
-    invite: Option<String>,
-    lang: Option<String>,
-    reason: Option<String>,
-}
-
 pub async fn signup_get(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
@@ -54,177 +43,6 @@ pub async fn signup_get(
     }
 
     render(&instance, &invite, true, false, None, locale)
-}
-
-pub async fn signup_post(
-    State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Form(form): Form<SignUpForm>,
-) -> Response {
-    let invite = form.invite.as_deref().unwrap_or("").trim().to_string();
-    let locale = crate::locale::Locale::detect(form.lang.as_deref(), None);
-
-    // Check registrations / invite — always validate a provided code; require
-    // one when registrations are closed.
-    let invite_id: Option<uuid::Uuid> = if !invite.is_empty() {
-        match validate_invite(&state, &instance, &invite).await {
-            Ok(id) => Some(id),
-            Err(key) => {
-                let show_form = instance.registrations_open;
-                return render(&instance, &invite, show_form, false, Some(locale.t(key)), locale);
-            }
-        }
-    } else if !instance.registrations_open {
-        return render(&instance, &invite, false, false, Some(locale.t("err_invite_required")), locale);
-    } else {
-        None
-    };
-
-    // Unwrap fields — if any are missing the browser should have caught it, but
-    // guard anyway to avoid a confusing error.
-    let username = form.username.as_deref().unwrap_or("").trim().to_lowercase();
-    let email = form.email.as_deref().unwrap_or("").trim().to_string();
-    let password = form.password.as_deref().unwrap_or("");
-    let confirm = form.password_confirmation.as_deref().unwrap_or("");
-
-    // Validate
-    if username.is_empty()
-        || !username
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return render(&instance, &invite, true, false, Some(locale.t("err_username_chars")), locale);
-    }
-    if email.is_empty() || !email.contains('@') {
-        return render(&instance, &invite, true, false, Some(locale.t("err_invalid_email")), locale);
-    }
-    if password.len() < 8 {
-        return render(&instance, &invite, true, false, Some(locale.t("err_password_short")), locale);
-    }
-    if password != confirm {
-        return render(&instance, &invite, true, false, Some(locale.t("err_password_mismatch")), locale);
-    }
-
-    let email_normalised = email.to_lowercase();
-
-    // Check uniqueness
-    let username_taken = sqlx::query_scalar!(
-        "SELECT 1 FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL",
-        username,
-        instance.id,
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .is_some();
-
-    if username_taken {
-        return render(&instance, &invite, true, false, Some(locale.t("err_username_taken")), locale);
-    }
-
-    let email_taken = sqlx::query_scalar!(
-        "SELECT 1 FROM users WHERE email_normalized = $1 AND instance_id = $2",
-        email_normalised,
-        instance.id,
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .is_some();
-
-    if email_taken {
-        return render(&instance, &invite, true, false, Some(locale.t("err_email_taken")), locale);
-    }
-
-    // Create account
-    let (private_key, public_key) = match crypto::generate_rsa_keypair() {
-        Ok(kp) => kp,
-        Err(_) => return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale),
-    };
-
-    let base_url = format!("https://{}", instance.domain);
-    let uri = format!("{}/users/{}", base_url, username);
-    let url = format!("{}/@{}", base_url, username);
-    let inbox_url = format!("{}/inbox", uri);
-    let outbox_url = format!("{}/outbox", uri);
-    let shared_inbox_url = format!("https://{}/inbox", instance.domain);
-
-    let new_account_id = crate::snowflake::next_id();
-    let account_id = sqlx::query_scalar!(
-        r#"INSERT INTO accounts
-             (id, instance_id, username, url, uri, private_key, public_key,
-              inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           RETURNING id"#,
-        new_account_id,
-        instance.id,
-        username,
-        url,
-        uri,
-        private_key,
-        public_key,
-        inbox_url,
-        outbox_url,
-        shared_inbox_url,
-    )
-    .fetch_one(&state.db)
-    .await;
-
-    let account_id = match account_id {
-        Ok(id) => id,
-        Err(_) => return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale),
-    };
-
-    let password_hash = match crypto::hash_password(password) {
-        Ok(h) => h,
-        Err(_) => return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale),
-    };
-
-    // Pending when approval_required and no invite was used (invites bypass approval)
-    let needs_approval = instance.approval_required && invite_id.is_none();
-    let reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-
-    let user_result = sqlx::query!(
-        r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id,
-              approved_at, reason)
-           VALUES ($1,$2,$3,$4,$5,now(),$6,
-                   CASE WHEN $7 THEN NULL ELSE now() END,
-                   $8)"#,
-        account_id,
-        instance.id,
-        email,
-        email_normalised,
-        password_hash,
-        invite_id,
-        needs_approval,
-        reason,
-    )
-    .execute(&state.db)
-    .await;
-
-    if user_result.is_err() {
-        return render(&instance, &invite, true, false, Some(locale.t("err_server")), locale);
-    }
-
-    // Increment invite uses (always, so the tree is accurate even with open registrations)
-    if let Some(id) = invite_id {
-        let _ = sqlx::query!(
-            "UPDATE invites SET uses = uses + 1 WHERE id = $1",
-            id,
-        )
-        .execute(&state.db)
-        .await;
-    }
-
-    if needs_approval {
-        return render(&instance, &invite, false, true, None, locale);
-    }
-
-    // Redirect to Elk's sign-in page
-    (StatusCode::SEE_OTHER, [(header::LOCATION, "/auth/sign_in")]).into_response()
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -702,6 +520,9 @@ fn render(
             t_reason_hint => locale.t("reason_hint"),
             t_pending_approval => locale.t("pending_approval"),
             t_apply_for_account => locale.t("apply_for_account"),
+            t_check_email => locale.t("check_email"),
+            t_err_password_mismatch => locale.t("err_password_mismatch"),
+            t_err_server => locale.t("err_server"),
         },
     );
     Html(html).into_response()
