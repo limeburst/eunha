@@ -630,8 +630,13 @@ pub async fn get_account_followers(
                JOIN follows f ON f.account_id = a.id
                WHERE f.target_account_id = $1 AND f.state = 'accepted'
                  AND f.id < $2
+                 AND ($4::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $4 AND b.target_account_id = a.id)
+                        OR (b.account_id = a.id AND b.target_account_id = $4)
+                 ))
                ORDER BY f.id DESC LIMIT $3"#,
-            id, cursor, limit
+            id, cursor, limit, viewer_id
         )
         .fetch_all(&state.db)
         .await?
@@ -641,8 +646,13 @@ pub async fn get_account_followers(
             r#"SELECT a.* FROM accounts a
                JOIN follows f ON f.account_id = a.id
                WHERE f.target_account_id = $1 AND f.state = 'accepted'
+                 AND ($3::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $3 AND b.target_account_id = a.id)
+                        OR (b.account_id = a.id AND b.target_account_id = $3)
+                 ))
                ORDER BY f.id DESC LIMIT $2"#,
-            id, limit
+            id, limit, viewer_id
         )
         .fetch_all(&state.db)
         .await?
@@ -679,8 +689,13 @@ pub async fn get_account_following(
                JOIN follows f ON f.target_account_id = a.id
                WHERE f.account_id = $1 AND f.state = 'accepted'
                  AND f.id < $2
+                 AND ($4::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $4 AND b.target_account_id = a.id)
+                        OR (b.account_id = a.id AND b.target_account_id = $4)
+                 ))
                ORDER BY f.id DESC LIMIT $3"#,
-            id, cursor, limit
+            id, cursor, limit, viewer_id
         )
         .fetch_all(&state.db)
         .await?
@@ -690,8 +705,13 @@ pub async fn get_account_following(
             r#"SELECT a.* FROM accounts a
                JOIN follows f ON f.target_account_id = a.id
                WHERE f.account_id = $1 AND f.state = 'accepted'
+                 AND ($3::uuid IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $3 AND b.target_account_id = a.id)
+                        OR (b.account_id = a.id AND b.target_account_id = $3)
+                 ))
                ORDER BY f.id DESC LIMIT $2"#,
-            id, limit
+            id, limit, viewer_id
         )
         .fetch_all(&state.db)
         .await?

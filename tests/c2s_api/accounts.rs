@@ -1956,3 +1956,50 @@ async fn test_get_account_following_excludes_pending() {
     assert!(!following.iter().any(|a| a["id"].as_str() == Some(ctx.alice_id.as_str())),
         "pending follow should not appear in following list");
 }
+
+/// Blocked accounts are hidden from followers/following lists.
+#[tokio::test]
+async fn test_followers_following_hides_blocked_accounts() {
+    let ctx = TestContext::new("follow-block-hide").await;
+
+    let (charlie_uuid, _charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie", "charlie@test.invalid").await;
+    let charlie_id = charlie_uuid.to_string();
+
+    // Both Bob and Charlie follow Alice.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&_charlie_token),
+        &json!({}),
+    ).await;
+
+    // Alice follows both Bob and Charlie.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+
+    // Alice blocks Charlie.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{charlie_id}/block"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Alice's followers list should hide Charlie (blocked).
+    let followers: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(!followers.iter().any(|a| a["id"].as_str() == Some(charlie_id.as_str())),
+        "blocked account should not appear in followers list");
+    assert!(followers.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "non-blocked account should still appear in followers list");
+
+    // Alice's following list should also hide Charlie.
+    let following: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/following", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(!following.iter().any(|a| a["id"].as_str() == Some(charlie_id.as_str())),
+        "blocked account should not appear in following list");
+}
