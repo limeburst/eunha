@@ -1826,3 +1826,90 @@ async fn test_account_statuses_visible_unauthenticated() {
         "public status should be visible to unauthenticated users",
     );
 }
+
+/// GET /api/v1/accounts/:id/followers respects the limit parameter.
+#[tokio::test]
+async fn test_get_account_followers_limit_param() {
+    let ctx = TestContext::new("followers-limit").await;
+
+    // Bob follows Alice.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers?limit=1", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.len() <= 1, "limit=1 should return at most 1 follower");
+}
+
+/// GET /api/v1/accounts/:id/following respects the limit parameter.
+#[tokio::test]
+async fn test_get_account_following_limit_param() {
+    let ctx = TestContext::new("following-limit").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/following?limit=1", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert!(list.len() <= 1, "limit=1 should return at most 1 following");
+}
+
+/// GET /api/v1/accounts/:id/followers returns only followers of the given account.
+#[tokio::test]
+async fn test_get_account_followers_scoped_to_account() {
+    let ctx = TestContext::new("followers-scoped").await;
+
+    // Bob follows Alice but not vice versa.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let alice_followers: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let bob_followers: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/followers", ctx.bob_id),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(alice_followers.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "Bob should appear in Alice's followers");
+    assert!(!bob_followers.iter().any(|a| a["id"].as_str() == Some(ctx.alice_id.as_str())),
+        "Alice should not appear in Bob's followers (she didn't follow Bob)");
+}
+
+/// GET /api/v1/accounts/:id/following excludes accounts with pending (not accepted) follows.
+#[tokio::test]
+async fn test_get_account_following_excludes_pending() {
+    let ctx = TestContext::new("following-pending").await;
+
+    // Lock Alice's account so Bob's follow becomes pending.
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("locked", "true")],
+    ).await;
+
+    // Bob sends a follow request to Alice (pending).
+    let rel: Value = ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    assert_eq!(rel["requested"].as_bool(), Some(true), "follow should be pending");
+
+    // Bob's following list should NOT include Alice (follow is not accepted).
+    let following: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/following", ctx.bob_id),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(!following.iter().any(|a| a["id"].as_str() == Some(ctx.alice_id.as_str())),
+        "pending follow should not appear in following list");
+}
