@@ -61,6 +61,7 @@ pub async fn public_timeline(
                  AND (NOT $1::bool OR a.domain IS NULL)
                  AND (NOT $5::bool OR a.domain IS NOT NULL)
                  AND a.suspended_at IS NULL
+                 AND a.silenced_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
@@ -102,6 +103,7 @@ pub async fn public_timeline(
                  AND (NOT $1::bool OR a.domain IS NULL)
                  AND (NOT $6::bool OR a.domain IS NOT NULL)
                  AND a.suspended_at IS NULL
+                 AND a.silenced_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
