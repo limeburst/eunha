@@ -45,6 +45,9 @@ button:disabled{opacity:.5;cursor:not-allowed}
   {% elif show_form %}
   <div id="signup-error" class="error" style="display:none"></div>
   <div id="signup-check-email" class="check-email-msg" style="display:none">{{ t_check_email }}</div>
+  <div id="signup-msgs" style="display:none"
+       data-pw-mismatch="{{ t_err_password_mismatch }}"
+       data-server-error="{{ t_err_server }}"></div>
   <div id="signup-form-wrap">
     <form
       hx-post="/api/v1/accounts"
@@ -85,10 +88,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
 </div>
 <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>
 <script>
-var _msgs = {
-  pwMismatch: {{ t_err_password_mismatch | tojson }},
-  serverError: {{ t_err_server | tojson }}
-};
+var _el = document.getElementById('signup-msgs');
+var _msgs = { pwMismatch: _el.dataset.pwMismatch, serverError: _el.dataset.serverError };
 function signupBeforeRequest(evt) {
   var p = document.getElementById('password').value;
   var c = document.getElementById('password_confirmation').value;
