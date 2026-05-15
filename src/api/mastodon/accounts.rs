@@ -216,14 +216,38 @@ pub async fn get_account_statuses(
         }
     }
 
+    let is_self = viewer_id == Some(account.id);
+    let is_follower = if !is_self {
+        if let Some(vid) = viewer_id {
+            sqlx::query_scalar!(
+                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted')",
+                vid, account.id,
+            )
+            .fetch_one(&state.db)
+            .await?
+            .unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     if q.pinned == Some(true) {
         let pinned_statuses = sqlx::query_as!(
             crate::db::models::Status,
             r#"SELECT s.* FROM statuses s
                JOIN status_pins sp ON sp.status_id = s.id
                WHERE sp.account_id = $1 AND s.deleted_at IS NULL
+                 AND (
+                   s.visibility IN ('public', 'unlisted')
+                   OR ($2::boolean = true)
+                   OR ($3::boolean = true AND s.visibility = 'private')
+                 )
                ORDER BY sp.id DESC"#,
             account.id,
+            is_self,
+            is_follower,
         )
         .fetch_all(&state.db)
         .await?;
@@ -267,23 +291,6 @@ pub async fn get_account_statuses(
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-
-    let is_self = viewer_id == Some(account.id);
-    let is_follower = if !is_self {
-        if let Some(vid) = viewer_id {
-            sqlx::query_scalar!(
-                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted')",
-                vid, account.id,
-            )
-            .fetch_one(&state.db)
-            .await?
-            .unwrap_or(false)
-        } else {
-            false
-        }
-    } else {
-        false
-    };
 
     let tagged_lower = q.tagged.as_deref().map(|t| t.to_lowercase());
     let statuses = if min_id.is_some() {

@@ -1378,6 +1378,24 @@ async fn test_unreblog() {
     assert_eq!(get_resp.status(), StatusCode::NOT_FOUND, "reblog should be gone after unreblog");
 }
 
+/// Unreblgging a status that was never reblogged returns 200 (idempotent).
+#[tokio::test]
+async fn test_unreblog_not_reblogged_is_200() {
+    let ctx = TestContext::new("unreblog-idem").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "never reblogged post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/unreblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK, "unreblog of never-reblogged status should return 200");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["reblogged"].as_bool(), Some(false));
+}
+
 // ── favourites list ───────────────────────────────────────────────────────────
 
 /// GET /api/v1/favourites returns statuses the user has favourited.

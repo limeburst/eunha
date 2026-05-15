@@ -170,6 +170,59 @@ async fn test_account_statuses_pinned() {
     }
 }
 
+/// ?pinned=true hides private pinned statuses from non-followers.
+#[tokio::test]
+async fn test_account_statuses_pinned_hides_private_from_non_follower() {
+    let ctx = TestContext::new("acct-pin-priv").await;
+
+    // Alice pins a private status.
+    let priv_status = ctx.api.post_status(&ctx.alice_token, "my secret pinned post", "private").await;
+    let priv_id = priv_status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{priv_id}/pin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob (non-follower) requests alice's pinned statuses — private pin should NOT appear.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?pinned=true", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !statuses.iter().any(|s| s["id"].as_str() == Some(priv_id)),
+        "private pinned status should not be visible to non-followers",
+    );
+}
+
+/// ?pinned=true shows private pinned statuses to the account owner.
+#[tokio::test]
+async fn test_account_statuses_pinned_shows_private_to_self() {
+    let ctx = TestContext::new("acct-pin-self").await;
+
+    let priv_status = ctx.api.post_status(&ctx.alice_token, "my own private pin", "private").await;
+    let priv_id = priv_status["id"].as_str().unwrap();
+
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{priv_id}/pin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Alice herself sees her private pin.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?pinned=true", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        statuses.iter().any(|s| s["id"].as_str() == Some(priv_id)),
+        "owner should see their own private pinned status",
+    );
+}
+
 /// ?limit=1 on account statuses returns at most 1 status.
 #[tokio::test]
 async fn test_account_statuses_limit_param() {
