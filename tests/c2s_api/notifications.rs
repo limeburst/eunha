@@ -527,6 +527,43 @@ async fn test_notifications_max_id_pagination() {
     );
 }
 
+/// GET /api/v1/notifications?min_id=X returns only notifications newer than X, oldest first.
+#[tokio::test]
+async fn test_notifications_min_id_pagination() {
+    let ctx = TestContext::new("notif-min-id").await;
+
+    // First notification: alice follows bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let first_notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!first_notifs.is_empty(), "expected a follow notification");
+    let anchor_id = first_notifs.last().unwrap()["id"].as_str().unwrap().to_string();
+
+    // Second notification: alice favourites bob's status.
+    let status = ctx.api.post_status(&ctx.bob_token, "min_id notif target", "public").await;
+    let sid = status["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{sid}/favourite"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let min_id_notifs: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/notifications?min_id={anchor_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert!(
+        !min_id_notifs.iter().any(|n| n["id"].as_str() == Some(&anchor_id)),
+        "min_id anchor should be excluded",
+    );
+    assert!(
+        min_id_notifs.iter().any(|n| n["type"].as_str() == Some("favourite")),
+        "favourite notification (newer) should appear with min_id filter",
+    );
+}
+
 /// GET /api/v1/notifications with limit=80 is accepted (not clamped to something lower).
 #[tokio::test]
 async fn test_notifications_limit_80_is_accepted() {

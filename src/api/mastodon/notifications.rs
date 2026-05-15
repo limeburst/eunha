@@ -32,35 +32,64 @@ pub async fn get_notifications(
     let limit = pagination.limit_clamped(40, 80);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let (types, exclude_types, account_id) = parse_notif_filters(qs.as_deref());
 
-    let notifications = sqlx::query_as(
-        r#"SELECT * FROM notifications
-           WHERE account_id = $1
-             AND ($2::bigint IS NULL OR id < $2)
-             AND ($3::bigint IS NULL OR id > $3)
-             AND ($5::text[] IS NULL OR notification_type = ANY($5))
-             AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
-             AND ($7::uuid IS NULL OR from_account_id = $7)
-             AND NOT EXISTS (
-                 SELECT 1 FROM mutes m
-                 WHERE m.account_id = $1 AND m.target_account_id = from_account_id
-                   AND m.hide_notifications = true
-                   AND (m.expires_at IS NULL OR m.expires_at > now())
-             )
-           ORDER BY id DESC
-           LIMIT $4"#,
-    )
-    .bind(auth.account_id)
-    .bind(max_id)
-    .bind(since_id)
-    .bind(limit)
-    .bind(types)
-    .bind(exclude_types)
-    .bind(account_id)
-    .fetch_all(&state.db)
-    .await?;
+    let notifications: Vec<DbNotification> = if min_id.is_some() {
+        sqlx::query_as(
+            r#"SELECT * FROM notifications
+               WHERE account_id = $1
+                 AND ($2::bigint IS NULL OR id > $2)
+                 AND ($5::text[] IS NULL OR notification_type = ANY($5))
+                 AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+                 AND ($7::uuid IS NULL OR from_account_id = $7)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes m
+                     WHERE m.account_id = $1 AND m.target_account_id = from_account_id
+                       AND m.hide_notifications = true
+                       AND (m.expires_at IS NULL OR m.expires_at > now())
+                 )
+               ORDER BY id ASC
+               LIMIT $4"#,
+        )
+        .bind(auth.account_id)
+        .bind(min_id)
+        .bind(Option::<i64>::None)
+        .bind(limit)
+        .bind(types)
+        .bind(exclude_types)
+        .bind(account_id)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"SELECT * FROM notifications
+               WHERE account_id = $1
+                 AND ($2::bigint IS NULL OR id < $2)
+                 AND ($3::bigint IS NULL OR id > $3)
+                 AND ($5::text[] IS NULL OR notification_type = ANY($5))
+                 AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+                 AND ($7::uuid IS NULL OR from_account_id = $7)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes m
+                     WHERE m.account_id = $1 AND m.target_account_id = from_account_id
+                       AND m.hide_notifications = true
+                       AND (m.expires_at IS NULL OR m.expires_at > now())
+                 )
+               ORDER BY id DESC
+               LIMIT $4"#,
+        )
+        .bind(auth.account_id)
+        .bind(max_id)
+        .bind(since_id)
+        .bind(limit)
+        .bind(types)
+        .bind(exclude_types)
+        .bind(account_id)
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let mut result = Vec::with_capacity(notifications.len());
     for n in &notifications {
