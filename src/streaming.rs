@@ -6,7 +6,7 @@ use uuid::Uuid;
 pub enum Event {
     NewStatus {
         instance_id: Uuid,
-        author_id: Uuid,
+        author_id: i64,
         is_public: bool,
         is_direct: bool,
         status_id: i64,
@@ -14,7 +14,7 @@ pub enum Event {
         payload: Arc<String>,
     },
     Notification {
-        for_account_id: Uuid,
+        for_account_id: i64,
         payload: Arc<String>,
     },
     DeleteStatus {

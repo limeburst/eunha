@@ -1,7 +1,6 @@
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use uuid::Uuid;
 
 use super::helpers::TestContext;
 
@@ -402,7 +401,7 @@ async fn test_follow_locked_account_is_pending() {
     // Lock Bob's account directly in the DB.
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    let bob_uuid: i64 = ctx.bob_id.parse().unwrap();
     sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", bob_uuid)
         .execute(&db)
         .await
@@ -459,7 +458,7 @@ async fn test_get_account() {
 async fn test_get_account_not_found() {
     let ctx = TestContext::new("get-acct-404").await;
 
-    let resp = ctx.api.get("/api/v1/accounts/00000000-0000-0000-0000-000000000000", None).await;
+    let resp = ctx.api.get("/api/v1/accounts/1234567890", None).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -490,7 +489,7 @@ async fn test_lookup_account_suspended_returns_410() {
     let ctx = TestContext::new("lookup-suspend").await;
 
     // Elevate alice to admin via direct DB.
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let admin_db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
     sqlx::query!("UPDATE users SET role = 'admin' WHERE account_id = $1", alice_uuid)
@@ -695,7 +694,7 @@ async fn test_authorize_follow_request() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    let bob_uuid: i64 = ctx.bob_id.parse().unwrap();
     sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", bob_uuid)
         .execute(&db).await.unwrap();
 
@@ -731,7 +730,7 @@ async fn test_reject_follow_request() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    let bob_uuid: i64 = ctx.bob_id.parse().unwrap();
     sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", bob_uuid)
         .execute(&db).await.unwrap();
 
@@ -1478,7 +1477,7 @@ async fn test_relationship_requested_by() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
 
     // Lock Alice's account so Bob's follow becomes pending.
     sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", alice_uuid)
@@ -1507,7 +1506,7 @@ async fn test_relationship_domain_blocking() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    let bob_uuid: i64 = ctx.bob_id.parse().unwrap();
 
     // Set Bob's domain to a remote domain.
     sqlx::query!("UPDATE accounts SET domain = 'remote.example.com' WHERE id = $1", bob_uuid)
@@ -1537,7 +1536,7 @@ async fn test_hide_collections_hides_followers_from_others() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
 
     // Bob follows Alice.
     ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
@@ -1563,7 +1562,7 @@ async fn test_hide_collections_hides_following_from_others() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
 
     // Alice follows Bob.
     ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
@@ -1589,7 +1588,7 @@ async fn test_hide_collections_owner_sees_own_followers() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
 
     ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
     sqlx::query!("UPDATE accounts SET hide_collections = true WHERE id = $1", alice_uuid)
@@ -1626,7 +1625,7 @@ async fn test_preferences_reflect_user_table_values() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
 
     sqlx::query!(
         "UPDATE users SET default_privacy = 'private', default_sensitive = true, default_language = 'fr' WHERE account_id = $1",
@@ -1894,7 +1893,7 @@ async fn test_get_suspended_account_returns_410() {
     let ctx = TestContext::new("acct-suspended-410").await;
 
     // Make alice admin
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let admin_db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
     sqlx::query!("UPDATE users SET role = 'admin' WHERE account_id = $1", alice_uuid)
@@ -1922,7 +1921,7 @@ async fn test_unlock_account_approves_pending_follows() {
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
 
     // Lock Alice's account.
     sqlx::query!("UPDATE accounts SET locked = true WHERE id = $1", alice_uuid)

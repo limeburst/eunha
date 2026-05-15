@@ -65,7 +65,7 @@ fn rebuild_url(req: &Request, new_host: &str) -> String {
 /// Resolved OAuth token + account, injected by [`authenticate`].
 #[derive(Clone)]
 pub struct AuthenticatedUser {
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub token_id: Uuid,
     pub scopes: Vec<String>,
     pub application_id: Option<Uuid>,

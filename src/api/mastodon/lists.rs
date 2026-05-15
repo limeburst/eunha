@@ -2,7 +2,6 @@ use axum::{
     extract::{Extension, Json, Path, Query, State},
 };
 use serde::Deserialize;
-use uuid::Uuid;
 
 use crate::{
     db::models,
@@ -145,16 +144,16 @@ pub async fn get_list_accounts(
     fetch_list(&state, id, auth.account_id).await?;
 
     let limit = pagination.limit_clamped(40, 80);
-    let max_id: Option<uuid::Uuid> = pagination.max_id.as_deref().and_then(|s| s.parse().ok());
-    let since_id: Option<uuid::Uuid> = pagination.since_id.as_deref().and_then(|s| s.parse().ok());
+    let max_id: Option<i64> = pagination.max_id.as_deref().and_then(|s| s.parse().ok());
+    let since_id: Option<i64> = pagination.since_id.as_deref().and_then(|s| s.parse().ok());
 
     let accounts = sqlx::query_as!(
         models::Account,
         r#"SELECT a.* FROM accounts a
            JOIN list_accounts la ON la.account_id = a.id
            WHERE la.list_id = $1
-             AND ($2::uuid IS NULL OR a.id < $2)
-             AND ($3::uuid IS NULL OR a.id > $3)
+             AND ($2::bigint IS NULL OR a.id < $2)
+             AND ($3::bigint IS NULL OR a.id > $3)
            ORDER BY a.id DESC
            LIMIT $4"#,
         id,
@@ -185,7 +184,7 @@ pub async fn add_list_accounts(
     fetch_list(&state, id, auth.account_id).await?;
 
     for id_str in &form.account_ids {
-        if let Ok(account_id) = id_str.parse::<Uuid>() {
+        if let Ok(account_id) = id_str.parse::<i64>() {
             let is_followed = sqlx::query_scalar!(
                 "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
                 auth.account_id, account_id,
@@ -220,7 +219,7 @@ pub async fn remove_list_accounts(
     fetch_list(&state, id, auth.account_id).await?;
 
     for id_str in &form.account_ids {
-        if let Ok(account_id) = id_str.parse::<Uuid>() {
+        if let Ok(account_id) = id_str.parse::<i64>() {
             sqlx::query!(
                 "DELETE FROM list_accounts WHERE list_id = $1 AND account_id = $2",
                 id, account_id,
@@ -235,7 +234,7 @@ pub async fn remove_list_accounts(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-async fn fetch_list(state: &AppState, id: i64, account_id: Uuid) -> AppResult<models::List> {
+async fn fetch_list(state: &AppState, id: i64, account_id: i64) -> AppResult<models::List> {
     sqlx::query_as!(
         models::List,
         "SELECT * FROM lists WHERE id = $1 AND account_id = $2",

@@ -35,7 +35,7 @@ macro_rules! assert_forbidden {
 #[tokio::test]
 async fn test_scope_get_blocks_requires_read_blocks() {
     let ctx = TestContext::new("scope-blocks").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/blocks", &write_token);
@@ -50,7 +50,7 @@ async fn test_scope_get_blocks_requires_read_blocks() {
 #[tokio::test]
 async fn test_scope_get_mutes_requires_read_mutes() {
     let ctx = TestContext::new("scope-mutes").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/mutes", &write_token);
@@ -64,7 +64,7 @@ async fn test_scope_get_mutes_requires_read_mutes() {
 #[tokio::test]
 async fn test_scope_get_favourites_requires_read_favourites() {
     let ctx = TestContext::new("scope-favs").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/favourites", &write_token);
@@ -78,7 +78,7 @@ async fn test_scope_get_favourites_requires_read_favourites() {
 #[tokio::test]
 async fn test_scope_get_bookmarks_requires_read_bookmarks() {
     let ctx = TestContext::new("scope-bmarks").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/bookmarks", &write_token);
@@ -92,7 +92,7 @@ async fn test_scope_get_bookmarks_requires_read_bookmarks() {
 #[tokio::test]
 async fn test_scope_get_follow_requests_requires_read_follows() {
     let ctx = TestContext::new("scope-freq").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/follow_requests", &write_token);
@@ -106,7 +106,7 @@ async fn test_scope_get_follow_requests_requires_read_follows() {
 #[tokio::test]
 async fn test_scope_get_notifications_requires_read_notifications() {
     let ctx = TestContext::new("scope-notifs").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/notifications", &write_token);
@@ -120,7 +120,7 @@ async fn test_scope_get_notifications_requires_read_notifications() {
 #[tokio::test]
 async fn test_scope_verify_credentials_requires_read_accounts() {
     let ctx = TestContext::new("scope-vcreds").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     assert_forbidden!(ctx, GET "/api/v1/accounts/verify_credentials", &write_token);
@@ -136,7 +136,7 @@ async fn test_scope_verify_credentials_requires_read_accounts() {
 #[tokio::test]
 async fn test_scope_post_status_requires_write_statuses() {
     let ctx = TestContext::new("scope-post").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let read_token = seed_token_with_scopes(&ctx.db, alice_id, "read").await;
 
     let r = ctx.api.post_json(
@@ -160,7 +160,7 @@ async fn test_scope_post_status_requires_write_statuses() {
 #[tokio::test]
 async fn test_scope_follow_requires_write_follows_or_follow() {
     let ctx = TestContext::new("scope-follow").await;
-    let alice_id_uuid = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id_uuid = ctx.alice_id.parse::<i64>().unwrap();
     let read_token = seed_token_with_scopes(&ctx.db, alice_id_uuid, "read").await;
 
     let r = ctx.api.post_json(
@@ -184,7 +184,7 @@ async fn test_scope_follow_requires_write_follows_or_follow() {
 #[tokio::test]
 async fn test_scope_block_requires_write_blocks_or_follow() {
     let ctx = TestContext::new("scope-block").await;
-    let alice_id_uuid = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id_uuid = ctx.alice_id.parse::<i64>().unwrap();
     let read_token = seed_token_with_scopes(&ctx.db, alice_id_uuid, "read").await;
 
     let r = ctx.api.post_json(
@@ -209,7 +209,7 @@ async fn test_scope_block_requires_write_blocks_or_follow() {
 #[tokio::test]
 async fn test_scope_read_parent_covers_all_read_children() {
     let ctx = TestContext::new("scope-read-parent").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let read_token = seed_token_with_scopes(&ctx.db, alice_id, "read").await;
 
     for path in &[
@@ -230,7 +230,7 @@ async fn test_scope_read_parent_covers_all_read_children() {
 #[tokio::test]
 async fn test_scope_write_parent_covers_write_statuses() {
     let ctx = TestContext::new("scope-write-parent").await;
-    let alice_id = uuid::Uuid::parse_str(&ctx.alice_id).unwrap();
+    let alice_id = ctx.alice_id.parse::<i64>().unwrap();
     let write_token = seed_token_with_scopes(&ctx.db, alice_id, "write").await;
 
     let r = ctx.api.post_json(

@@ -3,7 +3,6 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
@@ -15,11 +14,22 @@ use super::{
     types::Report,
 };
 
+fn de_i64_from_str_or_num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StrOrNum { S(String), N(i64) }
+    match StrOrNum::deserialize(d)? {
+        StrOrNum::S(s) => s.parse().map_err(serde::de::Error::custom),
+        StrOrNum::N(n) => Ok(n),
+    }
+}
+
 // ── POST /api/v1/reports ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ReportForm {
-    pub account_id: Uuid,
+    #[serde(deserialize_with = "de_i64_from_str_or_num")]
+    pub account_id: i64,
     pub status_ids: Option<Vec<String>>,
     pub comment: Option<String>,
     pub forward: Option<bool>,

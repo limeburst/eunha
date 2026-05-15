@@ -1,6 +1,5 @@
 use axum::{
     extract::{Extension, Path, Query, RawQuery, State},
-    http::StatusCode,
     Json,
 };
 use serde::Deserialize;
@@ -43,7 +42,7 @@ pub async fn get_notifications(
                  AND ($2::bigint IS NULL OR id > $2)
                  AND ($5::text[] IS NULL OR notification_type = ANY($5))
                  AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
-                 AND ($7::uuid IS NULL OR from_account_id = $7)
+                 AND ($7::bigint IS NULL OR from_account_id = $7)
                  AND NOT EXISTS (
                      SELECT 1 FROM mutes m
                      WHERE m.account_id = $1 AND m.target_account_id = from_account_id
@@ -70,7 +69,7 @@ pub async fn get_notifications(
                  AND ($3::bigint IS NULL OR id > $3)
                  AND ($5::text[] IS NULL OR notification_type = ANY($5))
                  AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
-                 AND ($7::uuid IS NULL OR from_account_id = $7)
+                 AND ($7::bigint IS NULL OR from_account_id = $7)
                  AND NOT EXISTS (
                      SELECT 1 FROM mutes m
                      WHERE m.account_id = $1 AND m.target_account_id = from_account_id
@@ -177,7 +176,7 @@ pub async fn get_notifications_v2(
              AND ($3::bigint IS NULL OR id > $3)
              AND ($5::text[] IS NULL OR notification_type = ANY($5))
              AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
-             AND ($7::uuid IS NULL OR from_account_id = $7)
+             AND ($7::bigint IS NULL OR from_account_id = $7)
              AND NOT EXISTS (
                  SELECT 1 FROM mutes m
                  WHERE m.account_id = $1 AND m.target_account_id = from_account_id
@@ -614,7 +613,7 @@ pub async fn get_notification_request(
 /// array notation (`foo[]=val`) which serde_urlencoded does not normalise.
 fn parse_notif_filters(
     qs: Option<&str>,
-) -> (Option<Vec<String>>, Option<Vec<String>>, Option<uuid::Uuid>) {
+) -> (Option<Vec<String>>, Option<Vec<String>>, Option<i64>) {
     let pairs: Vec<(std::borrow::Cow<str>, std::borrow::Cow<str>)> =
         url::form_urlencoded::parse(qs.unwrap_or("").as_bytes()).collect();
 
@@ -630,7 +629,7 @@ fn parse_notif_filters(
     let exclude_types = collect_arr("exclude_types", "exclude_types[]");
     let account_id = pairs.iter()
         .find(|(k, _)| k == "account_id")
-        .and_then(|(_, v)| v.parse::<uuid::Uuid>().ok());
+        .and_then(|(_, v)| v.parse::<i64>().ok());
 
     (types, exclude_types, account_id)
 }

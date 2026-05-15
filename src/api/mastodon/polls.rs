@@ -97,7 +97,7 @@ async fn fetch_poll(state: &AppState, id: Uuid) -> AppResult<models::Poll> {
     .ok_or(AppError::NotFound)
 }
 
-async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<Uuid>) -> AppResult<Poll> {
+async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i64>) -> AppResult<Poll> {
     let option_titles: Vec<String> = poll.options
         .as_array()
         .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())

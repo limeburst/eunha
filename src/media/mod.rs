@@ -62,23 +62,23 @@ pub fn instance_icon_key(instance_id: Uuid, content_type: &str) -> String {
     )
 }
 
-pub fn account_avatar_key(instance_id: Uuid, account_id: Uuid, content_type: &str) -> String {
+pub fn account_avatar_key(instance_id: Uuid, account_id: i64, content_type: &str) -> String {
     let ext = ext_for(content_type);
     format!(
         "{}/accounts/avatars/{}/original/{}.{}",
         instance_id,
-        uuid_to_path(account_id),
+        int_to_path(account_id),
         random_hex(),
         ext,
     )
 }
 
-pub fn account_header_key(instance_id: Uuid, account_id: Uuid, content_type: &str) -> String {
+pub fn account_header_key(instance_id: Uuid, account_id: i64, content_type: &str) -> String {
     let ext = ext_for(content_type);
     format!(
         "{}/accounts/headers/{}/original/{}.{}",
         instance_id,
-        uuid_to_path(account_id),
+        int_to_path(account_id),
         random_hex(),
         ext,
     )
@@ -106,6 +106,16 @@ pub fn media_attachment_keys(instance_id: Uuid, content_type: &str) -> MediaAtta
 fn uuid_to_path(id: Uuid) -> String {
     let hex = id.simple().to_string();
     hex.as_bytes()
+        .chunks(3)
+        .map(|c| std::str::from_utf8(c).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn int_to_path(id: i64) -> String {
+    // Format as zero-padded 18-digit decimal, split into 3-digit chunks
+    let s = format!("{:018}", id);
+    s.as_bytes()
         .chunks(3)
         .map(|c| std::str::from_utf8(c).unwrap_or(""))
         .collect::<Vec<_>>()

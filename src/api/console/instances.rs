@@ -170,12 +170,14 @@ pub async fn create(
     let outbox_url = format!("{}/outbox", uri);
     let url = format!("{}/{}", base_url, username);
 
+    let new_account_id = crate::snowflake::next_id();
     let account = sqlx::query!(
         r#"INSERT INTO accounts
-             (instance_id, username, display_name, note, note_text, url, uri,
+             (id, instance_id, username, display_name, note, note_text, url, uri,
               private_key, public_key, inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1, $2, $2, '', '', $3, $4, $5, $6, $7, $8, $9)
+           VALUES ($1, $2, $3, $3, '', '', $4, $5, $6, $7, $8, $9, $10)
            RETURNING id"#,
+        new_account_id,
         instance.id,
         username,
         url,
@@ -647,7 +649,7 @@ pub async fn list_applications(
 pub async fn approve_application(
     State(state): State<AppState>,
     ConsoleAuth(user): ConsoleAuth,
-    Path((domain, account_id)): Path<(String, Uuid)>,
+    Path((domain, account_id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
     let instance = instance_for_user(&state, &domain, user.id).await?;
 
@@ -671,7 +673,7 @@ pub async fn approve_application(
 pub async fn reject_application(
     State(state): State<AppState>,
     ConsoleAuth(user): ConsoleAuth,
-    Path((domain, account_id)): Path<(String, Uuid)>,
+    Path((domain, account_id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
     let instance = instance_for_user(&state, &domain, user.id).await?;
 

@@ -265,7 +265,7 @@ async fn migrate_accounts(
     instance_id: Uuid,
     limit: Option<i64>,
     _args_domain: &str,
-) -> Result<HashMap<i64, Uuid>> {
+) -> Result<HashMap<i64, i64>> {
     let rows = sqlx::query(
         r#"SELECT a.*,
                COALESCE(s.followers_count, 0) AS followers_count,
@@ -343,9 +343,9 @@ async fn migrate_accounts(
             .try_get::<serde_json::Value, _>("fields")
             .unwrap_or(serde_json::json!([]));
 
-        let new_id: Option<Uuid> = sqlx::query_scalar(
+        let inserted: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO accounts
-                 (instance_id, username, domain, display_name, note,
+                 (id, instance_id, username, domain, display_name, note,
                   url, uri, locked, bot, discoverable,
                   private_key, public_key,
                   followers_count, following_count, statuses_count,
@@ -353,10 +353,11 @@ async fn migrate_accounts(
                   suspended_at, silenced_at,
                   avatar, header, fields,
                   created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
-               ON CONFLICT DO NOTHING
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+               ON CONFLICT (instance_id, username, domain) DO NOTHING
                RETURNING id"#,
         )
+        .bind(src_id)
         .bind(eunha_instance_id)
         .bind(&username)
         .bind(&domain)
@@ -385,8 +386,8 @@ async fn migrate_accounts(
         .fetch_optional(&mut *dst)
         .await?;
 
-        if let Some(new_id) = new_id {
-            map.insert(src_id, new_id);
+        if inserted.is_some() {
+            map.insert(src_id, src_id);
         }
     }
 
@@ -433,7 +434,7 @@ async fn migrate_users(
     src: &PgPool,
     dst: &mut PgConnection,
     instance_id: Uuid,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT * FROM users")
         .fetch_all(src)
@@ -485,7 +486,7 @@ async fn migrate_statuses(
     src: &PgPool,
     dst: &mut PgConnection,
     instance_id: Uuid,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<HashMap<i64, i64>> {
     // Mastodon `visibility` is an integer enum: 0=public 1=unlisted 2=private 3=direct
     let rows = sqlx::query("SELECT * FROM statuses ORDER BY id")
@@ -579,7 +580,7 @@ async fn migrate_statuses(
 async fn migrate_follows(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT account_id, target_account_id, uri, created_at, show_reblogs, notify FROM follows",
@@ -619,7 +620,7 @@ async fn migrate_follows(
 async fn migrate_favourites(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, status_id, created_at FROM favourites")
@@ -652,7 +653,7 @@ async fn migrate_media(
     src: &PgPool,
     dst: &mut PgConnection,
     instance_id: Uuid,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     // Skip entirely if this instance already has media — avoids silent duplicates
@@ -692,10 +693,12 @@ async fn migrate_media(
         let remote_url: Option<String> = row.try_get("remote_url").ok().flatten();
         let meta: Option<serde_json::Value> = row.try_get("file_meta").ok().flatten();
         let created_at = get_ts(&row, "created_at")?;
+        let file_file_name: Option<String> = row.try_get("file_file_name").ok().flatten();
+        let mastodon_file_name = file_file_name.filter(|s| !s.is_empty());
 
         sqlx::query(
-            r#"INSERT INTO media_attachments (id, account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            r#"INSERT INTO media_attachments (id, account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at, mastodon_file_name)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                ON CONFLICT DO NOTHING"#,
         )
         .bind(src_id)
@@ -707,6 +710,7 @@ async fn migrate_media(
         .bind(&blurhash)
         .bind(&meta)
         .bind(created_at)
+        .bind(&mastodon_file_name)
         .execute(&mut *dst)
         .await?;
     }
@@ -717,7 +721,7 @@ async fn migrate_media(
 async fn migrate_blocks(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, target_account_id, created_at FROM blocks")
         .fetch_all(src)
@@ -748,7 +752,7 @@ async fn migrate_blocks(
 async fn migrate_mutes(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT account_id, target_account_id, hide_notifications, expires_at, created_at FROM mutes",
@@ -785,7 +789,7 @@ async fn migrate_mutes(
 async fn migrate_bookmarks(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, status_id, created_at FROM bookmarks")
@@ -874,7 +878,7 @@ async fn migrate_custom_emojis(
 async fn migrate_status_edits(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
@@ -888,7 +892,7 @@ async fn migrate_status_edits(
         let Some(&status_id) = status_map.get(&src_status) else { continue };
 
         let src_account: Option<i64> = row.try_get("account_id").ok().flatten();
-        let account_id: Option<Uuid> = src_account.and_then(|id| account_map.get(&id)).copied();
+        let account_id: Option<i64> = src_account.and_then(|id| account_map.get(&id)).copied();
 
         let text: String = row.try_get("text").unwrap_or_default();
         let spoiler_text: String = row.try_get("spoiler_text").unwrap_or_default();
@@ -915,7 +919,7 @@ async fn migrate_status_edits(
 async fn migrate_polls(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<HashMap<i64, Uuid>> {
     let rows = sqlx::query(
@@ -989,7 +993,7 @@ async fn migrate_polls(
 async fn migrate_poll_votes(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     poll_map: &HashMap<i64, Uuid>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, poll_id, choice, created_at FROM poll_votes")
@@ -1075,7 +1079,7 @@ async fn migrate_tags(
 async fn migrate_mentions(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT status_id, account_id, created_at FROM mentions")
@@ -1103,7 +1107,7 @@ async fn migrate_mentions(
 async fn migrate_notifications(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     // Resolve the associated status_id per notification type using JOINs on the source DB.
@@ -1160,7 +1164,7 @@ async fn migrate_notifications(
 async fn migrate_follow_requests(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT account_id, target_account_id, uri, created_at FROM follow_requests",
@@ -1196,7 +1200,7 @@ async fn migrate_follow_requests(
 async fn migrate_status_pins(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, status_id, created_at FROM status_pins")
@@ -1228,7 +1232,7 @@ async fn migrate_status_pins(
 async fn migrate_account_notes(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT account_id, target_account_id, comment, created_at, updated_at FROM account_notes",
@@ -1265,7 +1269,7 @@ async fn migrate_account_notes(
 async fn migrate_lists(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<HashMap<i64, i64>> {
     let rows = sqlx::query(
         "SELECT id, account_id, title, replies_policy, exclusive, created_at, updated_at FROM lists",
@@ -1313,7 +1317,7 @@ async fn migrate_lists(
 async fn migrate_list_accounts(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     list_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT list_id, account_id FROM list_accounts")
@@ -1341,7 +1345,7 @@ async fn migrate_list_accounts(
 async fn migrate_custom_filters(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let filter_rows = sqlx::query(
@@ -1447,7 +1451,7 @@ async fn migrate_custom_filters(
 async fn migrate_featured_tags(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     // Build mastodon tag_id → name map from source
     let masto_tags = sqlx::query("SELECT id, name FROM tags")
@@ -1581,7 +1585,7 @@ async fn migrate_domain_allows(
 async fn migrate_reports(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
 ) -> Result<HashMap<i64, i64>> {
     let rows = sqlx::query(
@@ -1601,8 +1605,8 @@ async fn migrate_reports(
 
         let assigned_id: Option<i64> = row.try_get("assigned_account_id").ok().flatten();
         let action_taken_by_id: Option<i64> = row.try_get("action_taken_by_account_id").ok().flatten();
-        let assigned_account_id: Option<Uuid> = assigned_id.and_then(|id| account_map.get(&id)).copied();
-        let action_taken_by_account_id: Option<Uuid> = action_taken_by_id.and_then(|id| account_map.get(&id)).copied();
+        let assigned_account_id: Option<i64> = assigned_id.and_then(|id| account_map.get(&id)).copied();
+        let action_taken_by_account_id: Option<i64> = action_taken_by_id.and_then(|id| account_map.get(&id)).copied();
 
         let src_status_ids: Vec<i64> = row.try_get("status_ids").unwrap_or_default();
         let status_ids: Vec<i64> = src_status_ids.iter()
@@ -1651,7 +1655,7 @@ async fn migrate_reports(
 async fn migrate_report_notes(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     report_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
@@ -1689,7 +1693,7 @@ async fn migrate_report_notes(
 async fn migrate_account_warnings(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
     report_map: &HashMap<i64, i64>,
 ) -> Result<()> {
@@ -1702,8 +1706,8 @@ async fn migrate_account_warnings(
     for row in &rows {
         let src_account: Option<i64> = row.try_get("account_id").ok().flatten();
         let src_target: Option<i64> = row.try_get("target_account_id").ok().flatten();
-        let account_id: Option<Uuid> = src_account.and_then(|id| account_map.get(&id)).copied();
-        let target_id: Option<Uuid> = src_target.and_then(|id| account_map.get(&id)).copied();
+        let account_id: Option<i64> = src_account.and_then(|id| account_map.get(&id)).copied();
+        let target_id: Option<i64> = src_target.and_then(|id| account_map.get(&id)).copied();
 
         if target_id.is_none() { continue }
 
@@ -1756,7 +1760,7 @@ async fn migrate_account_warnings(
 async fn migrate_account_moderation_notes(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT content, account_id, target_account_id, created_at, updated_at FROM account_moderation_notes",
@@ -1793,7 +1797,7 @@ async fn migrate_account_moderation_notes(
 async fn migrate_admin_action_logs(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT account_id, action, target_type, target_id, human_identifier, route_param, permalink, created_at, updated_at FROM admin_action_logs",
@@ -1838,7 +1842,7 @@ async fn migrate_admin_action_logs(
 async fn migrate_scheduled_statuses(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         "SELECT account_id, scheduled_at, params FROM scheduled_statuses",
@@ -1875,7 +1879,7 @@ async fn migrate_scheduled_statuses(
 async fn migrate_markers(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         r#"SELECT m.timeline, m.last_read_id, m.lock_version, m.updated_at,
@@ -1921,7 +1925,7 @@ async fn migrate_markers(
 async fn migrate_tag_follows(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
     tag_map: &HashMap<i64, Uuid>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, tag_id, created_at FROM tag_follows")
@@ -1956,7 +1960,7 @@ async fn migrate_tag_follows(
 async fn migrate_user_domain_blocks(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, domain, created_at FROM account_domain_blocks")
         .fetch_all(src)
@@ -1992,7 +1996,7 @@ async fn migrate_invites(
     src: &PgPool,
     dst: &mut PgConnection,
     instance_id: Uuid,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         r#"SELECT i.code, i.expires_at, i.max_uses, i.uses, i.created_at,
@@ -2042,7 +2046,7 @@ async fn migrate_invites(
 async fn migrate_web_push_subscriptions(
     src: &PgPool,
     dst: &mut PgConnection,
-    account_map: &HashMap<i64, Uuid>,
+    account_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         r#"SELECT w.endpoint, w.key_p256dh, w.key_auth, w.data,

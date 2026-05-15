@@ -309,7 +309,7 @@ pub async fn seed_user(
     domain: &str,
     username: &str,
     email: &str,
-) -> (Uuid, String) {
+) -> (i64, String) {
     let instance_id = seed_instance(db, domain).await;
     let (account_id, token) = seed_account_and_token(db, instance_id, domain, username, email).await;
     (account_id, token)
@@ -336,16 +336,17 @@ pub async fn seed_account_and_token(
     domain: &str,
     username: &str,
     email: &str,
-) -> (Uuid, String) {
+) -> (i64, String) {
     let url = format!("https://{}/{}", domain, username);
     let uri = format!("https://{}/users/{}", domain, username);
 
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (instance_id, username, display_name, note, note_text,
+             (id, instance_id, username, display_name, note, note_text,
               url, uri, public_key, inbox_url, outbox_url)
-           VALUES ($1,$2,$2,'','', $3,$4,'test-public-key',$4||'/inbox',$4||'/outbox')
+           VALUES ($1,$2,$3,$3,'','', $4,$5,'test-public-key',$5||'/inbox',$5||'/outbox')
            RETURNING id"#,
+        eunha::snowflake::next_id(),
         instance_id,
         username,
         url,
@@ -405,7 +406,7 @@ pub fn hash_password(password: &str) -> String {
 
 /// Create an additional access token for `account_id` with the given scopes.
 /// Use this to test scope enforcement (e.g. a read-only token trying a write endpoint).
-pub async fn seed_token_with_scopes(db: &PgPool, account_id: Uuid, scopes: &str) -> String {
+pub async fn seed_token_with_scopes(db: &PgPool, account_id: i64, scopes: &str) -> String {
     let app_id: Uuid = sqlx::query_scalar!(
         r#"SELECT application_id as "application_id!: Uuid" FROM oauth_access_tokens
            WHERE account_id = $1 AND application_id IS NOT NULL LIMIT 1"#,

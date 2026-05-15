@@ -50,7 +50,7 @@ pub struct ConsoleSession {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct Account {
-    pub id: Uuid,
+    pub id: i64,
     pub instance_id: Uuid,
     pub username: String,
     pub domain: Option<String>,
@@ -101,7 +101,7 @@ impl Account {
 #[derive(Debug, Clone, FromRow)]
 pub struct User {
     pub id: Uuid,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub instance_id: Uuid,
     pub email: String,
     pub email_normalized: String,
@@ -126,13 +126,13 @@ pub struct User {
 pub struct Status {
     pub id: i64,
     pub instance_id: Uuid,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub application_id: Option<Uuid>,
     pub text: String,
     pub content: String,
     pub spoiler_text: String,
     pub in_reply_to_id: Option<i64>,
-    pub in_reply_to_account_id: Option<Uuid>,
+    pub in_reply_to_account_id: Option<i64>,
     pub reblog_of_id: Option<i64>,
     pub visibility: String,
     pub language: Option<String>,
@@ -152,7 +152,7 @@ pub struct Status {
 #[derive(Debug, Clone, FromRow)]
 pub struct MediaAttachment {
     pub id: i64,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub status_id: Option<i64>,
     pub media_type: String,
     pub file_key: Option<String>,
@@ -169,8 +169,8 @@ pub struct MediaAttachment {
 #[derive(Debug, Clone, FromRow)]
 pub struct Follow {
     pub id: Uuid,
-    pub account_id: Uuid,
-    pub target_account_id: Uuid,
+    pub account_id: i64,
+    pub target_account_id: i64,
     pub state: String,
     pub show_reblogs: bool,
     pub notify: bool,
@@ -182,8 +182,8 @@ pub struct Follow {
 #[derive(Debug, Clone, FromRow)]
 pub struct Notification {
     pub id: i64,
-    pub account_id: Uuid,
-    pub from_account_id: Uuid,
+    pub account_id: i64,
+    pub from_account_id: i64,
     pub notification_type: String,
     pub status_id: Option<i64>,
     pub read: bool,
@@ -207,7 +207,7 @@ pub struct OauthApplication {
 pub struct OauthAccessToken {
     pub id: Uuid,
     pub application_id: Option<Uuid>,
-    pub account_id: Option<Uuid>,
+    pub account_id: Option<i64>,
     pub token: String,
     pub refresh_token: Option<String>,
     pub scopes: String,
@@ -240,7 +240,7 @@ pub struct CustomEmoji {
 #[derive(Debug, Clone, FromRow)]
 pub struct Favourite {
     pub id: Uuid,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub status_id: i64,
     pub uri: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -249,7 +249,7 @@ pub struct Favourite {
 #[derive(Debug, Clone, FromRow)]
 pub struct List {
     pub id: i64,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub title: String,
     pub replies_policy: String,
     pub exclusive: bool,
@@ -261,7 +261,7 @@ pub struct List {
 pub struct StatusEdit {
     pub id: Uuid,
     pub status_id: i64,
-    pub account_id: Option<Uuid>,
+    pub account_id: Option<i64>,
     pub text: String,
     pub content: String,
     pub spoiler_text: String,
@@ -273,7 +273,7 @@ pub struct StatusEdit {
 pub struct Poll {
     pub id: Uuid,
     pub status_id: i64,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub options: serde_json::Value,
     pub votes_count: i64,
     pub voters_count: Option<i64>,
@@ -285,7 +285,7 @@ pub struct Poll {
 #[derive(Debug, Clone, FromRow)]
 pub struct UserDomainBlock {
     pub id: i64,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub domain: String,
     pub created_at: DateTime<Utc>,
 }
@@ -293,7 +293,7 @@ pub struct UserDomainBlock {
 #[derive(Debug, Clone, FromRow)]
 pub struct WebPushSubscription {
     pub id: i64,
-    pub account_id: Uuid,
+    pub account_id: i64,
     pub access_token_id: Uuid,
     pub endpoint: String,
     pub p256dh: String,

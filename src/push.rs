@@ -72,7 +72,7 @@ struct PushPayload<'a> {
 /// Failures are logged and swallowed — push is best-effort.
 pub async fn deliver(
     state: AppState,
-    recipient_id: Uuid,
+    recipient_id: i64,
     notification_id: i64,
     notification_type: &str,
     icon: &str,
@@ -96,7 +96,7 @@ pub async fn deliver(
 
 async fn try_deliver(
     state: &AppState,
-    recipient_id: Uuid,
+    recipient_id: i64,
     notification_id: i64,
     notification_type: &str,
     icon: &str,
@@ -239,8 +239,8 @@ async fn send_with_reqwest(
 /// Insert a notification record and fire push delivery in a background task.
 pub async fn create_and_push(
     state: &AppState,
-    recipient_id: Uuid,
-    from_account_id: Uuid,
+    recipient_id: i64,
+    from_account_id: i64,
     notification_type: &'static str,
     status_id: Option<i64>,
     title: String,
@@ -420,8 +420,8 @@ pub async fn create_and_push(
 /// instead of the main notifications feed, based on the recipient's policy.
 async fn should_filter_notification(
     db: &sqlx::PgPool,
-    recipient_id: Uuid,
-    from_account_id: Uuid,
+    recipient_id: i64,
+    from_account_id: i64,
     notification_type: &str,
     status_id: Option<i64>,
 ) -> bool {
@@ -532,8 +532,8 @@ async fn should_filter_notification(
 /// Upsert into notification_requests for a filtered notification.
 async fn route_to_request(
     db: &sqlx::PgPool,
-    recipient_id: Uuid,
-    from_account_id: Uuid,
+    recipient_id: i64,
+    from_account_id: i64,
     status_id: Option<i64>,
 ) {
     let _ = sqlx::query!(
@@ -557,7 +557,7 @@ async fn build_notification_payload(
     state: &AppState,
     notification_id: i64,
     notification_type: &str,
-    from_account_id: Uuid,
+    from_account_id: i64,
     status_id: Option<i64>,
 ) -> Option<String> {
     use crate::api::mastodon::convert::account_from_db;

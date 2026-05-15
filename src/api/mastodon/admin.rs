@@ -4,8 +4,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
 use crate::{
     db::models,
     error::{AppError, AppResult},
@@ -17,7 +15,7 @@ use super::types::Account as ApiAccount;
 
 // ── Admin auth guard ──────────────────────────────────────────────────────
 
-async fn require_admin(state: &AppState, account_id: Uuid) -> AppResult<()> {
+async fn require_admin(state: &AppState, account_id: i64) -> AppResult<()> {
     let role = sqlx::query_scalar!(
         "SELECT role FROM users WHERE account_id = $1",
         account_id,
@@ -204,7 +202,7 @@ pub async fn list_admin_accounts(
 pub async fn get_admin_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     let account = sqlx::query_as!(models::Account, "SELECT * FROM accounts WHERE id = $1", id)
@@ -219,7 +217,7 @@ pub async fn get_admin_account(
 pub async fn approve_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -240,7 +238,7 @@ pub async fn approve_account(
 pub async fn reject_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -263,7 +261,7 @@ pub async fn reject_account(
 pub async fn enable_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -284,7 +282,7 @@ pub async fn enable_account(
 pub async fn silence_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -305,7 +303,7 @@ pub async fn silence_account(
 pub async fn unsilence_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -326,7 +324,7 @@ pub async fn unsilence_account(
 pub async fn suspend_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -353,7 +351,7 @@ pub async fn suspend_account(
 pub async fn unsuspend_account(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -426,8 +424,8 @@ async fn build_admin_report(
 
 struct AdminReportRow {
     id: i64,
-    account_id: Uuid,
-    target_account_id: Uuid,
+    account_id: i64,
+    target_account_id: i64,
     status_ids: Vec<i64>,
     comment: String,
     forwarded: Option<bool>,
@@ -915,7 +913,7 @@ pub async fn get_retention(
 
     let mut cohorts: std::collections::BTreeMap<
         chrono::DateTime<chrono::Utc>,
-        Vec<uuid::Uuid>,
+        Vec<i64>,
     > = std::collections::BTreeMap::new();
     for row in cohort_rows {
         if let Some(period) = row.period {
@@ -937,7 +935,7 @@ pub async fn get_retention(
             let active_count = sqlx::query_scalar!(
                 r#"SELECT COUNT(DISTINCT s.account_id)
                    FROM statuses s
-                   WHERE s.account_id = ANY($1::uuid[])
+                   WHERE s.account_id = ANY($1::bigint[])
                      AND s.deleted_at IS NULL
                      AND s.created_at >= $2
                      AND s.created_at < $3"#,

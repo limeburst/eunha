@@ -116,7 +116,7 @@ async fn test_file_report_unknown_account() {
         "/api/v1/reports",
         Some(&ctx.alice_token),
         &json!({
-            "account_id": "00000000-0000-0000-0000-000000000000",
+            "account_id": "1234567890",
             "comment": "spam"
         }),
     ).await;

@@ -2,16 +2,18 @@
 /// Objects are stored under <instance-uuid>/ in the bucket, derived automatically from
 /// the instance domain in the eunha DB (stable across domain renames).
 ///
+/// Prerequisites: eunha-migrate-mastodon must have been run first so that
+/// media_attachments.mastodon_file_name and accounts.mastodon_id /
+/// mastodon_avatar_file_name / mastodon_header_file_name are populated.
+///
 /// Usage (via config file):
 ///   eunha-upload-media \
 ///     --config /etc/eunha/config.toml \
-///     --mastodon-db postgres:///mastodon_src \
 ///     --media-dir ~/seoulearth_dump/media \
 ///     --domain seoul-earth.eunha.social
 ///
 /// Usage (individual flags):
 ///   eunha-upload-media \
-///     --mastodon-db postgres:///mastodon_src \
 ///     --eunha-db postgres:///eunha \
 ///     --media-dir ~/seoulearth_dump/media \
 ///     --bucket eunha-social \
@@ -24,8 +26,7 @@ use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use clap::Parser;
 use futures::StreamExt;
-use sqlx::{PgPool, Row};
-use std::collections::HashMap;
+use sqlx::PgPool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -34,7 +35,6 @@ use uuid::Uuid;
 struct Args {
     /// Path to the server config TOML file (database_url and media_storage are used).
     #[arg(long)] config: Option<String>,
-    #[arg(long)] mastodon_db: String,
     /// eunha database URL (overrides config database_url).
     #[arg(long)] eunha_db: Option<String>,
     #[arg(long)] media_dir: String,
@@ -81,8 +81,7 @@ async fn main() -> Result<()> {
         .or_else(|| ms.map(|m| m.base_url.clone()))
         .context("--base-url or --config with media_storage.base_url")?;
 
-    let src = PgPool::connect(&args.mastodon_db).await.context("mastodon_db")?;
-    let dst = PgPool::connect(&eunha_db_url).await.context("eunha_db")?;
+    let db = PgPool::connect(&eunha_db_url).await.context("eunha_db")?;
 
     let creds = aws_sdk_s3::config::Credentials::new(
         &access_key_id_val, &secret_access_key_val, None, None, "static",
@@ -101,67 +100,13 @@ async fn main() -> Result<()> {
         "SELECT id FROM instances WHERE domain = $1",
     )
     .bind(&args.domain)
-    .fetch_one(&dst)
+    .fetch_one(&db)
     .await
     .with_context(|| format!("instance '{}' not found in eunha DB", args.domain))?;
     let prefix = instance_uuid.to_string();
     tracing::info!("using R2 prefix: {}", prefix);
 
-    // ── 1. Account mapping: mastodon i64 id → eunha UUID ─────────────────────
-    tracing::info!("building account map...");
-    let masto_accounts = sqlx::query("SELECT id, username, domain FROM accounts")
-        .fetch_all(&src).await?;
-    let eunha_accounts = sqlx::query("SELECT id, username, domain FROM accounts")
-        .fetch_all(&dst).await?;
-
-    let eunha_account_lookup: HashMap<(String, Option<String>), Uuid> = eunha_accounts
-        .iter()
-        .map(|r| {
-            let username: String = r.get("username");
-            let domain: Option<String> = r.try_get("domain").ok().flatten();
-            let id: Uuid = r.get("id");
-            ((username, domain), id)
-        })
-        .collect();
-
-    let account_map: HashMap<i64, Uuid> = masto_accounts
-        .iter()
-        .filter_map(|r| {
-            let masto_id: i64 = r.get("id");
-            let username: String = r.get("username");
-            let domain: Option<String> = r.try_get("domain").ok().flatten();
-            eunha_account_lookup.get(&(username, domain)).map(|&uid| (masto_id, uid))
-        })
-        .collect();
-    tracing::info!("mapped {} accounts", account_map.len());
-
-    // ── 2. Status mapping: mastodon i64 id → eunha i64 id ────────────────────
-    tracing::info!("building status map...");
-    let masto_statuses = sqlx::query("SELECT id, uri FROM statuses WHERE uri IS NOT NULL")
-        .fetch_all(&src).await?;
-    let eunha_statuses = sqlx::query("SELECT id, uri FROM statuses WHERE uri IS NOT NULL")
-        .fetch_all(&dst).await?;
-
-    let eunha_status_lookup: HashMap<String, i64> = eunha_statuses
-        .iter()
-        .filter_map(|r| {
-            let uri: Option<String> = r.try_get("uri").ok().flatten();
-            let id: i64 = r.get("id");
-            uri.map(|u| (u, id))
-        })
-        .collect();
-
-    let status_map: HashMap<i64, i64> = masto_statuses
-        .iter()
-        .filter_map(|r| {
-            let masto_id: i64 = r.get("id");
-            let uri: String = r.try_get("uri").ok().flatten()?;
-            eunha_status_lookup.get(&uri).map(|&eid| (masto_id, eid))
-        })
-        .collect();
-    tracing::info!("mapped {} statuses", status_map.len());
-
-    // ── 3. Upload all files under <prefix>/ ───────────────────────────────────
+    // ── 1. Upload all files under <prefix>/ ──────────────────────────────────
     tracing::info!("uploading files from {} under prefix '{}' (concurrency={})...", media_dir.display(), prefix, args.concurrency);
     let files = collect_files(&media_dir)?;
     let total = files.len();
@@ -173,13 +118,13 @@ async fn main() -> Result<()> {
     let uploaded = upload_parallel(client.clone(), bucket.clone(), prefix_arc.clone(), media_dir_arc, files, args.concurrency).await?;
     tracing::info!("uploaded {} files total", uploaded);
 
-    // ── 4. Patch media_attachments URLs ──────────────────────────────────────
+    // ── 2. Patch media_attachments URLs ──────────────────────────────────────
     tracing::info!("patching media_attachment URLs...");
-    patch_media_attachments(&src, &dst, &account_map, &status_map, &base_url_val, &prefix_arc).await?;
+    patch_media_attachments(&db, &base_url_val, &prefix_arc, &media_dir).await?;
 
-    // ── 5. Patch account avatar/header URLs ──────────────────────────────────
+    // ── 3. Patch account avatar/header URLs ──────────────────────────────────
     tracing::info!("patching account avatar/header URLs...");
-    patch_account_media(&src, &dst, &account_map, &base_url_val, &prefix_arc).await?;
+    patch_account_media(&db, &base_url_val, &prefix_arc, &media_dir).await?;
 
     tracing::info!("done");
     Ok(())
@@ -252,119 +197,86 @@ async fn upload_parallel(
     Ok(total)
 }
 
-async fn patch_media_attachments(
-    src: &PgPool,
-    dst: &PgPool,
-    account_map: &HashMap<i64, Uuid>,
-    status_map: &HashMap<i64, i64>,
-    base_url: &str,
-    prefix: &str,
-) -> Result<()> {
-    let masto_rows = sqlx::query(
-        r#"SELECT ma.id, ma.account_id, ma.status_id, ma.file_file_name
-           FROM media_attachments ma
-           JOIN accounts a ON a.id = ma.account_id
-           WHERE ma.file_file_name IS NOT NULL AND ma.file_file_name != ''
-             AND a.domain IS NULL
-           ORDER BY COALESCE(ma.status_id, 0), ma.id"#,
+async fn patch_media_attachments(db: &PgPool, base_url: &str, prefix: &str, media_dir: &Path) -> Result<()> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT id FROM media_attachments WHERE file_url IS NULL",
     )
-    .fetch_all(src).await?;
-
-    let mut masto_groups: HashMap<(Uuid, Option<i64>), Vec<(i64, String)>> = HashMap::new();
-    for row in &masto_rows {
-        let masto_account: i64 = row.get("account_id");
-        let masto_status: Option<i64> = row.try_get("status_id").ok().flatten();
-        let Some(&eunha_account) = account_map.get(&masto_account) else { continue };
-        let eunha_status = masto_status.and_then(|sid| status_map.get(&sid)).copied();
-        let masto_id: i64 = row.get("id");
-        let filename: String = row.get("file_file_name");
-        masto_groups.entry((eunha_account, eunha_status)).or_default().push((masto_id, filename));
-    }
-    for v in masto_groups.values_mut() {
-        v.sort_by_key(|&(id, _)| id);
-    }
-
-    let eunha_rows = sqlx::query(
-        "SELECT id, account_id, status_id FROM media_attachments ORDER BY id",
-    )
-    .fetch_all(dst).await?;
-
-    let mut eunha_groups: HashMap<(Uuid, Option<i64>), Vec<i64>> = HashMap::new();
-    for row in &eunha_rows {
-        let account_id: Uuid = row.get("account_id");
-        let status_id: Option<i64> = row.try_get("status_id").ok().flatten();
-        let id: i64 = row.get("id");
-        eunha_groups.entry((account_id, status_id)).or_default().push(id);
-    }
+    .fetch_all(db)
+    .await?;
 
     let mut updated = 0usize;
-    for ((eunha_account, eunha_status), masto_attachments) in &masto_groups {
-        let Some(eunha_ids) = eunha_groups.get(&(*eunha_account, *eunha_status)) else { continue };
-        for (i, (masto_id, filename)) in masto_attachments.iter().enumerate() {
-            let Some(&eunha_id) = eunha_ids.get(i) else { break };
-            let id_path = split_id(*masto_id);
-            let key = format!("{}/media_attachments/files/{}/original/{}", prefix, id_path, filename);
-            let file_url = format!("{}/{}", base_url.trim_end_matches('/'), key);
-            let preview_key = format!("{}/media_attachments/files/{}/small/{}", prefix, id_path, filename);
-            let preview_url = format!("{}/{}", base_url.trim_end_matches('/'), preview_key);
-            sqlx::query(
-                "UPDATE media_attachments SET file_url = $1, file_key = $2, preview_url = $3 WHERE id = $4",
-            )
-            .bind(&file_url).bind(&key).bind(&preview_url).bind(eunha_id)
-            .execute(dst).await?;
-            updated += 1;
-        }
+    for (id,) in &rows {
+        let id_path = split_id(*id);
+        let orig_dir = media_dir.join("media_attachments/files").join(&id_path).join("original");
+        let Some(filename) = first_file_in(&orig_dir) else { continue };
+        let key = format!("{}/media_attachments/files/{}/original/{}", prefix, id_path, filename);
+        let file_url = format!("{}/{}", base_url.trim_end_matches('/'), key);
+        let preview_key = format!("{}/media_attachments/files/{}/small/{}", prefix, id_path, filename);
+        let preview_url = format!("{}/{}", base_url.trim_end_matches('/'), preview_key);
+        sqlx::query(
+            "UPDATE media_attachments SET file_url = $1, file_key = $2, preview_url = $3 WHERE id = $4",
+        )
+        .bind(&file_url).bind(&key).bind(&preview_url).bind(id)
+        .execute(db)
+        .await?;
+        updated += 1;
     }
     tracing::info!("updated {} media_attachments", updated);
     Ok(())
 }
 
-async fn patch_account_media(
-    src: &PgPool,
-    dst: &PgPool,
-    account_map: &HashMap<i64, Uuid>,
-    base_url: &str,
-    prefix: &str,
-) -> Result<()> {
-    let rows = sqlx::query(
-        "SELECT id, avatar_file_name, header_file_name FROM accounts WHERE (avatar_file_name IS NOT NULL OR header_file_name IS NOT NULL) AND domain IS NULL",
+async fn patch_account_media(db: &PgPool, base_url: &str, prefix: &str, media_dir: &Path) -> Result<()> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT id FROM accounts WHERE domain IS NULL AND (avatar IS NULL OR header IS NULL)",
     )
-    .fetch_all(src).await?;
+    .fetch_all(db)
+    .await?;
 
     let mut updated = 0usize;
-    for row in &rows {
-        let masto_id: i64 = row.get("id");
-        let Some(&eunha_id) = account_map.get(&masto_id) else { continue };
-        let id_path = split_id(masto_id);
+    for (id,) in &rows {
+        let id_path = split_id(*id);
 
-        if let Some(fname) = row.try_get::<Option<String>, _>("avatar_file_name").ok().flatten() {
-            if !fname.is_empty() {
-                let key = format!("{}/accounts/avatars/{}/original/{}", prefix, id_path, fname);
-                let url = format!("{}/{}", base_url.trim_end_matches('/'), key);
-                let static_key = format!("{}/accounts/avatars/{}/static/{}", prefix, id_path, fname);
-                let static_url = format!("{}/{}", base_url.trim_end_matches('/'), static_key);
-                sqlx::query("UPDATE accounts SET avatar = $1, avatar_static = $2 WHERE id = $3")
-                    .bind(&url).bind(&static_url).bind(eunha_id)
-                    .execute(dst).await?;
-                updated += 1;
-            }
+        let avatar_orig_dir = media_dir.join("accounts/avatars").join(&id_path).join("original");
+        if let Some(fname) = first_file_in(&avatar_orig_dir) {
+            let key = format!("{}/accounts/avatars/{}/original/{}", prefix, id_path, fname);
+            let url = format!("{}/{}", base_url.trim_end_matches('/'), key);
+            let static_key = format!("{}/accounts/avatars/{}/static/{}", prefix, id_path, fname);
+            let static_url = format!("{}/{}", base_url.trim_end_matches('/'), static_key);
+            sqlx::query(
+                "UPDATE accounts SET avatar = $1, avatar_static = $2 WHERE id = $3 AND avatar IS NULL",
+            )
+            .bind(&url).bind(&static_url).bind(id)
+            .execute(db).await?;
+            updated += 1;
         }
 
-        if let Some(fname) = row.try_get::<Option<String>, _>("header_file_name").ok().flatten() {
-            if !fname.is_empty() {
-                let key = format!("{}/accounts/headers/{}/original/{}", prefix, id_path, fname);
-                let url = format!("{}/{}", base_url.trim_end_matches('/'), key);
-                let static_key = format!("{}/accounts/headers/{}/static/{}", prefix, id_path, fname);
-                let static_url = format!("{}/{}", base_url.trim_end_matches('/'), static_key);
-                sqlx::query("UPDATE accounts SET header = $1, header_static = $2 WHERE id = $3")
-                    .bind(&url).bind(&static_url).bind(eunha_id)
-                    .execute(dst).await?;
-                updated += 1;
-            }
+        let header_orig_dir = media_dir.join("accounts/headers").join(&id_path).join("original");
+        if let Some(fname) = first_file_in(&header_orig_dir) {
+            let key = format!("{}/accounts/headers/{}/original/{}", prefix, id_path, fname);
+            let url = format!("{}/{}", base_url.trim_end_matches('/'), key);
+            let static_key = format!("{}/accounts/headers/{}/static/{}", prefix, id_path, fname);
+            let static_url = format!("{}/{}", base_url.trim_end_matches('/'), static_key);
+            sqlx::query(
+                "UPDATE accounts SET header = $1, header_static = $2 WHERE id = $3 AND header IS NULL",
+            )
+            .bind(&url).bind(&static_url).bind(id)
+            .execute(db).await?;
+            updated += 1;
         }
     }
     tracing::info!("updated {} account avatar/headers", updated);
     Ok(())
+}
+
+fn first_file_in(dir: &Path) -> Option<String> {
+    std::fs::read_dir(dir).ok()?.filter_map(|e| {
+        let p = e.ok()?.path();
+        if p.is_file() {
+            p.file_name()?.to_str().map(str::to_owned)
+        } else {
+            None
+        }
+    }).find(|n| !n.starts_with('.'))
 }
 
 /// Converts a Mastodon numeric ID into Paperclip's directory path:

@@ -142,7 +142,7 @@ pub fn status_from_db_with_app(
 
 #[derive(Clone)]
 pub struct StatusViewerContext {
-    pub account_id: uuid::Uuid,
+    pub account_id: i64,
     pub favourited: bool,
     pub reblogged: bool,
     pub muted: bool,

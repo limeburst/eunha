@@ -168,7 +168,7 @@ pub async fn post_status(
     let in_reply_to_id = form.in_reply_to_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     // Look up the parent author for in_reply_to_account_id
-    let in_reply_to_account_id: Option<uuid::Uuid> = if let Some(parent_id) = in_reply_to_id {
+    let in_reply_to_account_id: Option<i64> = if let Some(parent_id) = in_reply_to_id {
         let account_id = sqlx::query_scalar!(
             "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
             parent_id,
@@ -702,7 +702,7 @@ pub async fn delete_status(
 
     // Cascade-delete any reblogs of this status before soft-deleting the original.
     // Mastodon deletes reblogs when the original is removed.
-    let reblogger_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
+    let reblogger_ids: Vec<i64> = sqlx::query_scalar!(
         "UPDATE statuses SET deleted_at = now() WHERE reblog_of_id = $1 AND deleted_at IS NULL RETURNING account_id",
         id
     )
@@ -1030,8 +1030,8 @@ pub async fn get_status_context(
     .await?;
 
     // Collect blocked account IDs for the viewer (batch query, avoids n+1 per status).
-    let blocked_accounts: std::collections::HashSet<uuid::Uuid> = if let Some(vid) = viewer_id {
-        let all_account_ids: Vec<uuid::Uuid> = ancestor_rows.iter()
+    let blocked_accounts: std::collections::HashSet<i64> = if let Some(vid) = viewer_id {
+        let all_account_ids: Vec<i64> = ancestor_rows.iter()
             .chain(descendant_rows.iter())
             .map(|s| s.account_id)
             .filter(|aid| *aid != vid)
@@ -1043,10 +1043,10 @@ pub async fn get_status_context(
         } else {
             sqlx::query_scalar!(
                 r#"SELECT target_account_id FROM blocks
-                   WHERE account_id = $1 AND target_account_id = ANY($2::uuid[])
+                   WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])
                    UNION
                    SELECT account_id FROM blocks
-                   WHERE target_account_id = $1 AND account_id = ANY($2::uuid[])"#,
+                   WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])"#,
                 vid,
                 &all_account_ids,
             )
@@ -1525,7 +1525,7 @@ pub async fn edit_status(
     store_status_mentions(&state, id, &resolved).await?;
 
     // Send "update" notifications to users who have interacted with this status
-    let interacted: Vec<uuid::Uuid> = sqlx::query_scalar!(
+    let interacted: Vec<i64> = sqlx::query_scalar!(
         r#"SELECT account_id FROM favourites WHERE status_id = $1
            UNION
            SELECT account_id FROM statuses WHERE reblog_of_id = $1 AND deleted_at IS NULL
@@ -1703,7 +1703,7 @@ pub async fn get_status_card(
 async fn check_status_visible(
     state: &AppState,
     status: &DbStatus,
-    viewer_id: Uuid,
+    viewer_id: i64,
 ) -> AppResult<()> {
     match status.visibility.as_str() {
         "private" => {
@@ -1761,7 +1761,7 @@ async fn fetch_status_with_account(state: &AppState, id: i64) -> AppResult<(DbSt
     Ok((status, account))
 }
 
-async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
+async fn fetch_account(state: &AppState, id: i64) -> AppResult<Account> {
     sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = $1", id)
         .fetch_optional(&state.db)
         .await?
@@ -1772,7 +1772,7 @@ async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
 /// Returns a map from status_id → StatusViewerContext.
 pub(super) async fn batch_viewer_contexts(
     state: &AppState,
-    viewer_id: Uuid,
+    viewer_id: i64,
     status_ids: &[i64],
 ) -> AppResult<std::collections::HashMap<i64, super::convert::StatusViewerContext>> {
     use std::collections::{HashMap, HashSet};
@@ -1844,7 +1844,7 @@ pub(super) async fn batch_viewer_contexts(
 
 pub async fn build_viewer_context(
     state: &AppState,
-    viewer_id: Uuid,
+    viewer_id: i64,
     status_id: i64,
 ) -> AppResult<super::convert::StatusViewerContext> {
     let favourited = sqlx::query!(
@@ -2068,7 +2068,7 @@ pub fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (Str
     map
 }
 
-pub async fn store_status_tags(state: &AppState, status_id: i64, account_id: uuid::Uuid, hashtags: &[String]) -> AppResult<()> {
+pub async fn store_status_tags(state: &AppState, status_id: i64, account_id: i64, hashtags: &[String]) -> AppResult<()> {
     sqlx::query!("DELETE FROM status_tags WHERE status_id = $1", status_id)
         .execute(&state.db)
         .await?;

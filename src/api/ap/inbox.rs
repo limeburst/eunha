@@ -225,7 +225,7 @@ async fn handle_update(
 pub async fn resolve_or_fetch_remote_account(
     state: &AppState,
     actor_uri: &str,
-) -> AppResult<uuid::Uuid> {
+) -> AppResult<i64> {
     if let Some(id) = sqlx::query_scalar!(
         "SELECT id FROM accounts WHERE uri = $1",
         actor_uri
@@ -271,17 +271,19 @@ pub async fn resolve_or_fetch_remote_account(
     // We need an instance_id for the remote domain — find or create a remote instance stub
     let remote_instance_id = get_or_create_remote_instance(state, &domain).await?;
 
+    let new_account_id = crate::snowflake::next_id();
     let id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (instance_id, username, domain, display_name, note, url, uri,
+             (id, instance_id, username, domain, display_name, note, url, uri,
               inbox_url, outbox_url, shared_inbox_url, public_key)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            ON CONFLICT (uri) WHERE uri != '' DO UPDATE
              SET display_name = EXCLUDED.display_name,
                  note = EXCLUDED.note,
                  public_key = EXCLUDED.public_key,
                  updated_at = now()
            RETURNING id"#,
+        new_account_id,
         remote_instance_id,
         username,
         domain,

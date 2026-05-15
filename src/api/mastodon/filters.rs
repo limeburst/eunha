@@ -17,7 +17,7 @@ use super::types::{Filter, FilterKeyword, FilterStatus, FilterV1};
 async fn fetch_filter(
     state: &AppState,
     filter_id: i64,
-    account_id: uuid::Uuid,
+    account_id: i64,
 ) -> AppResult<Filter> {
     let f = sqlx::query!(
         "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1 AND account_id = $2",

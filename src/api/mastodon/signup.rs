@@ -151,12 +151,14 @@ pub async fn signup_post(
     let outbox_url = format!("{}/outbox", uri);
     let shared_inbox_url = format!("https://{}/inbox", instance.domain);
 
+    let new_account_id = crate::snowflake::next_id();
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (instance_id, username, url, uri, private_key, public_key,
+             (id, instance_id, username, url, uri, private_key, public_key,
               inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING id"#,
+        new_account_id,
         instance.id,
         username,
         url,
@@ -362,12 +364,14 @@ pub async fn api_create_account(
     let uri = format!("https://{}/users/{}", instance.domain, username);
     let url = format!("{}/@{}", base_url, username);
 
+    let new_account_id = crate::snowflake::next_id();
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (instance_id, username, url, uri, private_key, public_key,
+             (id, instance_id, username, url, uri, private_key, public_key,
               inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING id"#,
+        new_account_id,
         instance.id, username, url, uri, private_key, public_key,
         format!("{}/inbox", uri),
         format!("{}/outbox", uri),

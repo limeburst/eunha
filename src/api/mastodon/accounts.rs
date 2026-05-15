@@ -164,7 +164,7 @@ pub async fn lookup_account(
 
 pub async fn get_account(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, id).await?;
     if account.suspended_at.is_some() {
@@ -188,7 +188,7 @@ pub struct StatusesQuery {
 
 pub async fn get_account_statuses(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<StatusesQuery>,
@@ -439,11 +439,11 @@ pub async fn get_relationships(
     auth.require_scope("read:follows")?;
     // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
     // Parse with form_urlencoded which correctly returns each pair separately.
-    let ids: Vec<Uuid> = url::form_urlencoded::parse(
+    let ids: Vec<i64> = url::form_urlencoded::parse(
             qs.as_deref().unwrap_or("").as_bytes()
         )
         .filter(|(k, _)| k == "id[]" || k == "id")
-        .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .filter_map(|(_, v)| v.parse::<i64>().ok())
         .collect();
 
     let mut results = Vec::with_capacity(ids.len());
@@ -464,7 +464,7 @@ pub struct FollowParams {
 
 pub async fn follow_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<FollowParams>>,
 ) -> AppResult<Json<Relationship>> {
@@ -571,7 +571,7 @@ pub async fn follow_account(
 
 pub async fn unfollow_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
@@ -613,7 +613,7 @@ pub struct FollowersQuery {
 
 pub async fn get_account_followers(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
     Query(q): Query<FollowersQuery>,
     viewer: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
@@ -637,7 +637,7 @@ pub async fn get_account_followers(
                JOIN follows f ON f.account_id = a.id
                WHERE f.target_account_id = $1 AND f.state = 'accepted'
                  AND f.id < $2
-                 AND ($4::uuid IS NULL OR NOT EXISTS (
+                 AND ($4::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                         OR (b.account_id = a.id AND b.target_account_id = $4)
@@ -653,7 +653,7 @@ pub async fn get_account_followers(
             r#"SELECT a.* FROM accounts a
                JOIN follows f ON f.account_id = a.id
                WHERE f.target_account_id = $1 AND f.state = 'accepted'
-                 AND ($3::uuid IS NULL OR NOT EXISTS (
+                 AND ($3::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $3 AND b.target_account_id = a.id)
                         OR (b.account_id = a.id AND b.target_account_id = $3)
@@ -672,7 +672,7 @@ pub async fn get_account_followers(
 
 pub async fn get_account_following(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
     Query(q): Query<FollowersQuery>,
     viewer: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
@@ -696,7 +696,7 @@ pub async fn get_account_following(
                JOIN follows f ON f.target_account_id = a.id
                WHERE f.account_id = $1 AND f.state = 'accepted'
                  AND f.id < $2
-                 AND ($4::uuid IS NULL OR NOT EXISTS (
+                 AND ($4::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                         OR (b.account_id = a.id AND b.target_account_id = $4)
@@ -712,7 +712,7 @@ pub async fn get_account_following(
             r#"SELECT a.* FROM accounts a
                JOIN follows f ON f.target_account_id = a.id
                WHERE f.account_id = $1 AND f.state = 'accepted'
-                 AND ($3::uuid IS NULL OR NOT EXISTS (
+                 AND ($3::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $3 AND b.target_account_id = a.id)
                         OR (b.account_id = a.id AND b.target_account_id = $3)
@@ -1103,7 +1103,7 @@ pub struct MuteParams {
 
 pub async fn mute_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<MuteParams>>,
 ) -> AppResult<Json<Relationship>> {
@@ -1132,7 +1132,7 @@ pub async fn mute_account(
 
 pub async fn unmute_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:mutes")?;
@@ -1150,7 +1150,7 @@ pub async fn unmute_account(
 
 pub async fn block_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:blocks")?;
@@ -1194,7 +1194,7 @@ pub async fn block_account(
 
 pub async fn unblock_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:blocks")?;
@@ -1308,7 +1308,7 @@ pub async fn get_follow_requests(
 
 pub async fn authorize_follow_request(
     State(state): State<AppState>,
-    Path(requester_id): Path<Uuid>,
+    Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
@@ -1352,7 +1352,7 @@ pub async fn authorize_follow_request(
 
 pub async fn reject_follow_request(
     State(state): State<AppState>,
-    Path(requester_id): Path<Uuid>,
+    Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
@@ -1368,7 +1368,7 @@ pub async fn reject_follow_request(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-pub async fn fetch_account(state: &AppState, id: Uuid) -> AppResult<Account> {
+pub async fn fetch_account(state: &AppState, id: i64) -> AppResult<Account> {
     sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = $1", id)
         .fetch_optional(&state.db)
         .await?
@@ -1422,7 +1422,7 @@ pub async fn batch_reblog_data(
     .fetch_all(&state.db)
     .await?;
 
-    let reblog_account_ids: Vec<Uuid> = reblog_statuses.iter()
+    let reblog_account_ids: Vec<i64> = reblog_statuses.iter()
         .map(|s| s.account_id)
         .collect::<HashSet<_>>()
         .into_iter()
@@ -1430,13 +1430,13 @@ pub async fn batch_reblog_data(
 
     let reblog_accounts = sqlx::query_as!(
         Account,
-        "SELECT * FROM accounts WHERE id = ANY($1::uuid[])",
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
         &reblog_account_ids,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let reblog_account_map: HashMap<Uuid, Account> = reblog_accounts
+    let reblog_account_map: HashMap<i64, Account> = reblog_accounts
         .into_iter()
         .map(|a| (a.id, a))
         .collect();
@@ -1466,7 +1466,7 @@ pub async fn batch_reblog_data(
 pub async fn fetch_status_poll(
     state: &AppState,
     status_id: i64,
-    viewer_id: Option<Uuid>,
+    viewer_id: Option<i64>,
 ) -> AppResult<Option<super::types::Poll>> {
     let row = sqlx::query!(
         "SELECT id, options, multiple, votes_count, voters_count, expires_at FROM polls WHERE status_id = $1",
@@ -1562,7 +1562,7 @@ pub async fn fetch_reblog_data(
     Ok(Some((reblog, reblog_account, reblog_media)))
 }
 
-async fn build_relationship(state: &AppState, source_id: Uuid, target_id: Uuid) -> AppResult<Relationship> {
+async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) -> AppResult<Relationship> {
     let follow = sqlx::query!(
         "SELECT state, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = $2",
         source_id, target_id
@@ -1709,7 +1709,7 @@ pub async fn get_suggestions(
 pub async fn dismiss_suggestion(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(account_id): Path<Uuid>,
+    Path(account_id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     sqlx::query!(
         r#"INSERT INTO suggestion_dismissals (account_id, target_account_id)
@@ -1883,7 +1883,7 @@ pub struct NoteForm {
 
 pub async fn set_account_note(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<NoteForm>,
 ) -> AppResult<Json<Relationship>> {
@@ -1907,7 +1907,7 @@ pub async fn set_account_note(
 
 pub async fn remove_from_followers(
     State(state): State<AppState>,
-    Path(requester_id): Path<Uuid>,
+    Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     let deleted = sqlx::query!(
@@ -1940,7 +1940,7 @@ pub async fn remove_from_followers(
 
 pub async fn endorse_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     sqlx::query!(
@@ -1956,7 +1956,7 @@ pub async fn endorse_account(
 
 pub async fn unendorse_account(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     sqlx::query!(
@@ -1972,7 +1972,7 @@ pub async fn unendorse_account(
 
 pub async fn get_endorsements(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let accounts = sqlx::query_as!(
         Account,
@@ -1992,7 +1992,7 @@ pub async fn get_endorsements(
 pub async fn get_account_featured_tags(
     State(state): State<AppState>,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<Vec<super::types::FeaturedTag>>> {
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let rows = sqlx::query!(
@@ -2044,11 +2044,11 @@ pub async fn get_familiar_followers(
     RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
     let mut seen = std::collections::HashSet::new();
-    let ids: Vec<Uuid> = url::form_urlencoded::parse(
+    let ids: Vec<i64> = url::form_urlencoded::parse(
             qs.as_deref().unwrap_or("").as_bytes()
         )
         .filter(|(k, _)| k == "id[]" || k == "id")
-        .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .filter_map(|(_, v)| v.parse::<i64>().ok())
         .filter(|id| seen.insert(*id))
         .collect();
 
@@ -2147,11 +2147,11 @@ pub async fn get_accounts_batch(
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
     // Parse with form_urlencoded which correctly returns each pair separately.
-    let ids: Vec<Uuid> = url::form_urlencoded::parse(
+    let ids: Vec<i64> = url::form_urlencoded::parse(
             qs.as_deref().unwrap_or("").as_bytes()
         )
         .filter(|(k, _)| k == "id[]" || k == "id")
-        .filter_map(|(_, v)| v.parse::<Uuid>().ok())
+        .filter_map(|(_, v)| v.parse::<i64>().ok())
         .collect();
 
     if ids.is_empty() {
@@ -2159,7 +2159,7 @@ pub async fn get_accounts_batch(
     }
     let accounts = sqlx::query_as!(
         crate::db::models::Account,
-        "SELECT * FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY created_at DESC",
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[]) ORDER BY created_at DESC",
         &ids,
     )
     .fetch_all(&state.db)
@@ -2171,7 +2171,7 @@ pub async fn get_accounts_batch(
 
 pub async fn get_account_lists(
     State(state): State<AppState>,
-    Path(target_id): Path<Uuid>,
+    Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::List>>> {
     let rows = sqlx::query!(

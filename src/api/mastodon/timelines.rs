@@ -44,7 +44,7 @@ pub async fn public_timeline(
     let local_only = q.local.unwrap_or(false);
     let remote_only = q.remote.unwrap_or(false);
     let only_media = q.only_media.unwrap_or(false);
-    let viewer_id: Option<uuid::Uuid> = auth.as_ref().map(|Extension(a)| a.account_id);
+    let viewer_id: Option<i64> = auth.as_ref().map(|Extension(a)| a.account_id);
 
     // min_id: return oldest items just after min_id (ASC); else DESC
     let statuses = if min_id.is_some() {
@@ -63,14 +63,14 @@ pub async fn public_timeline(
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
-                 AND ($7::uuid IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                 AND ($7::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM user_domain_blocks udb WHERE udb.account_id = $7 AND udb.domain = a.domain
                  ))
                  AND ($3::bigint IS NULL OR s.id > $3)
                  AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-                 AND ($7::uuid IS NULL OR NOT EXISTS (
+                 AND ($7::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $7 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $7)
@@ -103,7 +103,7 @@ pub async fn public_timeline(
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
-                 AND ($8::uuid IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                 AND ($8::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM user_domain_blocks udb WHERE udb.account_id = $8 AND udb.domain = a.domain
                  ))
                  AND ($3::bigint IS NULL OR s.id < $3)
@@ -111,7 +111,7 @@ pub async fn public_timeline(
                  AND (NOT $7::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != '' OR s.content != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-                 AND ($8::uuid IS NULL OR NOT EXISTS (
+                 AND ($8::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $8)
@@ -459,7 +459,7 @@ pub async fn tag_timeline(
                      WHERE st2.status_id = s.id AND lower(t2.name) = ANY($7)
                  ))"#;
 
-    let viewer_id: Option<uuid::Uuid> = auth.as_ref().map(|Extension(a)| a.account_id);
+    let viewer_id: Option<i64> = auth.as_ref().map(|Extension(a)| a.account_id);
 
     let statuses: Vec<DbStatus> = if min_id.is_some() {
         let sql = format!(
@@ -468,7 +468,7 @@ pub async fn tag_timeline(
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
                  AND ($3::bigint IS NULL OR s.id > $3)
-                 AND ($8::uuid IS NULL OR NOT EXISTS (
+                 AND ($8::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $8)
@@ -495,7 +495,7 @@ pub async fn tag_timeline(
                {base_conditions}
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($4::bigint IS NULL OR s.id > $4)
-                 AND ($9::uuid IS NULL OR NOT EXISTS (
+                 AND ($9::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $9 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $9)
@@ -529,7 +529,7 @@ pub async fn tag_timeline(
 /// - filtered_results_json is the value for the `filtered` field on the status
 pub(super) async fn compute_filter_results(
     state: &AppState,
-    viewer_id: uuid::Uuid,
+    viewer_id: i64,
     statuses: &[DbStatus],
     context: &str,
 ) -> std::collections::HashMap<i64, (bool, serde_json::Value)> {
@@ -619,7 +619,7 @@ pub(super) async fn compute_filter_results(
 async fn build_status_list_with_context(
     state: &AppState,
     statuses: Vec<DbStatus>,
-    viewer_id: Option<uuid::Uuid>,
+    viewer_id: Option<i64>,
     filter_context: &str,
 ) -> AppResult<Vec<Status>> {
     let filter_results = if let Some(vid) = viewer_id {
@@ -656,7 +656,7 @@ async fn build_status_list_with_context(
 async fn build_status_list(
     state: &AppState,
     statuses: Vec<DbStatus>,
-    viewer_id: Option<uuid::Uuid>,
+    viewer_id: Option<i64>,
 ) -> AppResult<Vec<Status>> {
     // For reblogs, check viewer context against the original status.
     let effective_ids: Vec<i64> = statuses.iter()
@@ -673,19 +673,19 @@ async fn build_status_list(
         return Ok(vec![]);
     }
 
-    let account_ids: Vec<uuid::Uuid> = statuses.iter()
+    let account_ids: Vec<i64> = statuses.iter()
         .map(|s| s.account_id)
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
     let accounts = sqlx::query_as!(
         Account,
-        "SELECT * FROM accounts WHERE id = ANY($1::uuid[])",
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
         &account_ids,
     )
     .fetch_all(&state.db)
     .await?;
-    let account_map: std::collections::HashMap<uuid::Uuid, Account> = accounts
+    let account_map: std::collections::HashMap<i64, Account> = accounts
         .into_iter()
         .map(|a| (a.id, a))
         .collect();

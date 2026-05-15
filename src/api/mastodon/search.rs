@@ -83,7 +83,7 @@ pub async fn search(
 
     let statuses = if (search_type.is_none() || search_type == Some("statuses")) && auth.is_some() {
         let fts_query = q.q.trim().to_string();
-        let filter_account_id: Option<uuid::Uuid> = q.account_id.as_deref()
+        let filter_account_id: Option<i64> = q.account_id.as_deref()
             .and_then(|s| s.parse().ok());
         let rows = sqlx::query_as!(
             crate::db::models::Status,
@@ -96,8 +96,8 @@ pub async fn search(
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
-                 AND ($4::uuid IS NULL OR s.account_id = $4)
-                 AND ($5::uuid IS NULL OR NOT EXISTS (
+                 AND ($4::bigint IS NULL OR s.account_id = $4)
+                 AND ($5::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $5 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $5)

@@ -1,13 +1,12 @@
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use uuid::Uuid;
 
 use super::helpers::TestContext;
 
 /// Elevate alice to admin role for tests that need admin privileges.
 async fn make_admin(ctx: &TestContext) {
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
     let db_url = std::env::var("DATABASE_URL").unwrap();
     let db = PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
     sqlx::query!(
@@ -628,8 +627,8 @@ async fn test_admin_list_accounts_pending_filter() {
     let ctx = TestContext::new("admin-pending-filter").await;
     make_admin(&ctx).await;
 
-    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
-    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+    let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
+    let bob_uuid: i64 = ctx.bob_id.parse().unwrap();
 
     // Set bob's approved_at to NULL to simulate a pending account.
     let db_url = std::env::var("DATABASE_URL").unwrap();

@@ -35,7 +35,7 @@ pub async fn handler(
     auth: Option<Extension<AuthenticatedUser>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let account_id = auth.map(|a| a.0.account_id);
+    let account_id: Option<i64> = auth.map(|a| a.0.account_id);
 
     // The masto library passes the access token as the WebSocket subprotocol rather
     // than as a query param. Browsers require the server to echo back the requested
@@ -71,7 +71,7 @@ pub async fn handler(
     })
 }
 
-async fn resolve_token(state: &AppState, token: &str) -> Option<Uuid> {
+async fn resolve_token(state: &AppState, token: &str) -> Option<i64> {
     sqlx::query_scalar!(
         r#"SELECT account_id FROM oauth_access_tokens
            WHERE token = $1 AND revoked_at IS NULL
@@ -88,13 +88,13 @@ async fn resolve_token(state: &AppState, token: &str) -> Option<Uuid> {
 async fn run(
     mut socket: WebSocket,
     initial_stream: Option<String>,
-    account_id: Option<Uuid>,
+    account_id: Option<i64>,
     instance_id: Uuid,
     state: AppState,
 ) {
     // Load followed account IDs for any authenticated user so we can filter
     // home-timeline events without a DB query per message.
-    let following: HashSet<Uuid> = if let Some(aid) = account_id {
+    let following: HashSet<i64> = if let Some(aid) = account_id {
         sqlx::query_scalar!(
             "SELECT target_account_id FROM follows
              WHERE account_id = $1 AND state = 'accepted'",
@@ -211,9 +211,9 @@ async fn run(
 /// (favourited, reblogged, bookmarked, etc.) via a DB lookup.
 async fn to_wire_user(
     event: &Event,
-    account_id: Option<Uuid>,
+    account_id: Option<i64>,
     instance_id: Uuid,
-    following: &HashSet<Uuid>,
+    following: &HashSet<i64>,
     db: &sqlx::PgPool,
 ) -> Option<String> {
     match event {
@@ -274,9 +274,9 @@ async fn to_wire_user(
 fn to_wire(
     event: &Event,
     stream: &str,
-    account_id: Option<Uuid>,
+    account_id: Option<i64>,
     instance_id: Uuid,
-    following: &HashSet<Uuid>,
+    following: &HashSet<i64>,
 ) -> Option<String> {
     match event {
         Event::NewStatus {
@@ -352,7 +352,7 @@ fn to_wire(
 async fn to_wire_authenticated(
     event: &Event,
     stream: &str,
-    account_id: Option<Uuid>,
+    account_id: Option<i64>,
     instance_id: Uuid,
     db: &sqlx::PgPool,
 ) -> Option<String> {

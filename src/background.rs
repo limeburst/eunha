@@ -1,5 +1,4 @@
 use std::time::Duration;
-use uuid::Uuid;
 
 use crate::state::AppState;
 
@@ -54,7 +53,7 @@ async fn publish_due_statuses(state: &AppState) -> anyhow::Result<()> {
 async fn publish_one(
     state: &AppState,
     _scheduled_id: i64,
-    account_id: Uuid,
+    account_id: i64,
     params: &Option<serde_json::Value>,
 ) -> anyhow::Result<()> {
     let params = params.as_ref().ok_or_else(|| anyhow::anyhow!("no params"))?;
@@ -216,7 +215,7 @@ async fn notify_expired_polls(state: &AppState) -> anyhow::Result<()> {
 
     for poll in expired {
         // Collect recipients: poll author + all voters
-        let mut recipients: Vec<Uuid> = vec![poll.account_id];
+        let mut recipients: Vec<i64> = vec![poll.account_id];
         let voters = sqlx::query_scalar!(
             "SELECT DISTINCT account_id FROM poll_votes WHERE poll_id = $1",
             poll.id,

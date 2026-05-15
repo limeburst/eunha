@@ -11,7 +11,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use sqlx::postgres::PgPoolOptions;
-use uuid::Uuid;
 use web_push::{
     ContentEncoding, SubscriptionInfo, SubscriptionKeys,
     VapidSignatureBuilder, WebPushMessageBuilder,
@@ -63,7 +62,7 @@ async fn main() -> Result<()> {
         (args.acct.as_str(), None)
     };
 
-    let account_id: Uuid = if let Some(domain) = domain_part {
+    let account_id: i64 = if let Some(domain) = domain_part {
         sqlx::query_scalar!(
             r#"SELECT a.id FROM accounts a
                JOIN instances i ON i.id = a.instance_id
