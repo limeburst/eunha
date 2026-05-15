@@ -734,7 +734,15 @@ pub async fn reblog_status(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
-    let (original, _) = fetch_status_with_account(&state, id).await?;
+    let (fetched, _) = fetch_status_with_account(&state, id).await?;
+    // If this is itself a reblog, boost the original instead
+    let original_id = fetched.reblog_of_id.unwrap_or(id);
+    let original = if original_id != id {
+        let (o, _) = fetch_status_with_account(&state, original_id).await?;
+        o
+    } else {
+        fetched
+    };
     // visibility check: 404 if not visible, 403 if visible but not rebloggable
     check_status_visible(&state, &original, auth.account_id).await?;
     if original.visibility == "private" || original.visibility == "direct" {
@@ -742,6 +750,22 @@ pub async fn reblog_status(
     }
 
     let boost_account = fetch_account(&state, auth.account_id).await?;
+
+    // Idempotent: if already reblogged, return the existing boost
+    let existing = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
+        auth.account_id, original_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some(boost) = existing {
+        let ctx = build_viewer_context(&state, auth.account_id, original_id).await?;
+        let media = fetch_status_media(&state, boost.id).await?;
+        let reblog = fetch_reblog_data(&state, &boost).await?;
+        return Ok(Json(build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?));
+    }
+
     let boost = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses (instance_id, account_id, text, content, visibility, reblog_of_id)
@@ -750,14 +774,14 @@ pub async fn reblog_status(
         instance.id,
         auth.account_id,
         original.visibility,
-        id,
+        original_id,
     )
     .fetch_one(&state.db)
     .await?;
 
     sqlx::query!(
         "UPDATE statuses SET reblogs_count = reblogs_count + 1 WHERE id = $1",
-        id
+        original_id
     )
     .execute(&state.db)
     .await?;
@@ -768,7 +792,7 @@ pub async fn reblog_status(
         original.account_id,
         auth.account_id,
         "reblog",
-        Some(id),
+        Some(original_id),
         format!("{} boosted your post", boost_account.display_name),
         boost_account.acct().clone(),
         boost_account.avatar.clone().unwrap_or_default(),
@@ -776,7 +800,7 @@ pub async fn reblog_status(
 
     // Build viewer context against the ORIGINAL so the nested reblog object
     // carries correct favourited/bookmarked/reblogged flags for the iOS client.
-    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, original_id).await?;
     let media = fetch_status_media(&state, boost.id).await?;
     let reblog = fetch_reblog_data(&state, &boost).await?;
     let api_boost = build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?;

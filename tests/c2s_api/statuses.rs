@@ -487,6 +487,58 @@ async fn test_reblog_response_shape() {
     assert_eq!(resp["reblog"]["reblogs_count"].as_i64(), Some(1));
 }
 
+/// Reblogging the same status twice is idempotent — count stays at 1.
+#[tokio::test]
+async fn test_reblog_idempotent() {
+    let ctx = TestContext::new("reblog-idem").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "idempotent reblog", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    // First boost
+    ctx.api.post_json(&format!("/api/v1/statuses/{id}/reblog"), Some(&ctx.bob_token), &json!({})).await;
+    // Second boost of same status
+    ctx.api.post_json(&format!("/api/v1/statuses/{id}/reblog"), Some(&ctx.bob_token), &json!({})).await;
+
+    let updated: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert_eq!(
+        updated["reblogs_count"].as_i64(),
+        Some(1),
+        "double-reblog should not increment reblogs_count twice",
+    );
+}
+
+/// Reblogging a reblog boosts the original status.
+#[tokio::test]
+async fn test_reblog_of_reblog_boosts_original() {
+    let ctx = TestContext::new("reblog-chain").await;
+
+    // Alice posts; Bob boosts it
+    let original = ctx.api.post_status(&ctx.alice_token, "original post", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let bob_boost: Value = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    let bob_boost_id = bob_boost["id"].as_str().unwrap();
+
+    // Alice then boosts Bob's boost — should be boosting the original
+    let alice_boost: Value = ctx.api.post_json(
+        &format!("/api/v1/statuses/{bob_boost_id}/reblog"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+
+    assert_eq!(
+        alice_boost["reblog"]["id"].as_str(),
+        Some(original_id),
+        "boosting a boost should produce a boost of the original",
+    );
+}
+
 /// Unreblog response is the original status at the top level with reblogged=false.
 #[tokio::test]
 async fn test_unreblog_response_shape() {
