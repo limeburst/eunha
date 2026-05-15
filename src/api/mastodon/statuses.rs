@@ -1366,6 +1366,9 @@ pub async fn edit_status(
     if status.account_id != auth.account_id {
         return Err(AppError::Forbidden);
     }
+    if status.reblog_of_id.is_some() {
+        return Err(AppError::Unprocessable("Reblogs cannot be edited".into()));
+    }
 
     // Save current version to edits before updating
     sqlx::query!(

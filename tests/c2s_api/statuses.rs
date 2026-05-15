@@ -775,6 +775,29 @@ async fn test_status_context_ancestors_and_descendants() {
 
 // ── status edit & history ────────────────────────────────────────────────────
 
+/// Editing a reblog returns 422 Unprocessable Entity.
+#[tokio::test]
+async fn test_edit_reblog_returns_422() {
+    let ctx = TestContext::new("edit-reblog-422").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "original to boost", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let rb_resp: Value = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    let reblog_id = rb_resp["id"].as_str().unwrap();
+
+    let edit_resp = ctx.api.put_json(
+        &format!("/api/v1/statuses/{reblog_id}"),
+        Some(&ctx.bob_token),
+        &json!({"status": "edited reblog", "visibility": "public"}),
+    ).await;
+    assert_eq!(edit_resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 /// Editing a status changes its content.
 #[tokio::test]
 async fn test_edit_status_changes_content() {
