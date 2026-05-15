@@ -733,12 +733,9 @@ async fn migrate_media(
         let remote_url: Option<String> = row.try_get("remote_url").ok().flatten();
         let meta: Option<serde_json::Value> = row.try_get("file_meta").ok().flatten();
         let created_at = get_ts(&row, "created_at")?;
-        let file_file_name: Option<String> = row.try_get("file_file_name").ok().flatten();
-        let mastodon_file_name = file_file_name.filter(|s| !s.is_empty());
-
         sqlx::query(
-            r#"INSERT INTO media_attachments (id, account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at, mastodon_file_name)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            r#"INSERT INTO media_attachments (id, account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                ON CONFLICT DO NOTHING"#,
         )
         .bind(src_id)
@@ -750,7 +747,6 @@ async fn migrate_media(
         .bind(&blurhash)
         .bind(&meta)
         .bind(created_at)
-        .bind(&mastodon_file_name)
         .execute(&mut *dst)
         .await?;
     }
