@@ -1849,6 +1849,51 @@ async fn test_post_status_empty_returns_422() {
     );
 }
 
+/// replies_count increments when someone replies and decrements when the reply is deleted.
+#[tokio::test]
+async fn test_replies_count_increments_and_decrements() {
+    let ctx = TestContext::new("replies-count").await;
+
+    let parent = ctx.api.post_status(&ctx.alice_token, "parent post", "public").await;
+    let parent_id = parent["id"].as_str().unwrap();
+    let count_before = parent["replies_count"].as_i64().unwrap_or(0);
+
+    // Bob replies to Alice's status.
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({
+            "status": "replying here",
+            "visibility": "public",
+            "in_reply_to_id": parent_id
+        }),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let after_reply: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{parent_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        after_reply["replies_count"].as_i64().unwrap_or(0),
+        count_before + 1,
+        "replies_count should increment after a reply",
+    );
+
+    // Delete the reply.
+    ctx.api.delete(&format!("/api/v1/statuses/{reply_id}"), &ctx.bob_token).await;
+
+    let after_delete: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{parent_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        after_delete["replies_count"].as_i64().unwrap_or(0),
+        count_before,
+        "replies_count should decrement after deleting the reply",
+    );
+}
+
 /// Status exceeding 500 characters returns 422.
 #[tokio::test]
 async fn test_post_status_over_char_limit_returns_422() {

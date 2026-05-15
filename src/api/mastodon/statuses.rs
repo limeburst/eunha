@@ -244,6 +244,16 @@ pub async fn post_status(
     .execute(&state.db)
     .await?;
 
+    // Increment parent's replies_count if this is a reply
+    if let Some(parent_id) = in_reply_to_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1",
+            parent_id
+        )
+        .execute(&state.db)
+        .await;
+    }
+
     // Attach media
     if let Some(media_ids) = &form.media_ids {
         for id_str in media_ids {
@@ -582,6 +592,16 @@ pub async fn delete_status(
     )
     .execute(&state.db)
     .await?;
+
+    // Decrement parent's replies_count if this was a reply
+    if let Some(parent_id) = status.in_reply_to_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",
+            parent_id
+        )
+        .execute(&state.db)
+        .await;
+    }
 
     // Recalculate featured_tags counts now that this status is soft-deleted
     sqlx::query!(
