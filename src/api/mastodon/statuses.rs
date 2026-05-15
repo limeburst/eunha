@@ -492,6 +492,23 @@ pub async fn get_statuses_batch(
         let Ok((status, account)) = fetch_status_with_account(&state, id).await else {
             continue;
         };
+        // Skip statuses from/to blocked accounts
+        if let Some(vid) = viewer_id {
+            if vid != status.account_id {
+                let blocked = sqlx::query_scalar!(
+                    r#"SELECT 1 FROM blocks
+                       WHERE (account_id = $1 AND target_account_id = $2)
+                          OR (account_id = $2 AND target_account_id = $1)"#,
+                    vid, status.account_id,
+                )
+                .fetch_optional(&state.db)
+                .await?
+                .is_some();
+                if blocked {
+                    continue;
+                }
+            }
+        }
         match status.visibility.as_str() {
             "private" => {
                 let is_author = viewer_id == Some(status.account_id);

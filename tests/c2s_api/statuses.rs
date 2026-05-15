@@ -1764,6 +1764,32 @@ async fn test_batch_get_statuses() {
     assert!(ids.contains(&id2), "s2 missing from batch result");
 }
 
+/// GET /api/v1/statuses?id[]=... skips statuses from blocked accounts.
+#[tokio::test]
+async fn test_batch_get_statuses_skips_blocked() {
+    let ctx = TestContext::new("batch-blocked").await;
+
+    let blocked_status = ctx.api.post_status(&ctx.bob_token, "blocked batch status", "public").await;
+    let blocked_id = blocked_status["id"].as_str().unwrap();
+    let own_status = ctx.api.post_status(&ctx.alice_token, "own batch status", "public").await;
+    let own_id = own_status["id"].as_str().unwrap();
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses?id[]={blocked_id}&id[]={own_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(!ids.contains(&blocked_id), "blocked account's status should be skipped in batch");
+    assert!(ids.contains(&own_id), "own status should still appear in batch result");
+}
+
 /// GET /api/v1/statuses?id[]=... skips private statuses not visible to viewer.
 #[tokio::test]
 async fn test_batch_get_statuses_skips_invisible() {
