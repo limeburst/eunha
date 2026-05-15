@@ -1170,6 +1170,9 @@ pub async fn pin_status(
     if status.account_id != auth.account_id {
         return Err(AppError::Unprocessable("Validation failed: You can only pin your own statuses".into()));
     }
+    if status.reblog_of_id.is_some() {
+        return Err(AppError::Unprocessable("Validation failed: Reblogs cannot be pinned".into()));
+    }
     let pin_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM status_pins WHERE account_id = $1",
         auth.account_id

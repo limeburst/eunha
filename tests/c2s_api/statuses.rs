@@ -2105,6 +2105,29 @@ async fn test_status_filtered_field_is_array() {
     );
 }
 
+/// Pinning a reblog returns 422.
+#[tokio::test]
+async fn test_pin_reblog_returns_422() {
+    let ctx = TestContext::new("pin-reblog-422").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "original to boost and pin", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let rb: Value = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    let reblog_id = rb["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{reblog_id}/pin"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "pinning a reblog should return 422");
+}
+
 /// Pinning more than 5 statuses returns 422.
 #[tokio::test]
 async fn test_pin_limit_is_five() {
