@@ -55,7 +55,7 @@ pub async fn verify_credentials(
         sensitive: default_sensitive,
         language: default_language,
         note: account.note_text.clone(),
-        fields: vec![],
+        fields: super::convert::fields_from_db(&account.fields),
         follow_requests_count: follow_requests,
         discoverable: Some(account.discoverable),
         indexable: account.indexable,

@@ -933,6 +933,49 @@ async fn test_update_credentials_source_language() {
     assert_eq!(creds["source"]["language"].as_str(), Some("fr"));
 }
 
+/// Profile fields set via update_credentials appear in verify_credentials source and account fields.
+#[tokio::test]
+async fn test_update_credentials_profile_fields() {
+    let ctx = TestContext::new("profile-fields").await;
+
+    let form = reqwest::multipart::Form::new()
+        .text("fields_attributes[0][name]", "Website")
+        .text("fields_attributes[0][value]", "https://example.com")
+        .text("fields_attributes[1][name]", "Location")
+        .text("fields_attributes[1][value]", "Rustland");
+
+    let resp = ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated: Value = resp.json().await.unwrap();
+
+    // The account fields array should have both entries.
+    let fields = updated["fields"].as_array().expect("fields should be array");
+    assert!(
+        fields.iter().any(|f| f["name"].as_str() == Some("Website")),
+        "Website field missing from fields: {fields:?}",
+    );
+    assert!(
+        fields.iter().any(|f| f["name"].as_str() == Some("Location")),
+        "Location field missing from fields: {fields:?}",
+    );
+
+    // source.fields should also reflect the values.
+    let creds: Value = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let src_fields = creds["source"]["fields"].as_array().expect("source.fields should be array");
+    assert!(
+        src_fields.iter().any(|f| f["name"].as_str() == Some("Website")),
+        "Website field missing from source.fields: {src_fields:?}",
+    );
+}
+
 // ── familiar followers ────────────────────────────────────────────────────────
 
 /// GET /api/v1/accounts/familiar_followers returns an array of familiar-followers objects.
