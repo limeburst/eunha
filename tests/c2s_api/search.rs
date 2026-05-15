@@ -1,5 +1,5 @@
 use reqwest::StatusCode;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::helpers::TestContext;
 
@@ -119,6 +119,45 @@ async fn test_search_hashtags() {
     assert!(
         hashtags.iter().any(|t| t["name"].as_str() == Some("searchhash999")),
         "hashtag not found in search results",
+    );
+}
+
+/// Search does not return statuses from accounts blocked by or blocking the viewer.
+#[tokio::test]
+async fn test_search_excludes_blocked_accounts() {
+    let ctx = TestContext::new("search-block").await;
+
+    // Bob posts a searchable status.
+    ctx.api.post_status(&ctx.bob_token, "blocksearchterm42 hello", "public").await;
+
+    // Verify it appears before the block.
+    let before: Value = ctx.api.get(
+        "/api/v2/search?q=blocksearchterm42&type=statuses",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        before["statuses"].as_array().unwrap().iter().any(|s| {
+            s["account"]["id"].as_str() == Some(ctx.bob_id.as_str())
+        }),
+        "bob's status should appear in search before block",
+    );
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let after: Value = ctx.api.get(
+        "/api/v2/search?q=blocksearchterm42&type=statuses",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        after["statuses"].as_array().unwrap().iter().all(|s| {
+            s["account"]["id"].as_str() != Some(ctx.bob_id.as_str())
+        }),
+        "blocked account's statuses should not appear in search results",
     );
 }
 
