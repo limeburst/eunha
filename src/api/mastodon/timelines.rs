@@ -182,6 +182,11 @@ pub async fn home_timeline(
                    WHERE m.account_id = $1 AND m.target_account_id = s.account_id
                    AND (m.expires_at IS NULL OR m.expires_at > now())
                )
+               AND (s.account_id = $1 OR NOT EXISTS (
+                   SELECT 1 FROM blocks b
+                   WHERE (b.account_id = $1 AND b.target_account_id = s.account_id)
+                      OR (b.account_id = s.account_id AND b.target_account_id = $1)
+               ))
                AND NOT (
                    s.reblog_of_id IS NOT NULL
                    AND EXISTS (
@@ -246,6 +251,11 @@ pub async fn home_timeline(
                    WHERE m.account_id = $1 AND m.target_account_id = s.account_id
                    AND (m.expires_at IS NULL OR m.expires_at > now())
                )
+               AND (s.account_id = $1 OR NOT EXISTS (
+                   SELECT 1 FROM blocks b
+                   WHERE (b.account_id = $1 AND b.target_account_id = s.account_id)
+                      OR (b.account_id = s.account_id AND b.target_account_id = $1)
+               ))
                AND NOT (
                    s.reblog_of_id IS NOT NULL
                    AND EXISTS (

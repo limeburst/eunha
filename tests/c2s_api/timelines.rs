@@ -705,6 +705,39 @@ async fn test_home_timeline_includes_addressed_dms() {
     );
 }
 
+/// Home timeline excludes statuses from blocked accounts (even via hashtag follows).
+#[tokio::test]
+async fn test_home_timeline_hides_blocked_accounts() {
+    let ctx = TestContext::new("home-tl-blocked").await;
+
+    // Alice follows Bob, and also follows #blocktest tag.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.post_json("/api/v1/tags/blocktest/follow", Some(&ctx.alice_token), &json!({})).await;
+
+    // Bob posts a public status with the followed tag.
+    let status = ctx.api.post_status(&ctx.bob_token, "blocking test #blocktest", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Verify the status appears before the block.
+    let before: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(before.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "status should appear in home timeline before block");
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob's status should no longer appear in Alice's home timeline.
+    let after: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!after.iter().any(|s| s["account"]["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "blocked account's status should be hidden from home timeline");
+}
+
 /// A "warn" filter in home context keeps the status but populates the filtered field.
 #[tokio::test]
 async fn test_home_timeline_warn_filter_annotates_status() {
