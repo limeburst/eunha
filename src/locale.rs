@@ -53,6 +53,10 @@ impl Locale {
             (Self::Ko, "sign_in")            => "로그인",
             (Self::En, "invalid_credentials") => "Invalid email or password.",
             (Self::Ko, "invalid_credentials") => "이메일 또는 비밀번호가 올바르지 않습니다.",
+            (Self::En, "no_account")         => "Don't have an account?",
+            (Self::Ko, "no_account")         => "계정이 없으신가요?",
+            (Self::En, "sign_up")            => "Sign up",
+            (Self::Ko, "sign_up")            => "가입하기",
             // ── signup page ──────────────────────────────────────────────────
             (Self::En, "create_account")     => "Create account",
             (Self::Ko, "create_account")     => "계정 만들기",

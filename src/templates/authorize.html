@@ -20,6 +20,9 @@ button:hover{background:#fff}
 .lang a{color:#555;text-decoration:none}
 .lang a:hover{color:#aaa}
 .lang-active{color:#aaa!important}
+.signup{margin-top:1rem;text-align:center;font-size:.8rem;color:#888}
+.signup a{color:#e8e8e8;text-decoration:none;display:inline-block;margin-top:.5rem;width:100%;padding:.6rem;border:1px solid #444;border-radius:4px}
+.signup a:hover{border-color:#888;color:#fff}
 </style>
 </head>
 <body>
@@ -43,6 +46,12 @@ button:hover{background:#fff}
     <input type="password" id="password" name="password" required autocomplete="current-password">
     <button type="submit">{{ t_sign_in }}</button>
   </form>
+  {% if registrations_open %}
+  <div class="signup">
+    {{ t_no_account }}
+    <a href="{{ signup_url }}">{{ t_sign_up }}</a>
+  </div>
+  {% endif %}
 </div>
 </body>
 </html>

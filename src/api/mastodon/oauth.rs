@@ -515,6 +515,7 @@ pub async fn authorize_form(
     let (toggle_en_url, toggle_ko_url) = authorize_toggle_urls(
         &params.client_id, &params.redirect_uri, scope,
     );
+    let signup_url = format!("/auth/signup?lang={}", locale.as_str());
     let html = crate::templates::render("authorize.html", minijinja::context! {
         domain => instance.domain,
         app_name => app.name,
@@ -525,11 +526,15 @@ pub async fn authorize_form(
         lang => locale.as_str(),
         toggle_en_url => toggle_en_url,
         toggle_ko_url => toggle_ko_url,
+        registrations_open => instance.registrations_open,
+        signup_url => signup_url,
         t_sign_in_to => locale.t("sign_in_to"),
         t_authorize => locale.t("authorize"),
         t_email => locale.t("email"),
         t_password => locale.t("password"),
         t_sign_in => locale.t("sign_in"),
+        t_no_account => locale.t("no_account"),
+        t_sign_up => locale.t("sign_up"),
     });
     Html(html).into_response()}
 
@@ -580,6 +585,7 @@ pub async fn authorize_submit(
             let (toggle_en_url, toggle_ko_url) = authorize_toggle_urls(
                 &form.client_id, &form.redirect_uri, scope,
             );
+            let signup_url = format!("/auth/signup?lang={}", locale.as_str());
             let html = crate::templates::render("authorize.html", minijinja::context! {
                 domain => instance.domain,
                 app_name => app_name,
@@ -590,11 +596,15 @@ pub async fn authorize_submit(
                 lang => locale.as_str(),
                 toggle_en_url => toggle_en_url,
                 toggle_ko_url => toggle_ko_url,
+                registrations_open => instance.registrations_open,
+                signup_url => signup_url,
                 t_sign_in_to => locale.t("sign_in_to"),
                 t_authorize => locale.t("authorize"),
                 t_email => locale.t("email"),
                 t_password => locale.t("password"),
                 t_sign_in => locale.t("sign_in"),
+                t_no_account => locale.t("no_account"),
+                t_sign_up => locale.t("sign_up"),
             });
             Html(html).into_response()
         }
