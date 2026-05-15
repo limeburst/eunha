@@ -140,38 +140,35 @@ pub async fn api_create_account(
             return Err(AppError::Unprocessable("Email is already taken".into()));
         }
         // Unconfirmed → resend and return a fresh profile token
-        if let Some(ref resend) = state.config.resend {
-            let tok = row.confirmation_token.clone().unwrap();
-            let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-            let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
-            let http = state.http.clone();
-            let api_key = resend.api_key.clone();
-            let from = resend.from.clone();
-            let to_addr = row.email.clone();
-            let uname = username.clone();
-            let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
-            tokio::spawn(async move {
-                if let Err(e) = crate::email::send_confirmation(
-                    &http, &api_key, &from, &to_addr, &uname, "", &confirm_url, &locale_str,
-                ).await {
-                    tracing::error!(error = %e, "failed to resend confirmation email");
-                }
-            });
-            let app_id = extract_app_from_bearer(&state, &req_headers).await;
-            let token_str = api_generate_token();
-            sqlx::query!(
-                r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
-                   VALUES ($1, $2, $3, 'profile')"#,
-                app_id, row.account_id, token_str,
-            ).execute(&state.db).await?;
-            return Ok(Json(super::types::Token {
-                access_token: token_str,
-                token_type: "Bearer".to_string(),
-                scope: "profile".to_string(),
-                created_at: chrono::Utc::now().timestamp(),
-            }));
-        }
-        return Err(AppError::Unprocessable("Email is already taken".into()));
+        let tok = row.confirmation_token.clone().unwrap();
+        let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+        let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
+        let http = state.http.clone();
+        let api_key = state.config.resend.api_key.clone();
+        let from = state.config.resend.from.clone();
+        let to_addr = row.email.clone();
+        let uname = username.clone();
+        let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
+        tokio::spawn(async move {
+            if let Err(e) = crate::email::send_confirmation(
+                &http, &api_key, &from, &to_addr, &uname, "", &confirm_url, &locale_str,
+            ).await {
+                tracing::error!(error = %e, "failed to resend confirmation email");
+            }
+        });
+        let app_id = extract_app_from_bearer(&state, &req_headers).await;
+        let token_str = api_generate_token();
+        sqlx::query!(
+            r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
+               VALUES ($1, $2, $3, 'profile')"#,
+            app_id, row.account_id, token_str,
+        ).execute(&state.db).await?;
+        return Ok(Json(super::types::Token {
+            access_token: token_str,
+            token_type: "Bearer".to_string(),
+            scope: "profile".to_string(),
+            created_at: chrono::Utc::now().timestamp(),
+        }));
     }
 
     let (private_key, public_key) = crypto::generate_rsa_keypair()
@@ -203,18 +200,15 @@ pub async fn api_create_account(
     let api_needs_approval = instance.approval_required && invite_id.is_none();
     let api_reason = form.reason.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
 
-    let (confirmation_token, scopes) = if state.config.resend.is_some() {
-        (Some(api_generate_token()), "profile")
-    } else {
-        (None, "read write follow push")
-    };
+    let confirmation_token = api_generate_token();
+    let scopes = "profile";
 
     sqlx::query!(
         r#"INSERT INTO users
              (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, invite_id,
               approved_at, reason, confirmation_token)
            VALUES ($1,$2,$3,$4,$5,
-                   CASE WHEN $9::TEXT IS NULL THEN now() ELSE NULL END,
+                   NULL,
                    $6,
                    CASE WHEN $7 THEN NULL ELSE now() END,
                    $8, $9)"#,
@@ -229,7 +223,6 @@ pub async fn api_create_account(
     }
 
     let app_id = extract_app_from_bearer(&state, &req_headers).await;
-
     let token_str = api_generate_token();
     sqlx::query!(
         r#"INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes)
@@ -237,21 +230,19 @@ pub async fn api_create_account(
         app_id, account_id, token_str, scopes,
     ).execute(&state.db).await?;
 
-    if let (Some(ref tok), Some(ref resend)) = (&confirmation_token, &state.config.resend) {
-        let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-        let confirm_url = format!("https://{}/auth/confirm?token={}", domain, tok);
-        let http = state.http.clone();
-        let api_key = resend.api_key.clone();
-        let from = resend.from.clone();
-        let to = email.clone();
-        let uname = username.clone();
-        let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
-        tokio::spawn(async move {
-            if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, "", &confirm_url, &locale_str).await {
-                tracing::error!(error = %e, "failed to send confirmation email");
-            }
-        });
-    }
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let confirm_url = format!("https://{}/auth/confirm?token={}", domain, confirmation_token);
+    let http = state.http.clone();
+    let api_key = state.config.resend.api_key.clone();
+    let from = state.config.resend.from.clone();
+    let to = email.clone();
+    let uname = username.clone();
+    let locale_str = form.locale.clone().unwrap_or_else(|| "en".into());
+    tokio::spawn(async move {
+        if let Err(e) = crate::email::send_confirmation(&http, &api_key, &from, &to, &uname, "", &confirm_url, &locale_str).await {
+            tracing::error!(error = %e, "failed to send confirmation email");
+        }
+    });
 
     Ok(Json(super::types::Token {
         access_token: token_str,
@@ -386,22 +377,20 @@ pub async fn request_password_reset(
     .execute(&state.db)
     .await;
 
-    if let Some(ref resend) = state.config.resend {
-        let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-        let reset_url = format!("https://{}/auth/password/reset?token={}", domain, token);
-        let http = state.http.clone();
-        let api_key = resend.api_key.clone();
-        let from = resend.from.clone();
-        let to = row.email.clone();
-        let name = row.username.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::email::send_password_reset(
-                &http, &api_key, &from, &to, &name, &reset_url, "en",
-            ).await {
-                tracing::error!(error = %e, "failed to send password reset email");
-            }
-        });
-    }
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let reset_url = format!("https://{}/auth/password/reset?token={}", domain, token);
+    let http = state.http.clone();
+    let api_key = state.config.resend.api_key.clone();
+    let from = state.config.resend.from.clone();
+    let to = row.email.clone();
+    let name = row.username.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::email::send_password_reset(
+            &http, &api_key, &from, &to, &name, &reset_url, "en",
+        ).await {
+            tracing::error!(error = %e, "failed to send password reset email");
+        }
+    });
 
     StatusCode::OK.into_response()
 }

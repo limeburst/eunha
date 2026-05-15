@@ -102,26 +102,24 @@ pub async fn signup(
         .await?
     };
 
-    if let Some(ref resend) = state.config.resend {
-        let confirm_url = format!(
-            "https://{}/confirm-account?token={}&request_token={}",
-            state.config.console_domain, confirmation_token, request_token
-        );
-        let http = state.http.clone();
-        let api_key = resend.api_key.clone();
-        let from = resend.from.clone();
-        let to = user.email.clone();
-        let code = confirmation_token.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::email::send_confirmation(
-                &http, &api_key, &from, &to, &to, &code, &confirm_url, &locale_str,
-            )
-            .await
-            {
-                tracing::error!(error = %e, "failed to send console confirmation email");
-            }
-        });
-    }
+    let confirm_url = format!(
+        "https://{}/confirm-account?token={}&request_token={}",
+        state.config.console_domain, confirmation_token, request_token
+    );
+    let http = state.http.clone();
+    let api_key = state.config.resend.api_key.clone();
+    let from = state.config.resend.from.clone();
+    let to = user.email.clone();
+    let code = confirmation_token.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::email::send_confirmation(
+            &http, &api_key, &from, &to, &to, &code, &confirm_url, &locale_str,
+        )
+        .await
+        {
+            tracing::error!(error = %e, "failed to send console confirmation email");
+        }
+    });
 
     Ok(Json(SignupResponse { needs_confirmation: true, request_token: user.request_token }))
 }
