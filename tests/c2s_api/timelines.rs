@@ -654,3 +654,53 @@ async fn test_home_timeline_hide_filter_excludes_matching_status() {
         "clean status should still appear in home timeline",
     );
 }
+
+/// A direct (DM) status from a followed account should NOT appear in the home
+/// timeline unless the viewer is mentioned in it.
+#[tokio::test]
+async fn test_home_timeline_excludes_unaddressed_dms() {
+    let ctx = TestContext::new("home-dm-filter").await;
+
+    // Alice follows Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Bob sends a DM to himself (Alice is NOT mentioned).
+    let dm = ctx.api.post_status(&ctx.bob_token, "private thought", "direct").await;
+    let dm_id = dm["id"].as_str().unwrap();
+
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let ids: Vec<&str> = home.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(
+        !ids.contains(&dm_id),
+        "DM not addressed to viewer should not appear in home timeline",
+    );
+}
+
+/// A direct (DM) status mentioning the viewer should appear in their home timeline.
+#[tokio::test]
+async fn test_home_timeline_includes_addressed_dms() {
+    let ctx = TestContext::new("home-dm-mention").await;
+
+    // Alice follows Bob.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    // Bob DMs Alice (mentions her).
+    let dm = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({
+            "status": "@alice hello",
+            "visibility": "direct",
+        }),
+    ).await.json::<Value>().await.unwrap();
+    let dm_id = dm["id"].as_str().unwrap();
+
+    let home: Vec<Value> = ctx.api.get("/api/v1/timelines/home", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let ids: Vec<&str> = home.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(
+        ids.contains(&dm_id),
+        "DM addressed to viewer should appear in home timeline",
+    );
+}

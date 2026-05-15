@@ -189,6 +189,14 @@ pub async fn home_timeline(
                    JOIN lists l ON l.id = la.list_id
                    WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
                ))
+               AND (
+                   s.visibility != 'direct'
+                   OR s.account_id = $1
+                   OR EXISTS (
+                       SELECT 1 FROM mentions m
+                       WHERE m.status_id = s.id AND m.account_id = $1
+                   )
+               )
                AND ($2::bigint IS NULL OR s.id > $2)
                AND (s.text != '' OR s.content != ''
                     OR s.reblog_of_id IS NOT NULL
@@ -245,6 +253,14 @@ pub async fn home_timeline(
                    JOIN lists l ON l.id = la.list_id
                    WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
                ))
+               AND (
+                   s.visibility != 'direct'
+                   OR s.account_id = $1
+                   OR EXISTS (
+                       SELECT 1 FROM mentions m
+                       WHERE m.status_id = s.id AND m.account_id = $1
+                   )
+               )
                AND ($2::bigint IS NULL OR s.id < $2)
                AND ($3::bigint IS NULL OR s.id > $3)
                AND (s.text != '' OR s.content != ''
