@@ -595,3 +595,64 @@ async fn test_admin_reject_account() {
     let acc: Value = get_resp.json().await.unwrap();
     assert_eq!(acc["suspended"].as_bool(), Some(true), "bob should be suspended after reject");
 }
+
+/// admin/accounts?status=active returns approved, non-suspended accounts.
+#[tokio::test]
+async fn test_admin_list_accounts_active_includes_approved_users() {
+    let ctx = TestContext::new("admin-active-filter").await;
+    make_admin(&ctx).await;
+
+    let active: Vec<Value> = ctx.api.get(
+        "/api/v1/admin/accounts?status=active",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    // Alice is an approved, non-suspended user: she should appear in status=active.
+    assert!(
+        active.iter().any(|a| a["id"].as_str() == Some(ctx.alice_id.as_str())),
+        "alice (approved, not suspended) should appear in status=active",
+    );
+    // Suspended or silenced accounts must not appear.
+    for a in &active {
+        assert_eq!(
+            a["suspended"].as_bool(),
+            Some(false),
+            "suspended account appeared in status=active: {a}",
+        );
+    }
+}
+
+/// admin/accounts?status=pending returns only unapproved accounts.
+#[tokio::test]
+async fn test_admin_list_accounts_pending_filter() {
+    let ctx = TestContext::new("admin-pending-filter").await;
+    make_admin(&ctx).await;
+
+    let alice_uuid: Uuid = ctx.alice_id.parse().unwrap();
+    let bob_uuid: Uuid = ctx.bob_id.parse().unwrap();
+
+    // Set bob's approved_at to NULL to simulate a pending account.
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+    let db = sqlx::postgres::PgPoolOptions::new().max_connections(2).connect(&db_url).await.unwrap();
+    sqlx::query!("UPDATE users SET approved_at = NULL WHERE account_id = $1", bob_uuid)
+        .execute(&db)
+        .await
+        .unwrap();
+
+    let pending: Vec<Value> = ctx.api.get(
+        "/api/v1/admin/accounts?status=pending",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    // Bob should appear in pending.
+    assert!(
+        pending.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "bob (approved_at=NULL) should appear in status=pending: {pending:?}",
+    );
+    // Alice (approved) should NOT appear in pending.
+    assert!(
+        !pending.iter().any(|a| a["id"].as_str() == Some(ctx.alice_id.as_str())),
+        "alice (approved) should not appear in status=pending",
+    );
+    let _ = alice_uuid; // suppress unused warning
+}

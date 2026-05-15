@@ -358,8 +358,8 @@ pub async fn seed_account_and_token(
     let password_hash = hash_password("testpassword123");
     sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at)
-           VALUES ($1,$2,$3,$4,$5,now())"#,
+             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, approved_at)
+           VALUES ($1,$2,$3,$4,$5,now(),now())"#,
         account_id,
         instance_id,
         email,
