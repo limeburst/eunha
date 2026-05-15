@@ -2,9 +2,10 @@
 set -e
 
 export PATH="$HOME/.orbstack/bin:$PATH"
+export DATABASE_URL=postgres://limeburst@localhost/eunha
 
 git pull
 git submodule sync
 git submodule update --init
-DATABASE_URL=postgres://limeburst@localhost/eunha sqlx migrate run
+sqlx migrate run
 docker compose up -d --build
