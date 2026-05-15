@@ -69,12 +69,14 @@ pub async fn upload_media(
         (None, None, None)
     };
 
+    let media_id = crate::snowflake::next_id();
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
         r#"INSERT INTO media_attachments
-             (account_id, media_type, file_key, file_url, preview_key, preview_url, description, meta, blurhash)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             (id, account_id, media_type, file_key, file_url, preview_key, preview_url, description, meta, blurhash)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING *"#,
+        media_id,
         auth.account_id,
         media_type,
         keys.original,

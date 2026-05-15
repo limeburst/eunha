@@ -189,13 +189,17 @@ pub async fn post_status(
     let mention_map = build_mention_map(&resolved);
     let content = render_content(&text, &instance.domain, &mention_map);
 
+    let status_id = crate::snowflake::next_id();
+    let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status_id);
+
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
-             (instance_id, account_id, application_id, text, content, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, in_reply_to_account_id, idempotency_key)
-           VALUES ($1,$2,$12,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             (id, instance_id, account_id, application_id, text, content, spoiler_text, visibility,
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, idempotency_key, uri, url)
+           VALUES ($1,$2,$3,$13,$4,$5,$6,$7,$8,$9,$10,$11,$12,$14,$14)
            RETURNING *"#,
+        status_id,
         instance.id,
         account.id,
         text,
@@ -208,18 +212,9 @@ pub async fn post_status(
         in_reply_to_account_id,
         idempotency_key,
         auth.application_id,
+        uri,
     )
     .fetch_one(&state.db)
-    .await?;
-
-    // Attach URI now that we have the ID
-    let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status.id);
-    let url = uri.clone();
-    sqlx::query!(
-        "UPDATE statuses SET uri = $1, url = $2 WHERE id = $3",
-        uri, url, status.id
-    )
-    .execute(&state.db)
     .await?;
 
     // Store tags and mentions
@@ -915,11 +910,13 @@ pub async fn reblog_status(
         return Ok(Json(build_status(&state, &boost, &boost_account, media, reblog, Some(ctx)).await?));
     }
 
+    let boost_id = crate::snowflake::next_id();
     let boost = sqlx::query_as!(
         DbStatus,
-        r#"INSERT INTO statuses (instance_id, account_id, text, content, visibility, reblog_of_id)
-           VALUES ($1,$2,'','',$3,$4)
+        r#"INSERT INTO statuses (id, instance_id, account_id, text, content, visibility, reblog_of_id)
+           VALUES ($1,$2,$3,'','',$4,$5)
            RETURNING *"#,
+        boost_id,
         instance.id,
         auth.account_id,
         original.visibility,

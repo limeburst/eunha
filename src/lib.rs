@@ -1,6 +1,7 @@
 pub mod api;
 pub mod background;
 pub mod config;
+pub mod snowflake;
 pub mod console_frontend;
 pub mod crypto;
 pub mod db;

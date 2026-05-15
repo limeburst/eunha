@@ -525,15 +525,16 @@ async fn migrate_statuses(
 
         let new_id: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO statuses
-                 (instance_id, account_id, text, content, spoiler_text,
+                 (id, instance_id, account_id, text, content, spoiler_text,
                   visibility, language, sensitive, url, uri,
                   in_reply_to_id, reblog_of_id,
                   replies_count, reblogs_count, favourites_count,
                   deleted_at, edited_at, created_at)
-               VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-               ON CONFLICT (uri) DO NOTHING
+               VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+               ON CONFLICT DO NOTHING
                RETURNING id"#,
         )
+        .bind(src_id)
         .bind(instance_id)
         .bind(account_id)
         .bind(text.as_deref().unwrap_or(""))
@@ -673,10 +674,12 @@ async fn migrate_media(
         .await?;
 
     for row in &rows {
+        let src_id: i64 = row.try_get("id").unwrap_or(0);
         let src_account: i64 = row.try_get("account_id").ok().flatten().unwrap_or(0);
         let Some(&account_id) = account_map.get(&src_account) else { continue };
 
         let src_status: Option<i64> = row.try_get("status_id").ok().flatten();
+        // Since we preserve original status IDs, the mapping is identity.
         let status_id: Option<i64> = src_status.and_then(|sid| status_map.get(&sid)).copied();
 
         let media_type_int: Option<i32> = row.try_get("type").ok().flatten();
@@ -691,9 +694,11 @@ async fn migrate_media(
         let created_at = get_ts(&row, "created_at")?;
 
         sqlx::query(
-            r#"INSERT INTO media_attachments (account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
+            r#"INSERT INTO media_attachments (id, account_id, status_id, media_type, remote_url, description, blurhash, meta, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+               ON CONFLICT DO NOTHING"#,
         )
+        .bind(src_id)
         .bind(account_id)
         .bind(status_id)
         .bind(media_type)

@@ -95,28 +95,20 @@ async fn publish_one(
     let mention_map = build_mention_map(&resolved);
     let content = render_content(&text, &instance.domain, &mention_map);
 
+    let status_id = crate::snowflake::next_id();
+    let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status_id);
+
     let status = sqlx::query_as!(
         crate::db::models::Status,
         r#"INSERT INTO statuses
-             (instance_id, account_id, text, content, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             (id, instance_id, account_id, text, content, spoiler_text, visibility,
+              language, sensitive, in_reply_to_id, uri, url)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
            RETURNING *"#,
-        instance.id, account.id, text, content, spoiler_text, visibility,
-        language, sensitive, in_reply_to_id,
+        status_id, instance.id, account.id, text, content, spoiler_text, visibility,
+        language, sensitive, in_reply_to_id, uri,
     )
     .fetch_one(&state.db)
-    .await?;
-
-    let uri = format!(
-        "https://{}/users/{}/statuses/{}",
-        instance.domain, account.username, status.id
-    );
-    sqlx::query!(
-        "UPDATE statuses SET uri = $1, url = $1 WHERE id = $2",
-        uri, status.id,
-    )
-    .execute(&state.db)
     .await?;
 
     store_status_tags(state, status.id, account.id, &hashtags).await?;
