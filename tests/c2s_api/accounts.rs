@@ -1784,3 +1784,45 @@ async fn test_unlock_account_approves_pending_follows() {
     assert_eq!(rel["following"].as_bool(), Some(true), "follow should be accepted after unlock");
     assert_eq!(rel["requested"].as_bool(), Some(false), "follow should not be pending after unlock");
 }
+
+/// GET /api/v1/accounts/:id/statuses returns 403 when target has blocked the viewer.
+#[tokio::test]
+async fn test_account_statuses_returns_403_when_blocked_by_target() {
+    let ctx = TestContext::new("acct-statuses-blocked").await;
+
+    ctx.api.post_status(&ctx.alice_token, "alice public status", "public").await;
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Bob tries to view Alice's statuses.
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses", ctx.alice_id),
+        Some(&ctx.bob_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN,
+        "blocked user should not be able to view the blocker's statuses");
+}
+
+/// GET /api/v1/accounts/:id/statuses is visible to unauthenticated requests (public accounts).
+#[tokio::test]
+async fn test_account_statuses_visible_unauthenticated() {
+    let ctx = TestContext::new("acct-statuses-unauth").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "public for unauth", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses", ctx.alice_id),
+        None,
+    ).await.json().await.unwrap();
+
+    assert!(
+        statuses.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "public status should be visible to unauthenticated users",
+    );
+}

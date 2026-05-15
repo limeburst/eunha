@@ -200,6 +200,22 @@ pub async fn get_account_statuses(
     }
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
+    // If target has blocked the viewer, return 403.
+    if let Some(vid) = viewer_id {
+        if vid != account.id {
+            let blocked = sqlx::query_scalar!(
+                "SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2",
+                account.id, vid,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if blocked {
+                return Err(AppError::Forbidden);
+            }
+        }
+    }
+
     if q.pinned == Some(true) {
         let pinned_statuses = sqlx::query_as!(
             crate::db::models::Status,
