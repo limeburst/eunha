@@ -783,6 +783,36 @@ async fn test_home_timeline_hides_boosts_of_blocked_account() {
         "boost of blocked account's status should be hidden from home timeline");
 }
 
+/// Authenticated viewer does not see muted account's statuses on public timeline.
+#[tokio::test]
+async fn test_public_timeline_hides_muted_accounts() {
+    let ctx = TestContext::new("pub-tl-muted").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "mute-me-public post", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Status is visible before mute.
+    let before: Vec<Value> = ctx.api.get("/api/v1/timelines/public", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        before.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "bob's status should appear in public timeline before mute",
+    );
+
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/timelines/public", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(
+        !after.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "muted account's statuses should be hidden from public timeline",
+    );
+}
+
 /// A "warn" filter in home context keeps the status but populates the filtered field.
 #[tokio::test]
 async fn test_home_timeline_warn_filter_annotates_status() {

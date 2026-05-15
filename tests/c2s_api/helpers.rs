@@ -273,7 +273,10 @@ impl TestContext {
                 base_url: "http://localhost/media".into(),
             },
             smtp: None,
-            resend: None,
+            resend: eunha::config::ResendConfig {
+                api_key: "test-key".into(),
+                from: "test@test.invalid".into(),
+            },
         };
         let state = eunha::state::AppState::new(db, config).await;
         let app = eunha::build_app(state);
