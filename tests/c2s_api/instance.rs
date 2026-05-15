@@ -204,3 +204,26 @@ async fn test_announcement_dismiss() {
     assert!(ann2.is_some(), "announcement should still appear after dismiss");
     assert_eq!(ann2.unwrap()["read"].as_bool(), Some(true), "should be read after dismiss");
 }
+
+/// GET /api/v1/instance/activity returns an array of weekly stats.
+#[tokio::test]
+async fn test_instance_activity_returns_array() {
+    let ctx = TestContext::new("inst-activity").await;
+
+    // Post a status so there's activity to count
+    ctx.api.post_status(&ctx.alice_token, "some activity", "public").await;
+
+    let resp = ctx.api.get("/api/v1/instance/activity", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: Value = resp.json().await.unwrap();
+    assert!(body.is_array(), "instance/activity should return an array");
+
+    // Each entry should have the required fields as strings
+    if let Some(entry) = body.as_array().and_then(|a| a.first()) {
+        assert!(entry["week"].is_string(), "week should be a string timestamp");
+        assert!(entry["statuses"].is_string(), "statuses should be a string");
+        assert!(entry["logins"].is_string(), "logins should be a string");
+        assert!(entry["registrations"].is_string(), "registrations should be a string");
+    }
+}

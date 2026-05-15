@@ -217,6 +217,66 @@ pub async fn get_instance_v2(
     }))
 }
 
+// ── GET /api/v1/instance/activity ────────────────────────────────────────
+
+pub async fn get_instance_activity(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> AppResult<Json<Vec<serde_json::Value>>> {
+    // Return 12 weeks of activity
+    let rows = sqlx::query!(
+        r#"SELECT
+             EXTRACT(EPOCH FROM date_trunc('week', s.created_at))::bigint AS week,
+             COUNT(s.id) AS statuses,
+             COUNT(DISTINCT s.account_id) AS logins
+           FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL
+             AND s.created_at >= date_trunc('week', now()) - interval '11 weeks'
+           GROUP BY date_trunc('week', s.created_at)
+           ORDER BY week DESC"#,
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let registrations_rows = sqlx::query!(
+        r#"SELECT
+             EXTRACT(EPOCH FROM date_trunc('week', a.created_at))::bigint AS week,
+             COUNT(a.id) AS registrations
+           FROM accounts a
+           WHERE a.instance_id = $1 AND a.domain IS NULL
+             AND a.created_at >= date_trunc('week', now()) - interval '11 weeks'
+           GROUP BY date_trunc('week', a.created_at)"#,
+        instance.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    // Build a map of week -> registration count
+    let mut reg_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    for r in registrations_rows {
+        if let (Some(week), Some(count)) = (r.week, r.registrations) {
+            reg_map.insert(week, count);
+        }
+    }
+
+    let mut result = Vec::new();
+    for r in rows {
+        if let (Some(week), Some(statuses), Some(logins)) = (r.week, r.statuses, r.logins) {
+            let registrations = reg_map.get(&week).copied().unwrap_or(0);
+            result.push(serde_json::json!({
+                "week": week.to_string(),
+                "statuses": statuses.to_string(),
+                "logins": logins.to_string(),
+                "registrations": registrations.to_string(),
+            }));
+        }
+    }
+
+    Ok(Json(result))
+}
+
 async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i64) {
     let user_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND suspended_at IS NULL",

@@ -844,6 +844,17 @@ pub async fn get_status_context(
 
     let mut ancestors = Vec::with_capacity(ancestor_rows.len());
     for s in &ancestor_rows {
+        // Skip statuses the viewer can't see
+        if matches!(s.visibility.as_str(), "private" | "direct") {
+            match viewer_id {
+                None => continue,
+                Some(vid) => {
+                    if check_status_visible(&state, s, vid).await.is_err() {
+                        continue;
+                    }
+                }
+            }
+        }
         let acct = fetch_account(&state, s.account_id).await?;
         let media = fetch_status_media(&state, s.id).await?;
         let reblog = fetch_reblog_data(&state, s).await?;
@@ -857,6 +868,17 @@ pub async fn get_status_context(
 
     let mut descendants = Vec::with_capacity(descendant_rows.len());
     for s in &descendant_rows {
+        // Skip statuses the viewer can't see
+        if matches!(s.visibility.as_str(), "private" | "direct") {
+            match viewer_id {
+                None => continue,
+                Some(vid) => {
+                    if check_status_visible(&state, s, vid).await.is_err() {
+                        continue;
+                    }
+                }
+            }
+        }
         let acct = fetch_account(&state, s.account_id).await?;
         let media = fetch_status_media(&state, s.id).await?;
         let reblog = fetch_reblog_data(&state, s).await?;
@@ -970,6 +992,16 @@ pub async fn pin_status(
     let (status, account) = fetch_status_with_account(&state, id).await?;
     if status.account_id != auth.account_id {
         return Err(AppError::Unprocessable("Validation failed: You can only pin your own statuses".into()));
+    }
+    let pin_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM status_pins WHERE account_id = $1",
+        auth.account_id
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+    if pin_count >= 5 {
+        return Err(AppError::Unprocessable("Validation failed: You have already pinned the maximum number of statuses".into()));
     }
     sqlx::query!(
         "INSERT INTO status_pins (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",

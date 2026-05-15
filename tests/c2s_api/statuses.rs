@@ -1942,3 +1942,160 @@ async fn test_status_filtered_field_is_array() {
         status["filtered"],
     );
 }
+
+/// Pinning more than 5 statuses returns 422.
+#[tokio::test]
+async fn test_pin_limit_is_five() {
+    let ctx = TestContext::new("pin-limit").await;
+
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let s = ctx.api.post_status(&ctx.alice_token, &format!("pin #{i}"), "public").await;
+        ids.push(s["id"].as_str().unwrap().to_string());
+    }
+
+    // Pin all 5
+    for id in &ids {
+        let resp = ctx.api.post_json(
+            &format!("/api/v1/statuses/{id}/pin"),
+            Some(&ctx.alice_token),
+            &json!({}),
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK, "pinning status {id} should succeed");
+    }
+
+    // Pin a 6th — should fail
+    let s6 = ctx.api.post_status(&ctx.alice_token, "pin #5 (over limit)", "public").await;
+    let id6 = s6["id"].as_str().unwrap();
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id6}/pin"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "pinning a 6th status should return 422",
+    );
+}
+
+/// Private statuses in a thread context are hidden from non-followers.
+#[tokio::test]
+async fn test_context_hides_private_status_from_non_follower() {
+    let ctx = TestContext::new("ctx-prv-nonfollower").await;
+
+    // Alice posts a public status
+    let public_s = ctx.api.post_status(&ctx.alice_token, "public root", "public").await;
+    let public_id = public_s["id"].as_str().unwrap();
+
+    // Alice replies privately
+    let private_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "private reply",
+            "visibility": "private",
+            "in_reply_to_id": public_id,
+        }),
+    ).await.json().await.unwrap();
+    let private_id = private_reply["id"].as_str().unwrap();
+
+    // Bob (not a follower) requests context of the public root
+    let context: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{public_id}/context"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    let descendant_ids: Vec<&str> = context["descendants"]
+        .as_array().unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+
+    assert!(
+        !descendant_ids.contains(&private_id),
+        "private reply should not appear in context for non-follower",
+    );
+}
+
+/// Private statuses in a thread context are visible to followers.
+#[tokio::test]
+async fn test_context_shows_private_status_to_follower() {
+    let ctx = TestContext::new("ctx-prv-follower").await;
+
+    // Bob follows Alice
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    // Alice posts a public root
+    let public_s = ctx.api.post_status(&ctx.alice_token, "public root", "public").await;
+    let public_id = public_s["id"].as_str().unwrap();
+
+    // Alice replies privately
+    let private_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "private reply",
+            "visibility": "private",
+            "in_reply_to_id": public_id,
+        }),
+    ).await.json().await.unwrap();
+    let private_id = private_reply["id"].as_str().unwrap();
+
+    // Bob (a follower) requests context
+    let context: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{public_id}/context"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    let descendant_ids: Vec<&str> = context["descendants"]
+        .as_array().unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+
+    assert!(
+        descendant_ids.contains(&private_id),
+        "private reply should appear in context for a follower",
+    );
+}
+
+/// Unauthenticated context request hides private statuses.
+#[tokio::test]
+async fn test_context_hides_private_status_unauthenticated() {
+    let ctx = TestContext::new("ctx-prv-unauth").await;
+
+    let public_s = ctx.api.post_status(&ctx.alice_token, "public root", "public").await;
+    let public_id = public_s["id"].as_str().unwrap();
+
+    let private_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "private reply",
+            "visibility": "private",
+            "in_reply_to_id": public_id,
+        }),
+    ).await.json().await.unwrap();
+    let private_id = private_reply["id"].as_str().unwrap();
+
+    let context: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{public_id}/context"),
+        None,
+    ).await.json().await.unwrap();
+
+    let descendant_ids: Vec<&str> = context["descendants"]
+        .as_array().unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+
+    assert!(
+        !descendant_ids.contains(&private_id),
+        "private reply should not appear in context for unauthenticated viewer",
+    );
+}
