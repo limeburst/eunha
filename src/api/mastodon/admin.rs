@@ -129,7 +129,7 @@ async fn build_admin_account(state: &AppState, account: &models::Account) -> App
         confirmed,
         suspended: account.suspended_at.is_some(),
         silenced: account.silenced_at.is_some(),
-        sensitized: false,
+        sensitized: account.sensitized_at.is_some(),
         disabled: false,
         approved,
         locale: None,
@@ -1569,6 +1569,158 @@ pub async fn delete_email_domain_block(
     sqlx::query!("DELETE FROM admin_email_domain_blocks WHERE id = $1", id)
         .execute(&state.db)
         .await?;
+    Ok(StatusCode::OK)
+}
+
+// ── POST /api/v1/admin/reports/:id/assign_to_self ────────────────────────
+
+pub async fn assign_report_to_self(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminReport>> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!(
+        "UPDATE reports SET assigned_account_id = $1 WHERE id = $2",
+        auth.account_id, id,
+    )
+    .execute(&state.db)
+    .await?;
+    get_admin_report(State(state), Extension(auth), Path(id)).await
+}
+
+// ── POST /api/v1/admin/reports/:id/unassign ──────────────────────────────
+
+pub async fn unassign_report(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminReport>> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!(
+        "UPDATE reports SET assigned_account_id = NULL WHERE id = $1",
+        id,
+    )
+    .execute(&state.db)
+    .await?;
+    get_admin_report(State(state), Extension(auth), Path(id)).await
+}
+
+// ── POST /api/v1/admin/accounts/:id/sensitive ────────────────────────────
+
+pub async fn sensitive_account(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminAccount>> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!(
+        "UPDATE accounts SET sensitized_at = now() WHERE id = $1 AND sensitized_at IS NULL",
+        id,
+    )
+    .execute(&state.db)
+    .await?;
+    let account = sqlx::query_as!(models::Account, "SELECT * FROM accounts WHERE id = $1", id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(build_admin_account(&state, &account).await?))
+}
+
+// ── POST /api/v1/admin/accounts/:id/unsensitive ──────────────────────────
+
+pub async fn unsensitive_account(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminAccount>> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!(
+        "UPDATE accounts SET sensitized_at = NULL WHERE id = $1",
+        id,
+    )
+    .execute(&state.db)
+    .await?;
+    let account = sqlx::query_as!(models::Account, "SELECT * FROM accounts WHERE id = $1", id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(build_admin_account(&state, &account).await?))
+}
+
+// ── POST /api/v1/admin/accounts/:id/action ───────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AccountActionForm {
+    #[serde(rename = "type")]
+    pub action_type: Option<String>,
+    pub text: Option<String>,
+    pub report_id: Option<String>,
+    pub warning_preset_id: Option<String>,
+    pub send_email_notification: Option<bool>,
+}
+
+pub async fn account_action(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+    Json(form): Json<AccountActionForm>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+
+    match form.action_type.as_deref().unwrap_or("none") {
+        "disable" => {
+            sqlx::query!(
+                "UPDATE accounts SET suspended_at = now() WHERE id = $1 AND suspended_at IS NULL",
+                id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        "sensitive" => {
+            sqlx::query!(
+                "UPDATE accounts SET sensitized_at = now() WHERE id = $1 AND sensitized_at IS NULL",
+                id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        "silence" => {
+            sqlx::query!(
+                "UPDATE accounts SET silenced_at = now() WHERE id = $1 AND silenced_at IS NULL",
+                id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        "suspend" => {
+            sqlx::query!(
+                "UPDATE accounts SET suspended_at = now() WHERE id = $1 AND suspended_at IS NULL",
+                id,
+            )
+            .execute(&state.db)
+            .await?;
+            sqlx::query!(
+                "UPDATE statuses SET deleted_at = now() WHERE account_id = $1 AND deleted_at IS NULL",
+                id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        _ => {}
+    }
+
+    if let Some(report_id_str) = &form.report_id {
+        if let Ok(report_id) = report_id_str.parse::<i64>() {
+            sqlx::query!(
+                "UPDATE reports SET action_taken_at = now(), action_taken_by_account_id = $1 WHERE id = $2",
+                auth.account_id, report_id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
     Ok(StatusCode::OK)
 }
 

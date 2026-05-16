@@ -78,6 +78,7 @@ pub struct Account {
     pub shared_inbox_url: Option<String>,
     pub suspended_at: Option<DateTime<Utc>>,
     pub silenced_at: Option<DateTime<Utc>>,
+    pub sensitized_at: Option<DateTime<Utc>>,
     pub hide_collections: bool,
     pub last_status_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,

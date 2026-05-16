@@ -626,6 +626,19 @@ pub struct FeaturedTag {
     pub last_status_at: Option<String>,
 }
 
+// ── AnnouncementReaction ──────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AnnouncementReaction {
+    pub name: String,
+    pub count: i64,
+    pub me: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub static_url: Option<String>,
+}
+
 // ── Announcement ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -640,7 +653,7 @@ pub struct Announcement {
     pub starts_at: Option<String>,
     pub ends_at: Option<String>,
     pub read: bool,
-    pub reactions: Vec<serde_json::Value>,
+    pub reactions: Vec<AnnouncementReaction>,
     pub statuses: Vec<serde_json::Value>,
     pub tags: Vec<serde_json::Value>,
     pub emojis: Vec<serde_json::Value>,
