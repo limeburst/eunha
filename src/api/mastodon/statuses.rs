@@ -271,10 +271,12 @@ pub async fn post_status(
         }
     }
 
-    // Increment statuses count and update last_status_at
+    // Increment statuses count and advance last_status_at using the status's
+    // own created_at (matches Mastodon: GREATEST ensures it only moves forward).
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = statuses_count + 1, last_status_at = now() WHERE id = $1",
-        account.id
+        "UPDATE accounts SET statuses_count = statuses_count + 1, last_status_at = GREATEST(last_status_at, $2) WHERE id = $1",
+        account.id,
+        status.created_at,
     )
     .execute(&state.db)
     .await?;
