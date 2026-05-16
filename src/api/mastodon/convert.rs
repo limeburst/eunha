@@ -7,6 +7,13 @@ const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.p
 const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
 
 pub fn account_from_db(a: &models::Account) -> types::Account {
+    let (url, uri) = if a.domain.is_none() && !a.uri.is_empty() {
+        // Local accounts: uri is authoritative; derive url from it
+        (a.uri.replace("/users/", "/@"), a.uri.clone())
+    } else {
+        (a.url.clone(), a.uri.clone())
+    };
+
     types::Account {
         id: a.id.to_string(),
         username: a.username.clone(),
@@ -23,8 +30,8 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         show_media_replies: None,
         created_at: a.created_at.format("%Y-%m-%dT00:00:00.000Z").to_string(),
         note: a.note.clone(),
-        url: a.url.clone(),
-        uri: a.uri.clone(),
+        url,
+        uri,
         avatar: a.avatar.clone().unwrap_or_else(|| DEFAULT_AVATAR.to_string()),
         avatar_static: a.avatar_static.clone().unwrap_or_else(|| DEFAULT_AVATAR.to_string()),
         avatar_description: String::new(),
