@@ -1,0 +1,4 @@
+target/
+.git/
+elk/node_modules/
+console/node_modules/
