@@ -437,7 +437,7 @@ async fn migrate_accounts(
         .bind(uri.as_deref().unwrap_or(""))
         .bind(locked.unwrap_or(false))
         .bind(bot)
-        .bind(discoverable.unwrap_or(true))
+        .bind(discoverable)
         .bind(&private_key)
         .bind(public_key.as_deref().unwrap_or(""))
         .bind(followers_count.unwrap_or(0))

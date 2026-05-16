@@ -70,7 +70,7 @@ pub struct Account {
     pub statuses_count: i64,
     pub locked: bool,
     pub bot: bool,
-    pub discoverable: bool,
+    pub discoverable: Option<bool>,
     pub indexable: bool,
     pub moved_to_uri: Option<String>,
     pub inbox_url: String,

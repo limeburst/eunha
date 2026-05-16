@@ -28,7 +28,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         locked: a.locked,
         bot: a.bot,
         group: false,
-        discoverable: Some(a.discoverable),
+        discoverable: a.discoverable,
         indexable: a.indexable,
         hide_collections: None,
         show_featured: None,
