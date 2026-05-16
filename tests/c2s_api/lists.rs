@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 
-use super::helpers::TestContext;
+use super::helpers::{seed_user, TestContext};
 
 /// Full list lifecycle: create, rename, list, delete.
 #[tokio::test]
@@ -499,9 +499,11 @@ async fn test_list_timeline_replies_policy_none() {
         list_tl.iter().any(|s| s["id"].as_str() == Some(s1_id)),
         "non-reply should appear in list with replies_policy=none",
     );
+    // Self-replies (replying to your own post) always appear regardless of replies_policy,
+    // matching Mastodon's behavior (filter_from_list? checks in_reply_to_account_id != account_id).
     assert!(
-        !list_tl.iter().any(|s| s["id"].as_str() == Some(s2_id)),
-        "reply should be hidden in list with replies_policy=none",
+        list_tl.iter().any(|s| s["id"].as_str() == Some(s2_id)),
+        "self-reply should still appear in list with replies_policy=none",
     );
 }
 
@@ -706,4 +708,520 @@ async fn test_list_timeline_other_user_is_404() {
         Some(&ctx.bob_token),
     ).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn extract_ids(timeline: &[Value]) -> std::collections::HashSet<String> {
+    timeline.iter().filter_map(|s| s["id"].as_str().map(str::to_owned)).collect()
+}
+
+/// Create a list owned by Alice with the given replies_policy, follow and add Bob as a member.
+/// Returns (list_id, bob_token).
+async fn setup_list_with_bob(ctx: &TestContext, label: &str, replies_policy: &str) -> (String, String) {
+    let _ = label;
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Test List", "replies_policy": replies_policy}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap().to_owned();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+    (list_id, ctx.bob_token.clone())
+}
+
+async fn list_timeline(ctx: &TestContext, list_id: &str) -> Vec<Value> {
+    ctx.api.get(
+        &format!("/api/v1/timelines/list/{list_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap()
+}
+
+// ── Translated from Mastodon feed_manager_spec.rb — push_to_list ─────────────
+//
+// These tests verify that the **Redis fanout path** applies replies_policy
+// correctly at write time — i.e., after the list feed is already initialized.
+//
+// Setup: Alice owns the list, Bob is a member.  The list feed is initialized
+// via a first GET before each status is posted.
+
+/// Translated: "pushes statuses that are not replies" (all policies).
+/// A plain (non-reply) status from a list member always appears.
+#[tokio::test]
+async fn test_list_fanout_delivers_non_reply() {
+    let ctx = TestContext::new("lf-non-reply").await;
+    let (list_id, _) = setup_list_with_bob(&ctx, "lf-non-reply", "none").await;
+
+    let _ = list_timeline(&ctx, &list_id).await; // initialize Redis feed
+
+    let s = ctx.api.post_status(&ctx.bob_token, "plain post no reply", "public").await;
+    let sid = s["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, &list_id).await;
+    assert!(tl.iter().any(|s| s["id"].as_str() == Some(sid)), "non-reply must appear via fanout");
+}
+
+/// Translated: "pushes statuses that are replies to list owner" — replies_policy=none.
+/// Replies to the list owner always appear regardless of policy.
+#[tokio::test]
+async fn test_list_fanout_none_includes_reply_to_list_owner() {
+    let ctx = TestContext::new("lf-none-owner-reply").await;
+    let (list_id, _) = setup_list_with_bob(&ctx, "lf-none-owner-reply", "none").await;
+
+    // Alice (the list owner) posts a status.
+    let owner_post = ctx.api.post_status(&ctx.alice_token, "alice original post", "public").await;
+    let owner_post_id = owner_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, &list_id).await; // initialize Redis feed
+
+    // Bob replies to Alice (the list owner).
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply to alice", "visibility": "public", "in_reply_to_id": owner_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, &list_id).await;
+    assert!(
+        tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to list owner must appear even with replies_policy=none",
+    );
+}
+
+/// Translated: "does not push replies to another member of the list" — replies_policy=none.
+#[tokio::test]
+async fn test_list_fanout_none_excludes_reply_to_other_member() {
+    let ctx = TestContext::new("lf-none-member-reply").await;
+    let (charlie_id, charlie_token) =
+        seed_user(&ctx.db, &ctx.domain, "charlie-lf-none", "charlie-lf-none@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+
+    // Alice follows both Bob and Charlie; both are list members.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "None Policy", "replies_policy": "none"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id, charlie_id]}),
+    ).await;
+
+    // Charlie posts; Bob will reply to Charlie.
+    let charlie_post = ctx.api.post_status(&charlie_token, "charlie says hi", "public").await;
+    let charlie_post_id = charlie_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, list_id).await; // initialize Redis feed
+
+    // Bob replies to Charlie (another member) — should NOT appear (policy=none).
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to charlie", "visibility": "public", "in_reply_to_id": charlie_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, list_id).await;
+    assert!(
+        !tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to another list member must not appear with replies_policy=none",
+    );
+}
+
+/// Translated: "pushes replies to another member of the list" — replies_policy=list.
+#[tokio::test]
+async fn test_list_fanout_list_includes_reply_to_list_member() {
+    let ctx = TestContext::new("lf-list-member-reply").await;
+    let (charlie_id, charlie_token) =
+        seed_user(&ctx.db, &ctx.domain, "charlie-lf-list", "charlie-lf-list@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "List Policy", "replies_policy": "list"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id, charlie_id]}),
+    ).await;
+
+    let charlie_post = ctx.api.post_status(&charlie_token, "charlie says hi list", "public").await;
+    let charlie_post_id = charlie_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, list_id).await; // initialize Redis feed
+
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to charlie on list", "visibility": "public", "in_reply_to_id": charlie_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, list_id).await;
+    assert!(
+        tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to a list member must appear with replies_policy=list",
+    );
+}
+
+/// Translated: "does not push replies to someone not a member of the list" — replies_policy=list.
+#[tokio::test]
+async fn test_list_fanout_list_excludes_reply_to_non_member() {
+    let ctx = TestContext::new("lf-list-nonmember-reply").await;
+    let (eve_id, eve_token) =
+        seed_user(&ctx.db, &ctx.domain, "eve-lf-list", "eve-lf-list@test.invalid").await;
+    let eve_id = eve_id.to_string();
+
+    // Alice follows Bob (member) and Eve (not a member).
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &eve_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "List Policy Eve", "replies_policy": "list"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}), // Eve NOT added
+    ).await;
+
+    let eve_post = ctx.api.post_status(&eve_token, "eve says hi", "public").await;
+    let eve_post_id = eve_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, list_id).await; // initialize Redis feed
+
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to eve", "visibility": "public", "in_reply_to_id": eve_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, list_id).await;
+    assert!(
+        !tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to a non-list-member must not appear with replies_policy=list",
+    );
+}
+
+/// Translated: "pushes statuses that are replies to list owner" — replies_policy=list.
+/// The list owner exception applies to all policies.
+#[tokio::test]
+async fn test_list_fanout_list_includes_reply_to_list_owner() {
+    let ctx = TestContext::new("lf-list-owner-reply").await;
+    let (list_id, _) = setup_list_with_bob(&ctx, "lf-list-owner-reply", "list").await;
+
+    let owner_post = ctx.api.post_status(&ctx.alice_token, "alice original list policy", "public").await;
+    let owner_post_id = owner_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, &list_id).await; // initialize Redis feed
+
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "reply to alice list policy", "visibility": "public", "in_reply_to_id": owner_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, &list_id).await;
+    assert!(
+        tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to list owner must appear with replies_policy=list",
+    );
+}
+
+/// Translated: "pushes replies to someone not a member of the list" — replies_policy=followed.
+/// If the list owner follows the reply target, the reply appears.
+#[tokio::test]
+async fn test_list_fanout_followed_includes_reply_to_followed_non_member() {
+    let ctx = TestContext::new("lf-followed-nonmember").await;
+    let (eve_id, eve_token) =
+        seed_user(&ctx.db, &ctx.domain, "eve-lf-followed", "eve-lf-followed@test.invalid").await;
+    let eve_id = eve_id.to_string();
+
+    // Alice follows Bob (member) and Eve (followed, not a member).
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &eve_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Followed Policy", "replies_policy": "followed"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}), // Eve NOT a member
+    ).await;
+
+    let eve_post = ctx.api.post_status(&eve_token, "eve says hi followed", "public").await;
+    let eve_post_id = eve_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, list_id).await; // initialize Redis feed
+
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to eve followed", "visibility": "public", "in_reply_to_id": eve_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, list_id).await;
+    assert!(
+        tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to a followed non-member must appear with replies_policy=followed",
+    );
+}
+
+/// Translated: "does not push replies" when target not followed — replies_policy=followed.
+#[tokio::test]
+async fn test_list_fanout_followed_excludes_reply_to_non_followed() {
+    let ctx = TestContext::new("lf-followed-notfollowed").await;
+    let (stranger_id, stranger_token) =
+        seed_user(&ctx.db, &ctx.domain, "stranger-lf", "stranger-lf@test.invalid").await;
+    let stranger_id = stranger_id.to_string();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    // Alice does NOT follow stranger.
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Followed Policy Excl", "replies_policy": "followed"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let stranger_post = ctx.api.post_status(&stranger_token, "stranger says hi", "public").await;
+    let stranger_post_id = stranger_post["id"].as_str().unwrap();
+
+    let _ = list_timeline(&ctx, list_id).await; // initialize Redis feed
+
+    let reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to stranger", "visibility": "public", "in_reply_to_id": stranger_post_id}),
+    ).await.json().await.unwrap();
+    let reply_id = reply["id"].as_str().unwrap();
+
+    let tl = list_timeline(&ctx, list_id).await;
+    assert!(
+        !tl.iter().any(|s| s["id"].as_str() == Some(reply_id)),
+        "reply to someone the list owner doesn't follow must not appear with replies_policy=followed",
+    );
+    let _ = stranger_id;
+}
+
+// ── DB vs Redis parity tests for list timelines ───────────────────────────────
+//
+// Verify that the cold-start DB path and the Redis fanout path return the same
+// status IDs.  Pattern: post statuses BEFORE the first GET so they go through
+// the cold-start populate; second GET hits Redis.
+
+/// Basic parity: plain posts from the list member appear on both paths.
+#[tokio::test]
+async fn test_db_and_redis_list_timelines_agree_basic() {
+    let ctx = TestContext::new("list-parity-basic").await;
+    let (list_id, _) = setup_list_with_bob(&ctx, "list-parity-basic", "list").await;
+
+    ctx.api.post_status(&ctx.bob_token, "list parity 1", "public").await;
+    ctx.api.post_status(&ctx.bob_token, "list parity 2", "public").await;
+
+    let db_tl = list_timeline(&ctx, &list_id).await;
+    let db_ids = extract_ids(&db_tl);
+    assert!(!db_ids.is_empty(), "DB path should return statuses");
+
+    let redis_tl = list_timeline(&ctx, &list_id).await;
+    let redis_ids = extract_ids(&redis_tl);
+
+    assert_eq!(db_ids, redis_ids, "DB and Redis list timeline paths must agree on basic posts");
+}
+
+/// Parity with replies_policy=none: only non-replies (and replies to list owner) appear on both paths.
+#[tokio::test]
+async fn test_db_and_redis_list_timelines_agree_replies_policy_none() {
+    let ctx = TestContext::new("list-parity-none").await;
+    let (charlie_id, charlie_token) =
+        seed_user(&ctx.db, &ctx.domain, "charlie-parity-none", "charlie-parity-none@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Parity None", "replies_policy": "none"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id, charlie_id]}),
+    ).await;
+
+    // Non-reply from Bob (should appear).
+    ctx.api.post_status(&ctx.bob_token, "parity none non-reply", "public").await;
+
+    // Alice posts, Bob replies to her (list owner reply exception — should appear).
+    let alice_post = ctx.api.post_status(&ctx.alice_token, "alice original parity none", "public").await;
+    let alice_post_id = alice_post["id"].as_str().unwrap();
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to alice", "visibility": "public", "in_reply_to_id": alice_post_id}),
+    ).await;
+
+    // Charlie posts, Bob replies to Charlie (should NOT appear with none policy).
+    let charlie_post = ctx.api.post_status(&charlie_token, "charlie original parity none", "public").await;
+    let charlie_post_id = charlie_post["id"].as_str().unwrap();
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to charlie parity", "visibility": "public", "in_reply_to_id": charlie_post_id}),
+    ).await;
+
+    // First GET: cold-start DB path.
+    let db_tl = list_timeline(&ctx, list_id).await;
+    let db_ids = extract_ids(&db_tl);
+
+    // Second GET: Redis path.
+    let redis_tl = list_timeline(&ctx, list_id).await;
+    let redis_ids = extract_ids(&redis_tl);
+
+    assert_eq!(
+        db_ids, redis_ids,
+        "DB and Redis list timelines must agree with replies_policy=none",
+    );
+}
+
+/// Parity with replies_policy=list: replies to list members appear on both paths;
+/// replies to non-members are absent from both.
+#[tokio::test]
+async fn test_db_and_redis_list_timelines_agree_replies_policy_list() {
+    let ctx = TestContext::new("list-parity-list").await;
+    let (charlie_id, charlie_token) =
+        seed_user(&ctx.db, &ctx.domain, "charlie-parity-list", "charlie-parity-list@test.invalid").await;
+    let charlie_id = charlie_id.to_string();
+    let (eve_id, eve_token) =
+        seed_user(&ctx.db, &ctx.domain, "eve-parity-list", "eve-parity-list@test.invalid").await;
+    let eve_id = eve_id.to_string();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &charlie_id).await;
+    ctx.api.follow(&ctx.alice_token, &eve_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Parity List", "replies_policy": "list"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    // Bob and Charlie in list; Eve is NOT a list member.
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id, charlie_id]}),
+    ).await;
+
+    ctx.api.post_status(&ctx.bob_token, "parity list non-reply", "public").await;
+    let charlie_post = ctx.api.post_status(&charlie_token, "charlie list parity", "public").await;
+    let charlie_post_id = charlie_post["id"].as_str().unwrap();
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to charlie list parity", "visibility": "public", "in_reply_to_id": charlie_post_id}),
+    ).await;
+    let eve_post = ctx.api.post_status(&eve_token, "eve parity list", "public").await;
+    let eve_post_id = eve_post["id"].as_str().unwrap();
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to eve list parity", "visibility": "public", "in_reply_to_id": eve_post_id}),
+    ).await;
+
+    let db_tl = list_timeline(&ctx, list_id).await;
+    let db_ids = extract_ids(&db_tl);
+
+    let redis_tl = list_timeline(&ctx, list_id).await;
+    let redis_ids = extract_ids(&redis_tl);
+
+    assert_eq!(
+        db_ids, redis_ids,
+        "DB and Redis list timelines must agree with replies_policy=list",
+    );
+}
+
+/// Parity with replies_policy=followed: replies to followed accounts appear on both paths;
+/// replies to non-followed accounts are absent from both.
+#[tokio::test]
+async fn test_db_and_redis_list_timelines_agree_replies_policy_followed() {
+    let ctx = TestContext::new("list-parity-followed").await;
+    let (eve_id, eve_token) =
+        seed_user(&ctx.db, &ctx.domain, "eve-parity-followed", "eve-parity-followed@test.invalid").await;
+    let eve_id = eve_id.to_string();
+    let (stranger_id, stranger_token) =
+        seed_user(&ctx.db, &ctx.domain, "stranger-parity", "stranger-parity@test.invalid").await;
+    let stranger_id = stranger_id.to_string();
+
+    // Alice follows Bob and Eve; does NOT follow stranger.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.follow(&ctx.alice_token, &eve_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Parity Followed", "replies_policy": "followed"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    ctx.api.post_status(&ctx.bob_token, "parity followed non-reply", "public").await;
+    let eve_post = ctx.api.post_status(&eve_token, "eve parity followed", "public").await;
+    let eve_post_id = eve_post["id"].as_str().unwrap();
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to eve parity", "visibility": "public", "in_reply_to_id": eve_post_id}),
+    ).await;
+    let stranger_post = ctx.api.post_status(&stranger_token, "stranger parity", "public").await;
+    let stranger_post_id = stranger_post["id"].as_str().unwrap();
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob replies to stranger parity", "visibility": "public", "in_reply_to_id": stranger_post_id}),
+    ).await;
+
+    let db_tl = list_timeline(&ctx, list_id).await;
+    let db_ids = extract_ids(&db_tl);
+
+    let redis_tl = list_timeline(&ctx, list_id).await;
+    let redis_ids = extract_ids(&redis_tl);
+
+    assert_eq!(
+        db_ids, redis_ids,
+        "DB and Redis list timelines must agree with replies_policy=followed",
+    );
+    let _ = (stranger_id, eve_id, stranger_post_id);
 }

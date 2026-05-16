@@ -588,12 +588,18 @@ async fn list_timeline_from_db(
     //   "none"     — exclude all replies
     //   "list"     — include replies only when the in-reply-to author is also in this list
     //   "followed" — include replies only when the in-reply-to author is followed by the viewer
+    // replies_policy filter: $5 is owner_id in all query variants.
+    // Replies to the list owner always appear regardless of policy (matching Mastodon).
     let reply_filter = match replies_policy {
-        "none" => "AND s.in_reply_to_id IS NULL",
-        "list" => "AND (s.in_reply_to_id IS NULL OR EXISTS (
-                       SELECT 1 FROM statuses s2
-                       JOIN list_accounts la2 ON la2.account_id = s2.account_id
-                       WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1))",
+        "none" => "AND (s.in_reply_to_id IS NULL
+                        OR s.in_reply_to_account_id = s.account_id
+                        OR s.in_reply_to_account_id = $5)",
+        "list" => "AND (s.in_reply_to_id IS NULL
+                        OR s.in_reply_to_account_id = $5
+                        OR EXISTS (
+                            SELECT 1 FROM statuses s2
+                            JOIN list_accounts la2 ON la2.account_id = s2.account_id
+                            WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1))",
         _ => "AND (s.in_reply_to_id IS NULL OR EXISTS (
                    SELECT 1 FROM statuses s2
                    WHERE s2.id = s.in_reply_to_id

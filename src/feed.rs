@@ -383,33 +383,42 @@ pub async fn list_feed_populate(
         .await;
 
     let status_ids: Vec<i64> = match replies_policy {
+        // "none": non-replies, self-replies, and replies to the list owner are included.
+        // Replies to the list owner always appear regardless of policy (matching Mastodon).
         "none" => sqlx::query_scalar!(
             r#"SELECT s.id FROM statuses s
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
                  AND s.deleted_at IS NULL
                  AND s.visibility != 'direct'
-                 AND s.in_reply_to_id IS NULL
-               ORDER BY s.id DESC LIMIT $2"#,
+                 AND (s.in_reply_to_id IS NULL
+                      OR s.in_reply_to_account_id = s.account_id
+                      OR s.in_reply_to_account_id = $2)
+               ORDER BY s.id DESC LIMIT $3"#,
             list_id,
+            owner_id,
             FEED_MAX_ITEMS as i64,
         )
         .fetch_all(db)
         .await
         .unwrap_or_default(),
+        // "list": replies to the list owner or any list member are included.
         "list" => sqlx::query_scalar!(
             r#"SELECT s.id FROM statuses s
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
                  AND s.deleted_at IS NULL
                  AND s.visibility != 'direct'
-                 AND (s.in_reply_to_id IS NULL OR EXISTS (
-                     SELECT 1 FROM statuses s2
-                     JOIN list_accounts la2 ON la2.account_id = s2.account_id
-                     WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1
-                 ))
-               ORDER BY s.id DESC LIMIT $2"#,
+                 AND (s.in_reply_to_id IS NULL
+                      OR s.in_reply_to_account_id = $2
+                      OR EXISTS (
+                          SELECT 1 FROM statuses s2
+                          JOIN list_accounts la2 ON la2.account_id = s2.account_id
+                          WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1
+                      ))
+               ORDER BY s.id DESC LIMIT $3"#,
             list_id,
+            owner_id,
             FEED_MAX_ITEMS as i64,
         )
         .fetch_all(db)
@@ -507,27 +516,33 @@ pub async fn fanout_to_lists(
         }
 
         // Apply replies_policy filter.
+        // Replies to the list owner always pass regardless of policy (matching Mastodon).
         let passes = if let Some(reply_author) = in_reply_to_account_id {
-            match list.replies_policy.as_str() {
-                "none" => false,
-                "list" => sqlx::query_scalar!(
-                    "SELECT 1 FROM list_accounts WHERE list_id = $1 AND account_id = $2",
-                    list.id,
-                    reply_author,
-                )
-                .fetch_optional(db)
-                .await
-                .unwrap_or(None)
-                .is_some(),
-                _ => sqlx::query_scalar!(
-                    "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
-                    list.account_id,
-                    reply_author,
-                )
-                .fetch_optional(db)
-                .await
-                .unwrap_or(None)
-                .is_some(),
+            if reply_author == author_id || reply_author == list.account_id {
+                // self-reply or reply to list owner: always include
+                true
+            } else {
+                match list.replies_policy.as_str() {
+                    "none" => false,
+                    "list" => sqlx::query_scalar!(
+                        "SELECT 1 FROM list_accounts WHERE list_id = $1 AND account_id = $2",
+                        list.id,
+                        reply_author,
+                    )
+                    .fetch_optional(db)
+                    .await
+                    .unwrap_or(None)
+                    .is_some(),
+                    _ => sqlx::query_scalar!(
+                        "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                        list.account_id,
+                        reply_author,
+                    )
+                    .fetch_optional(db)
+                    .await
+                    .unwrap_or(None)
+                    .is_some(),
+                }
             }
         } else {
             true
@@ -609,9 +624,12 @@ pub async fn backfill_list_member(
         "none" => sqlx::query_scalar!(
             r#"SELECT id FROM statuses
                WHERE account_id = $1 AND deleted_at IS NULL AND visibility != 'direct'
-                 AND in_reply_to_id IS NULL
+                 AND (in_reply_to_id IS NULL
+                      OR in_reply_to_account_id = $1
+                      OR in_reply_to_account_id = $2)
                ORDER BY id DESC LIMIT 20"#,
             member_id,
+            owner_id,
         )
         .fetch_all(db)
         .await
@@ -619,14 +637,17 @@ pub async fn backfill_list_member(
         "list" => sqlx::query_scalar!(
             r#"SELECT s.id FROM statuses s
                WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 'direct'
-                 AND (s.in_reply_to_id IS NULL OR EXISTS (
-                     SELECT 1 FROM statuses s2
-                     JOIN list_accounts la ON la.account_id = s2.account_id
-                     WHERE s2.id = s.in_reply_to_id AND la.list_id = $2
-                 ))
+                 AND (s.in_reply_to_id IS NULL
+                      OR s.in_reply_to_account_id = $3
+                      OR EXISTS (
+                          SELECT 1 FROM statuses s2
+                          JOIN list_accounts la ON la.account_id = s2.account_id
+                          WHERE s2.id = s.in_reply_to_id AND la.list_id = $2
+                      ))
                ORDER BY s.id DESC LIMIT 20"#,
             member_id,
             list_id,
+            owner_id,
         )
         .fetch_all(db)
         .await
