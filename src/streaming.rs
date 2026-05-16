@@ -32,6 +32,10 @@ pub enum Event {
         instance_id: Uuid,
         status_id: i64,
     },
+    /// Sent to a user's streaming connection when their custom filters change.
+    FiltersChanged {
+        for_account_id: i64,
+    },
 }
 
 #[derive(Clone)]

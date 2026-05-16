@@ -2373,12 +2373,16 @@ pub async fn build_status_with_app(
 ) -> AppResult<super::types::Status> {
     let viewer_account_id = viewer_ctx.as_ref().map(|c| c.account_id);
 
-    // Pre-fetch mentions for content rendering and the API `mentions` field
+    // Pre-fetch mentions and emojis for content rendering and API fields
     let mentions = fetch_status_mentions(state, s.id).await?;
-    let reblog_mentions = if let Some((ref rs, _, _)) = reblog {
-        fetch_status_mentions(state, rs.id).await?
+    let status_emojis = fetch_status_emojis(state, s).await;
+    let (reblog_mentions, reblog_emojis) = if let Some((ref rs, _, _)) = reblog {
+        (
+            fetch_status_mentions(state, rs.id).await?,
+            fetch_status_emojis(state, rs).await,
+        )
     } else {
-        vec![]
+        (vec![], vec![])
     };
 
     let mut api = super::convert::status_from_db_with_app(
@@ -2387,16 +2391,67 @@ pub async fn build_status_with_app(
     let id: i64 = api.id.parse().unwrap_or(0);
     api.tags = fetch_status_tags(state, id).await?;
     api.mentions = mentions;
+    api.emojis = status_emojis;
     api.poll = fetch_status_poll(state, id, viewer_account_id).await?;
     api.card = fetch_status_card(state, id).await;
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
         rb.tags = fetch_status_tags(state, rid).await?;
         rb.mentions = reblog_mentions;
+        rb.emojis = reblog_emojis;
         rb.poll = fetch_status_poll(state, rid, None).await?;
         rb.card = fetch_status_card(state, rid).await;
     }
     Ok(api)
+}
+
+/// Extract `:shortcode:` patterns from status text + spoiler and look them up
+/// in `custom_emojis` for the status's instance.
+async fn fetch_status_emojis(
+    state: &AppState,
+    s: &crate::db::models::Status,
+) -> Vec<super::types::CustomEmoji> {
+    let combined = format!("{} {}", s.spoiler_text, s.text);
+    let shortcodes: Vec<&str> = {
+        let mut v = Vec::new();
+        let mut rest = combined.as_str();
+        while let Some(start) = rest.find(':') {
+            rest = &rest[start + 1..];
+            if let Some(end) = rest.find(':') {
+                let code = &rest[..end];
+                if !code.is_empty() && code.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    v.push(code);
+                }
+                rest = &rest[end + 1..];
+            } else {
+                break;
+            }
+        }
+        v
+    };
+
+    if shortcodes.is_empty() {
+        return vec![];
+    }
+
+    let rows = sqlx::query!(
+        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+           FROM custom_emojis
+           WHERE instance_id = $1 AND shortcode = ANY($2) AND NOT disabled"#,
+        s.instance_id,
+        &shortcodes.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    rows.into_iter().map(|r| super::types::CustomEmoji {
+        shortcode: r.shortcode,
+        url: r.image_url.clone(),
+        static_url: r.static_image_url.unwrap_or(r.image_url),
+        visible_in_picker: r.visible_in_picker,
+        category: None,
+    }).collect()
 }
 
 /// Look up an already-cached preview card for a status. Never does network I/O.

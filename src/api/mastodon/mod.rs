@@ -119,6 +119,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/statuses/{id}/mute", post(statuses::mute_status))
         .route("/api/v1/statuses/{id}/unmute", post(statuses::unmute_status))
         .route("/api/v1/statuses/{id}/source", get(statuses::get_status_source))
+        .route("/api/v1/statuses/{id}/interaction_policy", patch(statuses::update_interaction_policy))
         // Blocks / Mutes lists
         .route("/api/v1/blocks", get(accounts::get_blocks))
         .route("/api/v1/mutes", get(accounts::get_mutes))
@@ -140,8 +141,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/notifications/{id}/dismiss", post(notifications::dismiss_notification))
         .route("/api/v2/notifications", get(notifications::get_notifications_v2))
         .route("/api/v2/notifications/policy", get(notifications::get_notification_policy).patch(notifications::update_notification_policy))
-        // Media — get / update
-        .route("/api/v1/media/{id}", get(media::get_media).put(media::update_media))
+        // Media — get / update / delete
+        .route("/api/v1/media/{id}", get(media::get_media).put(media::update_media).delete(media::delete_media))
         // Bookmarks / Favourites
         .route("/api/v1/bookmarks", get(bookmarks::get_bookmarks))
         .route("/api/v1/favourites", get(favourites::get_favourites))
@@ -302,6 +303,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/conversations", get(conversations::get_conversations))
         .route("/api/v1/conversations/{id}", delete(conversations::delete_conversation))
         .route("/api/v1/conversations/{id}/read", post(conversations::mark_conversation_read))
+        .route("/api/v1/conversations/{id}/unread", post(conversations::mark_conversation_unread))
         // OAuth
         .route("/api/v1/apps", post(oauth::register_app))
         .route("/api/{server}/login", post(oauth::elk_login))

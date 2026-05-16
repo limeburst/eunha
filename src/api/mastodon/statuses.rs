@@ -1808,6 +1808,30 @@ pub async fn get_status_card(
     }))
 }
 
+// ── PATCH /api/v1/statuses/:id/interaction_policy ─────────────────────────
+
+pub async fn update_interaction_policy(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Status>> {
+    auth.require_scope("write:statuses")?;
+    let status = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let account = super::accounts::fetch_account(&state, status.account_id).await?;
+    let media = super::accounts::fetch_status_media(&state, id).await?;
+    let reblog = fetch_reblog_data(&state, &status).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, id).await?;
+    Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /// Return NotFound if `viewer_id` cannot see `status` (private/direct visibility).

@@ -118,6 +118,7 @@ pub struct User {
     pub notif_filter_not_followers: bool,
     pub notif_filter_new_accounts: bool,
     pub notif_filter_private_mentions: bool,
+    pub notif_filter_limited_accounts: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

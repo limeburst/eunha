@@ -271,6 +271,36 @@ pub async fn confirm_email(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
+    if needs_approval {
+        // Notify all admin/moderator accounts on this instance about the new signup.
+        if let Ok(admins) = sqlx::query!(
+            r#"SELECT a.id FROM accounts a
+               JOIN users u ON u.account_id = a.id
+               WHERE a.instance_id = $1 AND u.role IN ('admin', 'moderator')"#,
+            pending.instance_id,
+        )
+        .fetch_all(&state.db)
+        .await
+        {
+            let state2 = state.clone();
+            let new_account_id_copy = account_id;
+            tokio::spawn(async move {
+                for admin in admins {
+                    crate::push::create_and_push(
+                        &state2,
+                        admin.id,
+                        new_account_id_copy,
+                        "admin.sign_up",
+                        None,
+                        "New account".to_string(),
+                        "A new account is awaiting approval.".to_string(),
+                        String::new(),
+                    ).await;
+                }
+            });
+        }
+    }
+
     if let Some(id) = pending.invite_id {
         let _ = sqlx::query!("UPDATE invites SET uses = uses + 1 WHERE id = $1", id)
             .execute(&state.db).await;

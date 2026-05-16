@@ -9,8 +9,13 @@ use crate::{
     error::{AppError, AppResult},
     middleware::AuthenticatedUser,
     state::AppState,
+    streaming::Event,
 };
 use super::types::{Filter, FilterKeyword, FilterStatus, FilterV1};
+
+fn publish_filters_changed(state: &AppState, account_id: i64) {
+    state.streaming.publish(Event::FiltersChanged { for_account_id: account_id });
+}
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -146,6 +151,7 @@ pub async fn create_filter_v2(
     }
 
     let filter = fetch_filter(&state, filter_id, auth.account_id).await?;
+    publish_filters_changed(&state, auth.account_id);
     Ok((StatusCode::OK, Json(filter)))
 }
 
@@ -226,7 +232,9 @@ pub async fn update_filter_v2(
         }
     }
 
-    fetch_filter(&state, id, auth.account_id).await.map(Json)
+    let filter = fetch_filter(&state, id, auth.account_id).await?;
+    publish_filters_changed(&state, auth.account_id);
+    Ok(Json(filter))
 }
 
 // ── DELETE /api/v2/filters/:id ────────────────────────────────────────────
@@ -248,6 +256,7 @@ pub async fn delete_filter_v2(
         return Err(AppError::NotFound);
     }
 
+    publish_filters_changed(&state, auth.account_id);
     Ok(Json(serde_json::json!({})))
 }
 
@@ -322,6 +331,7 @@ pub async fn create_filter_keyword(
     .fetch_one(&state.db)
     .await?;
 
+    publish_filters_changed(&state, auth.account_id);
     Ok((StatusCode::OK, Json(FilterKeyword {
         id: kid.to_string(),
         keyword: form.keyword,
@@ -379,6 +389,7 @@ pub async fn update_filter_keyword(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    publish_filters_changed(&state, auth.account_id);
     Ok(Json(FilterKeyword {
         id: updated.id.to_string(),
         keyword: updated.keyword,
@@ -407,6 +418,7 @@ pub async fn delete_filter_keyword(
         return Err(AppError::NotFound);
     }
 
+    publish_filters_changed(&state, auth.account_id);
     Ok(Json(serde_json::json!({})))
 }
 
@@ -476,6 +488,7 @@ pub async fn add_filter_status(
     .fetch_one(&state.db)
     .await?;
 
+    publish_filters_changed(&state, auth.account_id);
     Ok((StatusCode::OK, Json(FilterStatus {
         id: row_id.to_string(),
         status_id: status_id.to_string(),
@@ -529,6 +542,7 @@ pub async fn delete_filter_status(
         return Err(AppError::NotFound);
     }
 
+    publish_filters_changed(&state, auth.account_id);
     Ok(Json(serde_json::json!({})))
 }
 
@@ -651,6 +665,7 @@ pub async fn create_filter_v1(
     .fetch_one(&state.db)
     .await?;
 
+    publish_filters_changed(&state, auth.account_id);
     Ok((StatusCode::OK, Json(FilterV1 {
         id: f.id.to_string(),
         phrase: f.phrase,
@@ -704,6 +719,7 @@ pub async fn update_filter_v1(
     .fetch_one(&state.db)
     .await?;
 
+    publish_filters_changed(&state, auth.account_id);
     Ok(Json(FilterV1 {
         id: f.id.to_string(),
         phrase: f.phrase,
@@ -733,5 +749,6 @@ pub async fn delete_filter_v1(
         return Err(AppError::NotFound);
     }
 
+    publish_filters_changed(&state, auth.account_id);
     Ok(Json(serde_json::json!({})))
 }

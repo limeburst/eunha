@@ -133,6 +133,62 @@ pub async fn delete_conversation(
     Ok(Json(serde_json::json!({})))
 }
 
+// ── POST /api/v1/conversations/:id/unread ────────────────────────────────
+
+pub async fn mark_conversation_unread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Conversation>> {
+    let updated = sqlx::query!(
+        "UPDATE conversation_participants SET unread = true WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
+        id,
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if updated.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let participants = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN conversation_participants cp ON cp.account_id = a.id
+           WHERE cp.conversation_id = $1 AND a.id != $2"#,
+        id,
+        auth.account_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let last = sqlx::query_as!(
+        crate::db::models::Status,
+        "SELECT * FROM statuses WHERE conversation_id = $1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let last_status = if let Some(s) = last {
+        let saccount = fetch_account(&state, s.account_id).await?;
+        let media = fetch_status_media(&state, s.id).await?;
+        let reblog = fetch_reblog_data(&state, &s).await?;
+        let ctx = build_viewer_context(&state, auth.account_id, s.id).await?;
+        Some(build_status(&state, &s, &saccount, media, reblog, Some(ctx)).await?)
+    } else {
+        None
+    };
+
+    Ok(Json(Conversation {
+        id: id.to_string(),
+        unread: true,
+        accounts: participants.iter().map(account_from_db).collect(),
+        last_status,
+    }))
+}
+
 // ── POST /api/v1/conversations/:id/read ──────────────────────────────────
 
 pub async fn mark_conversation_read(

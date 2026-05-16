@@ -426,7 +426,8 @@ async fn should_filter_notification(
 
     let policy = sqlx::query!(
         r#"SELECT notif_filter_not_following, notif_filter_not_followers,
-                  notif_filter_new_accounts, notif_filter_private_mentions
+                  notif_filter_new_accounts, notif_filter_private_mentions,
+                  notif_filter_limited_accounts
            FROM users WHERE account_id = $1"#,
         recipient_id,
     )
@@ -443,6 +444,7 @@ async fn should_filter_notification(
         && !policy.notif_filter_not_followers
         && !policy.notif_filter_new_accounts
         && !policy.notif_filter_private_mentions
+        && !policy.notif_filter_limited_accounts
     {
         return false; // All filters off
     }
@@ -517,6 +519,22 @@ async fn should_filter_notification(
             if is_private_unsolicited {
                 return true;
             }
+        }
+    }
+
+    // filter_limited_accounts: sender is silenced/limited on this instance
+    if policy.notif_filter_limited_accounts {
+        let is_limited = sqlx::query_scalar!(
+            "SELECT 1 FROM accounts WHERE id = $1 AND silenced_at IS NOT NULL",
+            from_account_id,
+        )
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if is_limited {
+            return true;
         }
     }
 

@@ -48,6 +48,17 @@ impl Storage {
     pub fn public_url(&self, key: &str) -> String {
         format!("{}/{}", self.base_url.trim_end_matches('/'), key)
     }
+
+    pub async fn delete(&self, key: &str) -> AppResult<()> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("S3 delete: {}", e)))?;
+        Ok(())
+    }
 }
 
 // ── Key generation ────────────────────────────────────────────────────────

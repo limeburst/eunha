@@ -702,10 +702,11 @@ pub struct NotificationGroup {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct NotificationPolicy {
-    pub filter_not_following: bool,
-    pub filter_not_followers: bool,
-    pub filter_new_accounts: bool,
-    pub filter_private_mentions: bool,
+    pub for_not_following: String,
+    pub for_not_followers: String,
+    pub for_new_accounts: String,
+    pub for_private_mentions: String,
+    pub for_limited_accounts: String,
     pub summary: NotificationPolicySummary,
 }
 

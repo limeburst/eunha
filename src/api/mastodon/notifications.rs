@@ -306,6 +306,14 @@ pub async fn get_notifications_unread_count(
 
 // ── GET /api/v2/notifications/policy ─────────────────────────────────────
 
+fn bool_to_policy(b: bool) -> String {
+    if b { "filter".to_string() } else { "accept".to_string() }
+}
+
+fn policy_to_bool(s: &str) -> bool {
+    matches!(s, "filter" | "drop")
+}
+
 pub async fn get_notification_policy(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
@@ -313,18 +321,21 @@ pub async fn get_notification_policy(
     auth.require_scope("read:notifications")?;
     let user = sqlx::query!(
         r#"SELECT notif_filter_not_following, notif_filter_not_followers,
-                  notif_filter_new_accounts, notif_filter_private_mentions
+                  notif_filter_new_accounts, notif_filter_private_mentions,
+                  notif_filter_limited_accounts
            FROM users WHERE account_id = $1"#,
         auth.account_id,
     )
     .fetch_one(&state.db)
     .await?;
 
-    let (pending_requests, pending_notifs) = if user.notif_filter_not_following
+    let any_filter = user.notif_filter_not_following
         || user.notif_filter_not_followers
         || user.notif_filter_new_accounts
         || user.notif_filter_private_mentions
-    {
+        || user.notif_filter_limited_accounts;
+
+    let (pending_requests, pending_notifs) = if any_filter {
         let pending_requests: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM notification_requests WHERE account_id = $1 AND NOT dismissed",
             auth.account_id,
@@ -345,10 +356,11 @@ pub async fn get_notification_policy(
     };
 
     Ok(Json(NotificationPolicy {
-        filter_not_following: user.notif_filter_not_following,
-        filter_not_followers: user.notif_filter_not_followers,
-        filter_new_accounts: user.notif_filter_new_accounts,
-        filter_private_mentions: user.notif_filter_private_mentions,
+        for_not_following: bool_to_policy(user.notif_filter_not_following),
+        for_not_followers: bool_to_policy(user.notif_filter_not_followers),
+        for_new_accounts: bool_to_policy(user.notif_filter_new_accounts),
+        for_private_mentions: bool_to_policy(user.notif_filter_private_mentions),
+        for_limited_accounts: bool_to_policy(user.notif_filter_limited_accounts),
         summary: NotificationPolicySummary {
             pending_requests_count: pending_requests,
             pending_notifications_count: pending_notifs,
@@ -360,10 +372,11 @@ pub async fn get_notification_policy(
 
 #[derive(Debug, Deserialize, Default)]
 pub struct UpdateNotificationPolicyForm {
-    pub filter_not_following: Option<bool>,
-    pub filter_not_followers: Option<bool>,
-    pub filter_new_accounts: Option<bool>,
-    pub filter_private_mentions: Option<bool>,
+    pub for_not_following: Option<String>,
+    pub for_not_followers: Option<String>,
+    pub for_new_accounts: Option<String>,
+    pub for_private_mentions: Option<String>,
+    pub for_limited_accounts: Option<String>,
 }
 
 pub async fn update_notification_policy(
@@ -372,19 +385,26 @@ pub async fn update_notification_policy(
     Json(form): Json<UpdateNotificationPolicyForm>,
 ) -> AppResult<Json<NotificationPolicy>> {
     auth.require_scope("write:notifications")?;
+    let filter_not_following    = form.for_not_following.as_deref().map(policy_to_bool);
+    let filter_not_followers    = form.for_not_followers.as_deref().map(policy_to_bool);
+    let filter_new_accounts     = form.for_new_accounts.as_deref().map(policy_to_bool);
+    let filter_private_mentions = form.for_private_mentions.as_deref().map(policy_to_bool);
+    let filter_limited_accounts = form.for_limited_accounts.as_deref().map(policy_to_bool);
     sqlx::query!(
         r#"UPDATE users SET
                notif_filter_not_following    = COALESCE($2, notif_filter_not_following),
                notif_filter_not_followers    = COALESCE($3, notif_filter_not_followers),
                notif_filter_new_accounts     = COALESCE($4, notif_filter_new_accounts),
                notif_filter_private_mentions = COALESCE($5, notif_filter_private_mentions),
+               notif_filter_limited_accounts = COALESCE($6, notif_filter_limited_accounts),
                updated_at = now()
            WHERE account_id = $1"#,
         auth.account_id,
-        form.filter_not_following,
-        form.filter_not_followers,
-        form.filter_new_accounts,
-        form.filter_private_mentions,
+        filter_not_following,
+        filter_not_followers,
+        filter_new_accounts,
+        filter_private_mentions,
+        filter_limited_accounts,
     )
     .execute(&state.db)
     .await?;

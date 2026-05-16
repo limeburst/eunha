@@ -227,6 +227,32 @@ pub async fn update_media(
     Ok(Json(media_from_db(&updated)))
 }
 
+// ── DELETE /api/v1/media/:id ──────────────────────────────────────────────
+
+pub async fn delete_media(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<axum::http::StatusCode> {
+    let attachment = sqlx::query_as!(
+        crate::db::models::MediaAttachment,
+        "DELETE FROM media_attachments WHERE id = $1 AND account_id = $2 AND status_id IS NULL RETURNING *",
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if let Some(key) = &attachment.file_key {
+        let _ = state.storage.delete(key).await;
+    }
+    if let Some(key) = &attachment.preview_key {
+        let _ = state.storage.delete(key).await;
+    }
+
+    Ok(axum::http::StatusCode::OK)
+}
+
 fn classify_media_type(content_type: &str) -> &'static str {
     if content_type.starts_with("image/gif") {
         "gifv"

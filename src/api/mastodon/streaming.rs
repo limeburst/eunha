@@ -405,6 +405,23 @@ fn to_wire(
                 .to_string(),
             )
         }
+
+        Event::FiltersChanged { for_account_id } => {
+            if stream != "user" {
+                return None;
+            }
+            if account_id != Some(*for_account_id) {
+                return None;
+            }
+            Some(
+                serde_json::json!({
+                    "stream": ["user"],
+                    "event": "filters_changed",
+                    "payload": "",
+                })
+                .to_string(),
+            )
+        }
     }
 }
 
@@ -518,7 +535,7 @@ async fn to_wire_authenticated(
             }).to_string())
         }
 
-        Event::Notification { .. } => None,
+        Event::Notification { .. } | Event::FiltersChanged { .. } => None,
     }
 }
 

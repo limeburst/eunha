@@ -312,10 +312,11 @@ async fn test_notification_policy_defaults() {
     assert_eq!(resp.status(), StatusCode::OK);
     let policy: Value = resp.json().await.unwrap();
 
-    assert_eq!(policy["filter_not_following"].as_bool(), Some(false));
-    assert_eq!(policy["filter_not_followers"].as_bool(), Some(false));
-    assert_eq!(policy["filter_new_accounts"].as_bool(), Some(false));
-    assert_eq!(policy["filter_private_mentions"].as_bool(), Some(false));
+    assert_eq!(policy["for_not_following"].as_str(), Some("accept"));
+    assert_eq!(policy["for_not_followers"].as_str(), Some("accept"));
+    assert_eq!(policy["for_new_accounts"].as_str(), Some("accept"));
+    assert_eq!(policy["for_private_mentions"].as_str(), Some("accept"));
+    assert_eq!(policy["for_limited_accounts"].as_str(), Some("accept"));
     assert!(policy["summary"].is_object(), "summary field missing");
 }
 
@@ -336,14 +337,14 @@ async fn test_notification_policy_update() {
         .patch(ctx.api.url("/api/v2/notifications/policy"))
         .header("host", &ctx.api.host)
         .bearer_auth(&ctx.alice_token)
-        .json(&json!({"filter_not_following": true}))
+        .json(&json!({"for_not_following": "filter"}))
         .send()
         .await
         .unwrap();
     assert_eq!(patch_resp.status(), StatusCode::OK);
     let policy: Value = patch_resp.json().await.unwrap();
-    assert_eq!(policy["filter_not_following"].as_bool(), Some(true));
-    assert_eq!(policy["filter_not_followers"].as_bool(), Some(false), "unchanged field should stay false");
+    assert_eq!(policy["for_not_following"].as_str(), Some("filter"));
+    assert_eq!(policy["for_not_followers"].as_str(), Some("accept"), "unchanged field should stay accept");
 }
 
 /// GET /api/v1/notifications/requests returns an empty list initially.
@@ -368,7 +369,7 @@ async fn test_notification_request_dismiss_and_accept() {
         .patch(ctx.api.url("/api/v2/notifications/policy"))
         .header("host", &ctx.api.host)
         .bearer_auth(&ctx.alice_token)
-        .json(&json!({"filter_not_following": true}))
+        .json(&json!({"for_not_following": "filter"}))
         .send()
         .await
         .unwrap();
@@ -437,7 +438,7 @@ async fn test_notification_requests_dismiss_all() {
         .patch(ctx.api.url("/api/v2/notifications/policy"))
         .header("host", &ctx.api.host)
         .bearer_auth(&ctx.alice_token)
-        .json(&json!({"filter_not_following": true}))
+        .json(&json!({"for_not_following": "filter"}))
         .send()
         .await
         .unwrap();
@@ -472,7 +473,7 @@ async fn test_notification_requests_accept_all() {
         .patch(ctx.api.url("/api/v2/notifications/policy"))
         .header("host", &ctx.api.host)
         .bearer_auth(&ctx.alice_token)
-        .json(&json!({"filter_not_following": true}))
+        .json(&json!({"for_not_following": "filter"}))
         .send()
         .await
         .unwrap();
