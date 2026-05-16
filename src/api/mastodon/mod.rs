@@ -196,6 +196,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/admin/email_domain_blocks/{id}", get(admin::get_email_domain_block).delete(admin::delete_email_domain_block))
         // Account move and aliases
         .route("/api/v1/accounts/move", post(accounts::move_account))
+        .route("/api/v1/profile/avatar", delete(accounts::delete_profile_avatar))
+        .route("/api/v1/profile/header", delete(accounts::delete_profile_header))
         .route("/api/v1/profile/aliases", get(accounts::list_aliases).post(accounts::create_alias))
         .route("/api/v1/profile/aliases/{id}", delete(accounts::delete_alias))
         // Suggestions

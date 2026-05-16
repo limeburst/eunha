@@ -2077,6 +2077,50 @@ pub async fn update_profile_settings(
     Ok(Json(account_from_db(&account)))
 }
 
+// ── DELETE /api/v1/profile/avatar ────────────────────────────────────────
+
+pub async fn delete_profile_avatar(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<super::types::Account>> {
+    sqlx::query!(
+        "UPDATE accounts SET avatar = NULL, avatar_static = NULL WHERE id = $1",
+        auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    let account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(account_from_db(&account)))
+}
+
+// ── DELETE /api/v1/profile/header ────────────────────────────────────────
+
+pub async fn delete_profile_header(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<super::types::Account>> {
+    sqlx::query!(
+        "UPDATE accounts SET header = NULL, header_static = NULL WHERE id = $1",
+        auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+    let account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(account_from_db(&account)))
+}
+
 // ── GET /api/v1/accounts/familiar_followers ──────────────────────────────
 
 pub async fn get_familiar_followers(
