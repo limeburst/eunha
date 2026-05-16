@@ -222,6 +222,21 @@ pub struct InstanceConfiguration {
     pub media_attachments: MediaConfiguration,
     pub polls: PollsConfiguration,
     pub translation: TranslationConfiguration,
+    pub timelines_access: TimelinesAccess,
+    pub limited_federation: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimelinesAccess {
+    pub live_feeds: TimelineAccessControl,
+    pub hashtag_feeds: TimelineAccessControl,
+    pub trending_link_feeds: TimelineAccessControl,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimelineAccessControl {
+    pub local: bool,
+    pub remote: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -247,6 +262,8 @@ pub struct AccountsConfiguration {
     pub max_note_length: u32,
     pub max_avatar_description_length: u32,
     pub max_header_description_length: u32,
+    pub profile_field_name_limit: u32,
+    pub profile_field_value_limit: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -420,7 +437,7 @@ pub struct Relationship {
     pub following: bool,
     pub showing_reblogs: bool,
     pub notifying: bool,
-    pub languages: Vec<String>,
+    pub languages: Option<Vec<String>>,
     pub followed_by: bool,
     pub blocking: bool,
     pub blocked_by: bool,
@@ -538,7 +555,12 @@ pub struct InstanceV1 {
     pub version: String,
     pub urls: InstanceV1Urls,
     pub stats: InstanceV1Stats,
+    pub thumbnail: String,
     pub languages: Vec<String>,
+    pub registrations: bool,
+    pub approval_required: bool,
+    pub invites_enabled: bool,
+    pub configuration: serde_json::Value,
     pub contact_account: Option<Account>,
     pub rules: Vec<Rule>,
 }
@@ -600,7 +622,7 @@ pub struct FeaturedTag {
     pub id: String,
     pub name: String,
     pub url: String,
-    pub statuses_count: i64,
+    pub statuses_count: String,
     pub last_status_at: Option<String>,
 }
 
@@ -648,6 +670,7 @@ pub struct Report {
     pub created_at: String,
     pub status_ids: Option<Vec<String>>,
     pub rule_ids: Option<Vec<String>>,
+    pub collection_ids: Vec<String>,
     pub target_account: Account,
 }
 

@@ -1650,7 +1650,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
 
     let showing_reblogs = follow.as_ref().map_or(true, |f| f.show_reblogs);
     let notifying = follow.as_ref().map_or(false, |f| f.notify);
-    let languages = follow.as_ref().map_or(vec![], |f| f.languages.clone());
+    let languages = follow.as_ref().map(|f| f.languages.clone());
     let muting_expires_at = muting.as_ref().and_then(|m| m.expires_at)
         .map(|t| t.to_rfc3339());
 
@@ -2021,7 +2021,7 @@ pub async fn get_account_featured_tags(
             id: r.id.to_string(),
             name: r.name.clone(),
             url: format!("https://{}/tags/{}", domain, r.name),
-            statuses_count: r.statuses_count,
+            statuses_count: r.statuses_count.to_string(),
             last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         })
         .collect();

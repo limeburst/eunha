@@ -41,7 +41,7 @@ pub async fn list_featured_tags(
             id: r.id.to_string(),
             name: r.name.clone(),
             url: tag_url(domain, &r.name),
-            statuses_count: r.statuses_count,
+            statuses_count: r.statuses_count.to_string(),
             last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         })
         .collect();
@@ -91,7 +91,7 @@ pub async fn feature_tag(
         id: row.id.to_string(),
         name: name.to_string(),
         url: tag_url(domain, name),
-        statuses_count: row.statuses_count,
+        statuses_count: row.statuses_count.to_string(),
         last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
     }))
 }

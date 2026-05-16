@@ -99,6 +99,7 @@ pub async fn file_report(
         created_at: report.created_at.to_rfc3339(),
         status_ids: if status_id_strings.is_empty() { None } else { Some(status_id_strings) },
         rule_ids: None,
+        collection_ids: vec![],
         target_account: account_from_db(&target_account),
     }))
 }

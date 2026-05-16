@@ -19,6 +19,7 @@ use crate::{
 pub struct PushSubscription {
     pub id: String,
     pub endpoint: String,
+    pub standard: bool,
     pub alerts: PushAlerts,
     pub policy: String,
     pub server_key: String,
@@ -137,6 +138,7 @@ pub async fn create_subscription(
     Ok(Json(PushSubscription {
         id: row.id.to_string(),
         endpoint: body.subscription.endpoint,
+        standard: false,
         alerts: PushAlerts {
             follow: row.alert_follow,
             favourite: row.alert_favourite,
@@ -179,6 +181,7 @@ pub async fn get_subscription(
     Ok(Json(PushSubscription {
         id: row.id.to_string(),
         endpoint: row.endpoint,
+        standard: false,
         alerts: PushAlerts {
             follow: row.alert_follow,
             favourite: row.alert_favourite,
@@ -246,6 +249,7 @@ pub async fn update_subscription(
     Ok(Json(PushSubscription {
         id: row.id.to_string(),
         endpoint: row.endpoint,
+        standard: false,
         alerts: PushAlerts {
             follow: row.alert_follow,
             favourite: row.alert_favourite,

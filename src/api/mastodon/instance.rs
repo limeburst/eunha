@@ -62,20 +62,54 @@ pub async fn get_instance_v1(
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
     let (user_count, status_count, domain_count) = fetch_stats(&state, instance.id).await;
 
+    let base_url = format!("https://{}", instance.domain);
     Ok(Json(InstanceV1 {
         uri: instance.domain.clone(),
         title: instance.title.clone(),
         short_description: instance.short_description.clone(),
         description: instance.description.clone(),
         email: instance.contact_email.clone().unwrap_or_default(),
-        version: "0.0.1".to_string(),
+        version: "0.0.1 (compatible; Mastodon 4.3.0)".to_string(),
         urls: InstanceV1Urls { streaming_api: streaming_url },
         stats: InstanceV1Stats {
             user_count,
             status_count,
             domain_count,
         },
+        thumbnail: instance.icon_url.clone().unwrap_or_else(|| format!("{base_url}/instance-thumbnail.png")),
         languages: vec!["en".to_string()],
+        registrations: instance.registrations_open,
+        approval_required: instance.approval_required,
+        invites_enabled: false,
+        configuration: serde_json::json!({
+            "accounts": { "max_featured_tags": 10 },
+            "statuses": {
+                "max_characters": 500,
+                "max_media_attachments": 4,
+                "characters_reserved_per_url": 23,
+            },
+            "media_attachments": {
+                "supported_mime_types": [
+                    "image/jpeg","image/png","image/gif","image/heic","image/heif",
+                    "image/webp","image/avif","video/webm","video/mp4","video/quicktime",
+                    "video/ogg","audio/wave","audio/wav","audio/x-wav","audio/x-pn-wave",
+                    "audio/vnd.wave","audio/ogg","audio/vorbis","audio/mpeg","audio/mp3",
+                    "audio/webm","audio/flac","audio/aac","audio/m4a","audio/x-m4a",
+                    "audio/mp4","audio/3gpp","video/x-ms-asf"
+                ],
+                "image_size_limit": 16777216,
+                "image_matrix_limit": 33177600,
+                "video_size_limit": 103809024,
+                "video_frame_rate_limit": 120,
+                "video_matrix_limit": 8294400,
+            },
+            "polls": {
+                "max_options": 4,
+                "max_characters_per_option": 50,
+                "min_expiration": 300,
+                "max_expiration": 2629746,
+            },
+        }),
         contact_account: None,
         rules: instance.rules.as_array()
             .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
@@ -158,6 +192,8 @@ pub async fn get_instance_v2(
                 max_note_length: 500,
                 max_avatar_description_length: 1500,
                 max_header_description_length: 1500,
+                profile_field_name_limit: 255,
+                profile_field_value_limit: 255,
             },
             statuses: StatusesConfiguration {
                 max_characters: 500,
@@ -209,6 +245,12 @@ pub async fn get_instance_v2(
                 max_expiration: 2_629_746,
             },
             translation: TranslationConfiguration { enabled: false },
+            timelines_access: TimelinesAccess {
+                live_feeds: TimelineAccessControl { local: true, remote: true },
+                hashtag_feeds: TimelineAccessControl { local: true, remote: true },
+                trending_link_feeds: TimelineAccessControl { local: true, remote: true },
+            },
+            limited_federation: false,
         },
         registrations: InstanceRegistrations {
             enabled: instance.registrations_open,
