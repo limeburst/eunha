@@ -304,7 +304,7 @@ async fn migrate_accounts(
     dst: &mut PgConnection,
     instance_id: Uuid,
     limit: Option<i64>,
-    _args_domain: &str,
+    instance_domain: &str,
 ) -> Result<HashMap<i64, i64>> {
     let rows = sqlx::query(
         r#"SELECT a.*,
@@ -344,8 +344,22 @@ async fn migrate_accounts(
         let username: String = row.try_get("username").unwrap_or_default();
         let display_name: Option<String> = row.try_get("display_name").ok().flatten();
         let note: Option<String> = row.try_get("note").ok().flatten();
-        let url: Option<String> = row.try_get("url").ok().flatten();
-        let uri: Option<String> = row.try_get("uri").ok().flatten();
+        let url_src: Option<String> = row.try_get("url").ok().flatten();
+        let uri_src: Option<String> = row.try_get("uri").ok().flatten();
+        // For local accounts, Mastodon may leave url/uri empty — derive them.
+        let (url, uri, inbox_url_derived, outbox_url_derived) = if is_local {
+            let base_uri = uri_src.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+                format!("https://{}/users/{}", instance_domain, username)
+            });
+            let base_url = url_src.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+                format!("https://{}/@{}", instance_domain, username)
+            });
+            let inbox = format!("{}/inbox", base_uri);
+            let outbox = format!("{}/outbox", base_uri);
+            (Some(base_url), Some(base_uri), Some(inbox), Some(outbox))
+        } else {
+            (url_src, uri_src, None, None)
+        };
         let locked: Option<bool> = row.try_get("locked").ok().flatten();
         // Mastodon ≥3.x uses actor_type enum; older versions have a direct `bot` boolean
         let bot: bool = row.try_get::<bool, _>("bot").ok().unwrap_or_else(|| {
@@ -360,8 +374,10 @@ async fn migrate_accounts(
         let followers_count: Option<i64> = row.try_get("followers_count").ok().flatten();
         let following_count: Option<i64> = row.try_get("following_count").ok().flatten();
         let statuses_count: Option<i64> = row.try_get("statuses_count").ok().flatten();
-        let inbox_url: Option<String> = row.try_get("inbox_url").ok().flatten();
-        let outbox_url: Option<String> = row.try_get("outbox_url").ok().flatten();
+        let inbox_url: Option<String> = inbox_url_derived
+            .or_else(|| row.try_get("inbox_url").ok().flatten());
+        let outbox_url: Option<String> = outbox_url_derived
+            .or_else(|| row.try_get("outbox_url").ok().flatten());
         let shared_inbox_url: Option<String> = row.try_get("shared_inbox_url").ok().flatten();
         let suspended_at = get_ts_opt(&row, "suspended_at");
         let silenced_at = get_ts_opt(&row, "silenced_at");
