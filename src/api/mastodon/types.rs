@@ -622,7 +622,7 @@ pub struct FeaturedTag {
     pub id: String,
     pub name: String,
     pub url: String,
-    pub statuses_count: String,
+    pub statuses_count: i64,
     pub last_status_at: Option<String>,
 }
 

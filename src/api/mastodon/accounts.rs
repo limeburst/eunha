@@ -2052,7 +2052,7 @@ pub async fn get_account_featured_tags(
             id: r.id.to_string(),
             name: r.name.clone(),
             url: format!("https://{}/tags/{}", domain, r.name),
-            statuses_count: r.statuses_count.to_string(),
+            statuses_count: r.statuses_count,
             last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         })
         .collect();

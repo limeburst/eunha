@@ -343,7 +343,8 @@ pub async fn post_status(
     };
 
     let media = fetch_status_media(&state, status.id).await?;
-    let api_status = super::accounts::build_status_with_app(&state, &status, &account, media, None, None, application).await?;
+    let viewer_ctx = build_viewer_context(&state, auth.account_id, status.id).await.ok();
+    let api_status = super::accounts::build_status_with_app(&state, &status, &account, media, None, viewer_ctx, application).await?;
 
     spawn_card_fetch(&state, status.id, content);
 

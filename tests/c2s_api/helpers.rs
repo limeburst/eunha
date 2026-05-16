@@ -353,8 +353,8 @@ pub async fn seed_account_and_token(
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
              (id, instance_id, username, display_name, note, note_text,
-              url, uri, public_key, inbox_url, outbox_url)
-           VALUES ($1,$2,$3,$3,'','', $4,$5,'test-public-key',$5||'/inbox',$5||'/outbox')
+              url, uri, public_key, inbox_url, outbox_url, discoverable)
+           VALUES ($1,$2,$3,$3,'','', $4,$5,'test-public-key',$5||'/inbox',$5||'/outbox', true)
            RETURNING id"#,
         eunha::snowflake::next_id(),
         instance_id,
