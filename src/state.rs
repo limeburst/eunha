@@ -8,6 +8,7 @@ use crate::streaming::StreamBus;
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub redis: redis::aio::ConnectionManager,
     pub config: Arc<Config>,
     pub http: reqwest::Client,
     pub email: EmailSender,
@@ -16,7 +17,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(db: PgPool, config: Config) -> Self {
+    pub async fn new(db: PgPool, config: Config) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("eunha/", env!("CARGO_PKG_VERSION"), " (ActivityPub)"))
             .timeout(std::time::Duration::from_secs(30))
@@ -30,13 +31,17 @@ impl AppState {
             config.resend.from.clone(),
         );
 
-        Self {
+        let redis_client = redis::Client::open(config.redis_url.as_str())?;
+        let redis = redis::aio::ConnectionManager::new(redis_client).await?;
+
+        Ok(Self {
             db,
+            redis,
             config: Arc::new(config),
             http,
             email,
             streaming: StreamBus::new(),
             storage,
-        }
+        })
     }
 }

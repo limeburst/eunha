@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!("./migrations").run(&db).await?;
 
-    let state = state::AppState::new(db, config.clone()).await;
+    let state = state::AppState::new(db, config.clone()).await?;
     eunha::background::spawn(state.clone());
     let app = build_app(state);
 

@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::{
     db::models::{Account, Status as DbStatus},
     error::{AppError, AppResult},
+    feed,
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
@@ -157,6 +158,7 @@ pub async fn home_timeline(
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:statuses")?;
@@ -165,7 +167,132 @@ pub async fn home_timeline(
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let statuses = if min_id.is_some() {
+    // Try Redis feed first; fall back to DB on cold start.
+    let mut redis = state.redis.clone();
+    let redis_ids = feed::feed_get(
+        &mut redis,
+        instance.id,
+        auth.account_id,
+        max_id,
+        since_id,
+        min_id,
+        // Over-fetch to account for rows filtered at read time
+        (limit * 3) as isize,
+    )
+    .await;
+
+    let statuses = if let Some(ids) = redis_ids {
+        // Redis path: hydrate the IDs from DB with read-time filters applied
+        hydrate_home_statuses(&state, &ids, auth.account_id, min_id.is_some(), limit).await?
+    } else {
+        // Cold start: populate feed in background, use DB for this request
+        {
+            let mut redis2 = state.redis.clone();
+            let db = state.db.clone();
+            let iid = instance.id;
+            let account_id = auth.account_id;
+            tokio::spawn(async move {
+                feed::feed_populate(&mut redis2, iid, account_id, &db).await;
+            });
+        }
+        home_timeline_from_db(&state, auth.account_id, max_id, since_id, min_id, limit).await?
+    };
+
+    let result = build_status_list_with_context(&state, statuses, Some(auth.account_id), "home").await?;
+    let resp = with_pagination_link(&req_headers, &uri, result);
+    Ok(resp)
+}
+
+// Hydrate status IDs from a Redis feed with viewer-specific read-time filters applied.
+async fn hydrate_home_statuses(
+    state: &AppState,
+    ids: &[i64],
+    viewer_id: i64,
+    asc: bool,
+    limit: i64,
+) -> AppResult<Vec<DbStatus>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut statuses = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.*
+           FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE s.id = ANY($2::bigint[])
+           AND s.deleted_at IS NULL
+           AND a.suspended_at IS NULL
+           AND (a.domain IS NULL OR NOT EXISTS (
+               SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+           ))
+           AND NOT EXISTS (
+               SELECT 1 FROM mutes m
+               WHERE m.account_id = $1 AND m.target_account_id = s.account_id
+               AND (m.expires_at IS NULL OR m.expires_at > now())
+           )
+           AND (s.account_id = $1 OR NOT EXISTS (
+               SELECT 1 FROM blocks b
+               WHERE (b.account_id = $1 AND b.target_account_id = s.account_id)
+                  OR (b.account_id = s.account_id AND b.target_account_id = $1)
+           ))
+           AND (s.reblog_of_id IS NULL OR NOT EXISTS (
+               SELECT 1 FROM statuses orig
+               JOIN blocks b ON (
+                   (b.account_id = $1 AND b.target_account_id = orig.account_id)
+                   OR (b.account_id = orig.account_id AND b.target_account_id = $1)
+               )
+               WHERE orig.id = s.reblog_of_id
+           ))
+           AND NOT (
+               s.reblog_of_id IS NOT NULL
+               AND EXISTS (
+                   SELECT 1 FROM follows f
+                   WHERE f.account_id = $1 AND f.target_account_id = s.account_id
+                   AND f.show_reblogs = false
+               )
+           )
+           AND (s.account_id = $1 OR NOT EXISTS (
+               SELECT 1 FROM list_accounts la
+               JOIN lists l ON l.id = la.list_id
+               WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
+           ))
+           AND (
+               s.visibility != 'direct'
+               OR s.account_id = $1
+               OR EXISTS (
+                   SELECT 1 FROM mentions m
+                   WHERE m.status_id = s.id AND m.account_id = $1
+               )
+           )
+           AND (s.text != ''
+                OR s.reblog_of_id IS NOT NULL
+                OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))"#,
+        viewer_id,
+        ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    // Preserve Redis ordering (DESC by default, ASC for min_id requests)
+    if asc {
+        statuses.sort_by_key(|s| s.id);
+    } else {
+        statuses.sort_by_key(|s| std::cmp::Reverse(s.id));
+    }
+    statuses.truncate(limit as usize);
+    Ok(statuses)
+}
+
+// DB fallback used on cold start (feed not yet populated in Redis).
+async fn home_timeline_from_db(
+    state: &AppState,
+    account_id: i64,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+    min_id: Option<i64>,
+    limit: i64,
+) -> AppResult<Vec<DbStatus>> {
+    if min_id.is_some() {
         sqlx::query_as!(
             DbStatus,
             r#"WITH candidate_ids AS MATERIALIZED (
@@ -239,12 +366,13 @@ pub async fn home_timeline(
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                ORDER BY s.id ASC
                LIMIT $3"#,
-            auth.account_id,
+            account_id,
             min_id,
             limit,
         )
         .fetch_all(&state.db)
-        .await?
+        .await
+        .map_err(AppError::from)
     } else {
         sqlx::query_as!(
             DbStatus,
@@ -321,18 +449,15 @@ pub async fn home_timeline(
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                ORDER BY s.id DESC
                LIMIT $4"#,
-            auth.account_id,
+            account_id,
             max_id,
             since_id,
             limit,
         )
         .fetch_all(&state.db)
-        .await?
-    };
-
-    let result = build_status_list_with_context(&state, statuses, Some(auth.account_id), "home").await?;
-    let resp = with_pagination_link(&req_headers, &uri, result);
-    Ok(resp)
+        .await
+        .map_err(AppError::from)
+    }
 }
 
 // ── GET /api/v1/timelines/list/:id ───────────────────────────────────────

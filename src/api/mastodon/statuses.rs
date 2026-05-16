@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::{
     db::models::{Account, Status as DbStatus},
     error::{AppError, AppResult},
+    feed,
     middleware::{AuthenticatedUser, ResolvedInstance},
     push,
     state::AppState,
@@ -429,6 +430,26 @@ pub async fn post_status(
         }
     }
 
+    // Fan-out to follower feeds in background (non-blocking)
+    {
+        let tag_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
+            "SELECT tag_id FROM status_tags WHERE status_id = $1",
+            status.id
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        let mut redis = state.redis.clone();
+        let db = state.db.clone();
+        let iid = instance.id;
+        let author_id = account.id;
+        let status_id = status.id;
+        tokio::spawn(async move {
+            feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
+        });
+    }
+
     Ok((axum::http::StatusCode::OK, Json(api_status)).into_response())
 }
 
@@ -780,6 +801,17 @@ pub async fn delete_status(
         instance_id: status.instance_id,
         status_id: id,
     });
+
+    // Remove from follower feeds in background
+    {
+        let mut redis = state.redis.clone();
+        let db = state.db.clone();
+        let iid = status.instance_id;
+        let author_id = account.id;
+        tokio::spawn(async move {
+            feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
+        });
+    }
 
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &status).await?;

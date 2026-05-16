@@ -3,6 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub database_url: String,
+    pub redis_url: String,
     pub bind_address: String,
     pub console_domain: String,
     pub media_storage: MediaStorageConfig,

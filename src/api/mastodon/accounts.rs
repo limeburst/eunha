@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::{
     db::models::Account,
     error::{AppError, AppResult},
+    feed,
     middleware::{AuthenticatedUser, ResolvedInstance},
     push,
     state::AppState,
@@ -475,6 +476,7 @@ pub struct FollowParams {
 pub async fn follow_account(
     State(state): State<AppState>,
     Path(target_id): Path<i64>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<FollowParams>>,
 ) -> AppResult<Json<Relationship>> {
@@ -560,6 +562,15 @@ pub async fn follow_account(
             follower.acct().clone(),
             follower.avatar.clone().unwrap_or_default(),
         ).await;
+
+        // Backfill the new follower's feed with recent statuses from the followed account
+        let mut redis = state.redis.clone();
+        let db = state.db.clone();
+        let iid = instance.id;
+        let follower_id = auth.account_id;
+        tokio::spawn(async move {
+            feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
+        });
     } else {
         let requester = fetch_account(&state, auth.account_id).await?;
         push::create_and_push(
@@ -1319,6 +1330,7 @@ pub async fn get_follow_requests(
 pub async fn authorize_follow_request(
     State(state): State<AppState>,
     Path(requester_id): Path<i64>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
@@ -1354,6 +1366,17 @@ pub async fn authorize_follow_request(
         accepter.acct().clone(),
         accepter.avatar.clone().unwrap_or_default(),
     ).await;
+
+    // Backfill the requester's feed with recent statuses from the accepted account
+    {
+        let mut redis = state.redis.clone();
+        let db = state.db.clone();
+        let iid = instance.id;
+        let followed_id = auth.account_id;
+        tokio::spawn(async move {
+            feed::backfill_follow(&mut redis, &db, iid, requester_id, followed_id).await;
+        });
+    }
 
     build_relationship(&state, auth.account_id, requester_id).await.map(Json)
 }

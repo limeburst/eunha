@@ -101,6 +101,9 @@ scraper = "0.23"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
 web-push = "0.10"
 
+# Redis (home timeline fan-out)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
 [dev-dependencies]
 axum-test = "17"
 reqwest = { version = "0.12", features = ["json", "multipart"] }
