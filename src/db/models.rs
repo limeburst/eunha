@@ -127,7 +127,7 @@ pub struct Status {
     pub id: i64,
     pub instance_id: Uuid,
     pub account_id: i64,
-    pub application_id: Option<Uuid>,
+    pub application_id: Option<i64>,
     pub text: String,
     pub spoiler_text: String,
     pub in_reply_to_id: Option<i64>,
@@ -192,7 +192,7 @@ pub struct Notification {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct OauthApplication {
-    pub id: Uuid,
+    pub id: i64,
     pub instance_id: Uuid,
     pub name: String,
     pub client_id: String,
@@ -206,7 +206,7 @@ pub struct OauthApplication {
 #[derive(Debug, Clone, FromRow)]
 pub struct OauthAccessToken {
     pub id: Uuid,
-    pub application_id: Option<Uuid>,
+    pub application_id: Option<i64>,
     pub account_id: Option<i64>,
     pub token: String,
     pub refresh_token: Option<String>,

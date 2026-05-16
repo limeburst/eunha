@@ -79,8 +79,12 @@ async fn main() -> Result<()> {
     tracing::info!("migrating users...");
     migrate_users(&src, &mut *tx, instance_id, &account_map).await?;
 
+    tracing::info!("migrating oauth applications...");
+    let app_map = migrate_oauth_applications(&src, &mut *tx, instance_id).await?;
+    tracing::info!("migrated {} oauth applications", app_map.len());
+
     tracing::info!("migrating statuses...");
-    let status_map = migrate_statuses(&src, &mut *tx, instance_id, &account_map).await?;
+    let status_map = migrate_statuses(&src, &mut *tx, instance_id, &account_map, &app_map).await?;
     tracing::info!("migrated {} statuses", status_map.len());
 
     tracing::info!("migrating follows...");
@@ -183,7 +187,7 @@ async fn main() -> Result<()> {
     migrate_invites(&src, &mut *tx, instance_id, &account_map).await?;
 
     tracing::info!("migrating web push subscriptions...");
-    migrate_web_push_subscriptions(&src, &mut *tx, &account_map).await?;
+    migrate_web_push_subscriptions(&src, &mut *tx, &account_map, &app_map).await?;
 
     if let (Some(priv_key), Some(pub_key)) = (&args.vapid_private_key, &args.vapid_public_key) {
         tracing::info!("storing VAPID keys in instance row...");
@@ -538,11 +542,60 @@ async fn migrate_users(
     Ok(())
 }
 
+// ── oauth_applications ─────────────────────────────────────────────────────
+
+async fn migrate_oauth_applications(
+    src: &PgPool,
+    dst: &mut PgConnection,
+    instance_id: Uuid,
+) -> Result<HashMap<i64, i64>> {
+    // Mastodon stores client_id as `uid` and client_secret as `secret`.
+    let rows = sqlx::query(
+        "SELECT id, name, uid, secret, redirect_uri, scopes, website FROM oauth_applications ORDER BY id",
+    )
+    .fetch_all(src)
+    .await?;
+
+    let mut map = HashMap::new();
+
+    for row in &rows {
+        let src_id: i64 = row.get("id");
+        let name: String = row.get("name");
+        let uid: String = row.get("uid");
+        let secret: String = row.get("secret");
+        let redirect_uri: String = row.get("redirect_uri");
+        let scopes: String = row.try_get("scopes").unwrap_or_else(|_| "read".to_string());
+        let website: Option<String> = row.try_get("website").ok().flatten();
+
+        let dst_id: i64 = sqlx::query_scalar(
+            r#"INSERT INTO oauth_applications
+                 (instance_id, name, client_id, client_secret, redirect_uris, scopes, website)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (client_id) DO UPDATE SET name = EXCLUDED.name, website = EXCLUDED.website
+               RETURNING id"#,
+        )
+        .bind(instance_id)
+        .bind(&name)
+        .bind(&uid)
+        .bind(&secret)
+        .bind(&redirect_uri)
+        .bind(&scopes)
+        .bind(&website)
+        .fetch_one(&mut *dst)
+        .await?;
+
+        map.insert(src_id, dst_id);
+    }
+
+    Ok(map)
+}
+
 async fn migrate_statuses(
     src: &PgPool,
     dst: &mut PgConnection,
     instance_id: Uuid,
     account_map: &HashMap<i64, i64>,
+    app_map: &HashMap<i64, i64>,
 ) -> Result<HashMap<i64, i64>> {
     // Mastodon `visibility` is an integer enum: 0=public 1=unlisted 2=private 3=direct
     let rows = sqlx::query("SELECT * FROM statuses ORDER BY id")
@@ -576,6 +629,8 @@ async fn migrate_statuses(
         let deleted_at = get_ts_opt(&row, "deleted_at");
         let edited_at = get_ts_opt(&row, "edited_at");
         let created_at = get_ts(&row, "created_at")?;
+        let src_app_id: Option<i64> = row.try_get("application_id").ok().flatten();
+        let application_id: Option<i64> = src_app_id.and_then(|id| app_map.get(&id)).copied();
 
         // Best-effort remapping using already-processed statuses (ORDER BY id ensures
         // originals come before their boosts/replies in the vast majority of cases).
@@ -585,12 +640,12 @@ async fn migrate_statuses(
 
         let new_id: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO statuses
-                 (id, instance_id, account_id, text, spoiler_text,
+                 (id, instance_id, account_id, application_id, text, spoiler_text,
                   visibility, language, sensitive, url, uri,
                   in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
                   replies_count, reblogs_count, favourites_count,
                   deleted_at, edited_at, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$19,$12,$20,$13,$14,$15,$16,$17,$18)
+               VALUES ($1,$2,$3,$21,$4,$5,$6,$7,$8,$9,$10,$11,$19,$12,$20,$13,$14,$15,$16,$17,$18)
                ON CONFLICT DO NOTHING
                RETURNING id"#,
         )
@@ -614,6 +669,7 @@ async fn migrate_statuses(
         .bind(created_at)
         .bind(in_reply_to_account_id)
         .bind(reply)
+        .bind(application_id)
         .fetch_optional(&mut *dst)
         .await?;
 
@@ -2104,11 +2160,13 @@ async fn migrate_web_push_subscriptions(
     src: &PgPool,
     dst: &mut PgConnection,
     account_map: &HashMap<i64, i64>,
+    app_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query(
         r#"SELECT w.endpoint, w.key_p256dh, w.key_auth, w.data,
                   w.created_at, w.updated_at,
                   t.token, t.scopes, t.revoked_at, t.created_at AS token_created_at,
+                  t.application_id AS src_application_id,
                   u.account_id AS src_account_id
            FROM web_push_subscriptions w
            JOIN oauth_access_tokens t  ON t.id  = w.access_token_id
@@ -2125,15 +2183,18 @@ async fn migrate_web_push_subscriptions(
         let scopes: Option<String> = row.try_get("scopes").ok().flatten();
         let token_revoked_at = get_ts_opt(&row, "revoked_at");
         let token_created_at = get_ts(&row, "token_created_at")?;
+        let src_app_id: Option<i64> = row.try_get("src_application_id").ok().flatten();
+        let application_id: Option<i64> = src_app_id.and_then(|id| app_map.get(&id)).copied();
 
         // Upsert the mastodon access token into eunha so the FK can be satisfied.
         let token_id: Uuid = sqlx::query_scalar(
-            r#"INSERT INTO oauth_access_tokens (account_id, token, scopes, revoked_at, created_at)
-               VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (token) DO UPDATE SET account_id = EXCLUDED.account_id
+            r#"INSERT INTO oauth_access_tokens (account_id, application_id, token, scopes, revoked_at, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (token) DO UPDATE SET account_id = EXCLUDED.account_id, application_id = EXCLUDED.application_id
                RETURNING id"#,
         )
         .bind(account_id)
+        .bind(application_id)
         .bind(&token)
         .bind(scopes.as_deref().unwrap_or("read write push"))
         .bind(token_revoked_at)

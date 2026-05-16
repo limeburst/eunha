@@ -68,7 +68,7 @@ pub struct AuthenticatedUser {
     pub account_id: i64,
     pub token_id: Uuid,
     pub scopes: Vec<String>,
-    pub application_id: Option<Uuid>,
+    pub application_id: Option<i64>,
 }
 
 impl AuthenticatedUser {

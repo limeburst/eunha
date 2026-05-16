@@ -406,7 +406,7 @@ pub async fn apply_password_reset(
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-async fn extract_app_from_bearer(state: &AppState, headers: &HeaderMap) -> Option<Uuid> {
+async fn extract_app_from_bearer(state: &AppState, headers: &HeaderMap) -> Option<i64> {
     let val = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
     let token = val.strip_prefix("Bearer ")?.trim();
     sqlx::query_scalar!(
