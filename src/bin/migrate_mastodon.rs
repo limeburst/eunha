@@ -319,7 +319,8 @@ async fn migrate_accounts(
         r#"SELECT a.*,
                COALESCE(s.followers_count, 0) AS followers_count,
                COALESCE(s.following_count, 0) AS following_count,
-               COALESCE(s.statuses_count,  0) AS statuses_count
+               COALESCE(s.statuses_count,  0) AS statuses_count,
+               s.last_status_at
            FROM accounts a
            LEFT JOIN account_stats s ON s.account_id = a.id
            ORDER BY a.id LIMIT $1"#,
@@ -381,6 +382,12 @@ async fn migrate_accounts(
         let followers_count: Option<i64> = row.try_get("followers_count").ok().flatten();
         let following_count: Option<i64> = row.try_get("following_count").ok().flatten();
         let statuses_count: Option<i64> = row.try_get("statuses_count").ok().flatten();
+        let last_status_at: Option<chrono::DateTime<chrono::Utc>> = row
+            .try_get::<Option<chrono::NaiveDate>, _>("last_status_at")
+            .ok()
+            .flatten()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| dt.and_utc());
         let inbox_url: Option<String> = inbox_url_derived
             .or_else(|| row.try_get("inbox_url").ok().flatten());
         let outbox_url: Option<String> = outbox_url_derived
@@ -415,8 +422,8 @@ async fn migrate_accounts(
                   inbox_url, outbox_url, shared_inbox_url,
                   suspended_at, silenced_at,
                   avatar, header, fields,
-                  created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+                  last_status_at, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
                ON CONFLICT (instance_id, username, domain) DO NOTHING
                RETURNING id"#,
         )
@@ -444,6 +451,7 @@ async fn migrate_accounts(
         .bind(&avatar)
         .bind(&header)
         .bind(&fields)
+        .bind(last_status_at)
         .bind(created_at)
         .bind(updated_at)
         .fetch_optional(&mut *dst)
