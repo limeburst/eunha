@@ -35,6 +35,9 @@ struct Args {
     eunha_db: Option<String>,
     #[arg(long)]
     domain: String,
+    /// Skip instance creation and use this existing eunha instance UUID directly.
+    #[arg(long)]
+    instance_id: Option<Uuid>,
     #[arg(long)]
     limit_accounts: Option<i64>,
     /// VAPID private key from the Mastodon instance (base64url). Required for push subscriptions to continue working.
@@ -68,9 +71,15 @@ async fn main() -> Result<()> {
 
     let mut tx = dst.begin().await.context("beginning transaction")?;
 
-    tracing::info!("migrating instance: {}", args.domain);
-    let instance_id = migrate_instance(&src, &mut *tx, &args.domain).await?;
-    tracing::info!("instance_id = {}", instance_id);
+    let instance_id = if let Some(id) = args.instance_id {
+        tracing::info!("using provided instance_id: {}", id);
+        id
+    } else {
+        tracing::info!("migrating instance: {}", args.domain);
+        let id = migrate_instance(&src, &mut *tx, &args.domain).await?;
+        tracing::info!("instance_id = {}", id);
+        id
+    };
 
     tracing::info!("migrating accounts...");
     let (account_map, local_usernames) = migrate_accounts(&src, &mut *tx, instance_id, args.limit_accounts, &args.domain).await?;
