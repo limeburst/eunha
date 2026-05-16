@@ -990,3 +990,12 @@ fn with_pagination_link(
     }
     (headers, Json(statuses))
 }
+
+// ── GET /api/v1/timelines/link ────────────────────────────────────────────
+// Stub — preview card trending is not supported; return empty list.
+
+pub async fn link_timeline(
+    _auth: Option<Extension<AuthenticatedUser>>,
+) -> Json<Vec<Status>> {
+    Json(vec![])
+}

@@ -107,6 +107,47 @@ pub async fn block_domain(
     Ok(Json(serde_json::json!({})))
 }
 
+// ── GET /api/v1/domain_blocks/preview ────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct DomainPreviewQuery {
+    pub domain: Option<String>,
+}
+
+pub async fn preview_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(q): Query<DomainPreviewQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:blocks")?;
+    let domain = q.domain.as_deref().unwrap_or("").to_lowercase();
+
+    let following_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) FROM follows f
+           JOIN accounts a ON a.id = f.target_account_id
+           WHERE f.account_id = $1 AND a.domain = $2 AND f.state = 'accepted'"#,
+        auth.account_id, domain,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
+    let followers_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) FROM follows f
+           JOIN accounts a ON a.id = f.account_id
+           WHERE f.target_account_id = $1 AND a.domain = $2 AND f.state = 'accepted'"#,
+        auth.account_id, domain,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
+    Ok(Json(serde_json::json!({
+        "following_count": following_count,
+        "followers_count": followers_count,
+    })))
+}
+
 // ── DELETE /api/v1/domain_blocks ─────────────────────────────────────────
 
 pub async fn unblock_domain(

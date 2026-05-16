@@ -16,6 +16,22 @@ pub async fn get_translation_languages() -> Json<serde_json::Value> {
     Json(serde_json::json!({}))
 }
 
+// ── GET /api/v1/instance/languages ───────────────────────────────────────
+
+pub async fn get_instance_languages() -> Json<Vec<serde_json::Value>> {
+    Json(vec![
+        serde_json::json!({ "code": "ko", "name": "Korean" }),
+        serde_json::json!({ "code": "en", "name": "English" }),
+    ])
+}
+
+// ── GET /api/v1/instance/domain_blocks ───────────────────────────────────
+// Returns publicly visible domain blocks (always empty in our policy).
+
+pub async fn get_instance_domain_blocks() -> Json<Vec<serde_json::Value>> {
+    Json(vec![])
+}
+
 // ── GET /api/v1/instance/rules ────────────────────────────────────────────
 
 pub async fn get_instance_rules(

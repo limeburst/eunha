@@ -1977,6 +1977,16 @@ pub(super) async fn batch_viewer_contexts(
     Ok(result)
 }
 
+// ── GET /api/v1/statuses/:id/quotes ──────────────────────────────────────
+// Stub — quote posts are not yet supported.
+
+pub async fn get_status_quotes(
+    Path(_id): Path<i64>,
+    _auth: Option<Extension<AuthenticatedUser>>,
+) -> Json<Vec<Status>> {
+    Json(vec![])
+}
+
 pub async fn build_viewer_context(
     state: &AppState,
     viewer_id: i64,

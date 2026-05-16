@@ -120,6 +120,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/statuses/{id}/unmute", post(statuses::unmute_status))
         .route("/api/v1/statuses/{id}/source", get(statuses::get_status_source))
         .route("/api/v1/statuses/{id}/interaction_policy", patch(statuses::update_interaction_policy))
+        .route("/api/v1/statuses/{id}/quotes", get(statuses::get_status_quotes))
         // Blocks / Mutes lists
         .route("/api/v1/blocks", get(accounts::get_blocks))
         .route("/api/v1/mutes", get(accounts::get_mutes))
@@ -160,6 +161,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/accounts", delete(accounts::delete_account))
         // Email confirmation resend stub (accounts are confirmed immediately; this is a no-op)
         .route("/api/v1/emails/confirmations", post(empty_object))
+        .route("/api/v1/emails/check_confirmation", get(signup::check_email_confirmation))
         // Admin API
         .route("/api/v1/admin/accounts", get(admin::list_admin_accounts))
         .route("/api/v1/admin/accounts/{id}", get(admin::get_admin_account))
@@ -229,6 +231,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v2/filter_statuses/{id}", get(filters::get_filter_status).delete(filters::delete_filter_status))
         // Domain blocks (user-level)
         .route("/api/v1/domain_blocks", get(domain_blocks::get_domain_blocks).post(domain_blocks::block_domain).delete(domain_blocks::unblock_domain))
+        .route("/api/v1/domain_blocks/preview", get(domain_blocks::preview_domain_block))
         // Reports
         .route("/api/v1/reports", post(reports::file_report))
         // Push notifications (VAPID + Web Push)
@@ -260,6 +263,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/instance/rules", get(instance::get_instance_rules))
         .route("/api/v1/instance/peers", get(instance::get_peers))
         .route("/api/v1/instance/activity", get(instance::get_instance_activity))
+        .route("/api/v1/instance/languages", get(instance::get_instance_languages))
+        .route("/api/v1/instance/domain_blocks", get(instance::get_instance_domain_blocks))
         .route("/api/v2/instance", get(instance::get_instance_v2))
         // App credentials
         .route("/api/v1/apps/verify_credentials", get(oauth::verify_app_credentials))
@@ -286,6 +291,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v2/search", get(search::search))
         // Timelines
         .route("/api/v1/timelines/public", get(timelines::public_timeline))
+        .route("/api/v1/timelines/link", get(timelines::link_timeline))
         .route("/api/v1/timelines/tag/{hashtag}", get(timelines::tag_timeline))
         // Account registration (Mastodon C2S API)
         .route("/api/v1/accounts", post(signup::api_create_account))

@@ -332,6 +332,23 @@ pub async fn confirm_email(
     Html("<h1>Email confirmed!</h1><p>Your account is now active. You can sign in.</p>".to_string()).into_response()
 }
 
+// ── GET /api/v1/emails/check_confirmation ────────────────────────────────
+
+pub async fn check_email_confirmation(
+    State(state): State<AppState>,
+    Extension(auth): Extension<crate::middleware::AuthenticatedUser>,
+) -> AppResult<Json<bool>> {
+    let confirmed = sqlx::query_scalar!(
+        "SELECT confirmed_at IS NOT NULL FROM users WHERE account_id = $1",
+        auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or(false);
+    Ok(Json(confirmed))
+}
+
 // ── POST /auth/password  (request reset) ──────────────────────────────────
 
 #[derive(Debug, Deserialize)]
