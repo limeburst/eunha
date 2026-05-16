@@ -430,7 +430,7 @@ pub async fn post_status(
         }
     }
 
-    // Fan-out to follower feeds in background (non-blocking)
+    // Fan-out to follower feeds and list feeds in background (non-blocking)
     {
         let tag_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
             "SELECT tag_id FROM status_tags WHERE status_id = $1",
@@ -445,11 +445,15 @@ pub async fn post_status(
         let iid = instance.id;
         let author_id = account.id;
         let status_id = status.id;
+        let reply_to_account = in_reply_to_account_id;
+        let vis = visibility.clone();
         if feed::sync_fanout() {
             feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
+            feed::fanout_to_lists(&mut redis, &db, iid, author_id, status_id, reply_to_account, &vis).await;
         } else {
             tokio::spawn(async move {
                 feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
+                feed::fanout_to_lists(&mut redis, &db, iid, author_id, status_id, reply_to_account, &vis).await;
             });
         }
     }
@@ -806,7 +810,7 @@ pub async fn delete_status(
         status_id: id,
     });
 
-    // Remove from follower feeds in background
+    // Remove from follower feeds and list feeds in background
     {
         let mut redis = state.redis.clone();
         let db = state.db.clone();
@@ -814,9 +818,11 @@ pub async fn delete_status(
         let author_id = account.id;
         if feed::sync_fanout() {
             feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
+            feed::fanout_remove_from_lists(&mut redis, &db, iid, author_id, id).await;
         } else {
             tokio::spawn(async move {
                 feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
+                feed::fanout_remove_from_lists(&mut redis, &db, iid, author_id, id).await;
             });
         }
     }

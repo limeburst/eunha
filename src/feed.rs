@@ -298,6 +298,384 @@ pub async fn fanout_remove_status(
     }
 }
 
+// ── List feed ─────────────────────────────────────────────────────────────
+
+fn list_feed_key(instance_id: Uuid, list_id: i64) -> String {
+    format!("{}:feed:list:{}", instance_id, list_id)
+}
+
+fn list_populated_key(instance_id: Uuid, list_id: i64) -> String {
+    format!("{}:feed:list:{}:populated", instance_id, list_id)
+}
+
+pub async fn is_list_feed_populated(
+    redis: &mut ConnectionManager,
+    instance_id: Uuid,
+    list_id: i64,
+) -> bool {
+    redis
+        .exists::<_, bool>(list_populated_key(instance_id, list_id))
+        .await
+        .unwrap_or(false)
+}
+
+/// Fetch status IDs from a list's Redis feed.
+/// Returns None if the feed has never been populated (cold-start signal).
+pub async fn list_feed_get(
+    redis: &mut ConnectionManager,
+    instance_id: Uuid,
+    list_id: i64,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+    min_id: Option<i64>,
+    limit: isize,
+) -> Option<Vec<i64>> {
+    if !is_list_feed_populated(redis, instance_id, list_id).await {
+        return None;
+    }
+    let key = list_feed_key(instance_id, list_id);
+    let ids: Vec<i64> = if min_id.is_some() {
+        let min_score = format!("({}", min_id.unwrap());
+        redis::cmd("ZRANGEBYSCORE")
+            .arg(&key)
+            .arg(&min_score)
+            .arg("+inf")
+            .arg("LIMIT")
+            .arg(0i64)
+            .arg(limit)
+            .query_async(redis)
+            .await
+            .unwrap_or_default()
+    } else {
+        let max_score = max_id
+            .map(|id| format!("({}", id))
+            .unwrap_or_else(|| "+inf".to_string());
+        let min_score = since_id
+            .map(|id| format!("({}", id))
+            .unwrap_or_else(|| "-inf".to_string());
+        redis::cmd("ZREVRANGEBYSCORE")
+            .arg(&key)
+            .arg(&max_score)
+            .arg(&min_score)
+            .arg("LIMIT")
+            .arg(0i64)
+            .arg(limit)
+            .query_async(redis)
+            .await
+            .unwrap_or_default()
+    };
+    Some(ids)
+}
+
+/// Populate a list's Redis feed from DB (called on first list timeline access).
+/// `replies_policy`: "none" | "list" | "followed"
+pub async fn list_feed_populate(
+    redis: &mut ConnectionManager,
+    instance_id: Uuid,
+    list_id: i64,
+    owner_id: i64,
+    replies_policy: &str,
+    db: &PgPool,
+) {
+    // Mark as populated immediately so fan-out during the populate window is safe.
+    let _: redis::RedisResult<()> = redis
+        .set_ex(list_populated_key(instance_id, list_id), 1i64, FEED_TTL_SECS)
+        .await;
+
+    let status_ids: Vec<i64> = match replies_policy {
+        "none" => sqlx::query_scalar!(
+            r#"SELECT s.id FROM statuses s
+               JOIN list_accounts la ON la.account_id = s.account_id
+               WHERE la.list_id = $1
+                 AND s.deleted_at IS NULL
+                 AND s.visibility != 'direct'
+                 AND s.in_reply_to_id IS NULL
+               ORDER BY s.id DESC LIMIT $2"#,
+            list_id,
+            FEED_MAX_ITEMS as i64,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+        "list" => sqlx::query_scalar!(
+            r#"SELECT s.id FROM statuses s
+               JOIN list_accounts la ON la.account_id = s.account_id
+               WHERE la.list_id = $1
+                 AND s.deleted_at IS NULL
+                 AND s.visibility != 'direct'
+                 AND (s.in_reply_to_id IS NULL OR EXISTS (
+                     SELECT 1 FROM statuses s2
+                     JOIN list_accounts la2 ON la2.account_id = s2.account_id
+                     WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1
+                 ))
+               ORDER BY s.id DESC LIMIT $2"#,
+            list_id,
+            FEED_MAX_ITEMS as i64,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+        _ => sqlx::query_scalar!(
+            // "followed": replies are included only if the parent's author is followed by the list owner
+            r#"SELECT s.id FROM statuses s
+               JOIN list_accounts la ON la.account_id = s.account_id
+               WHERE la.list_id = $1
+                 AND s.deleted_at IS NULL
+                 AND s.visibility != 'direct'
+                 AND (s.in_reply_to_id IS NULL OR EXISTS (
+                     SELECT 1 FROM statuses s2
+                     WHERE s2.id = s.in_reply_to_id
+                       AND (s2.account_id = $2 OR EXISTS (
+                           SELECT 1 FROM follows f
+                           WHERE f.account_id = $2 AND f.target_account_id = s2.account_id
+                             AND f.state = 'accepted'
+                       ))
+                 ))
+               ORDER BY s.id DESC LIMIT $3"#,
+            list_id,
+            owner_id,
+            FEED_MAX_ITEMS as i64,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+    };
+
+    if !status_ids.is_empty() {
+        let key = list_feed_key(instance_id, list_id);
+        let mut pipe = redis::pipe();
+        for &id in &status_ids {
+            pipe.zadd(&key, id, id as f64);
+        }
+        pipe.expire(&key, FEED_TTL_SECS as i64);
+        let _: redis::RedisResult<()> = pipe.query_async(redis).await;
+    }
+}
+
+/// Fan out a newly posted status to all initialized list feeds that contain the author.
+/// Applies each list's replies_policy at write time (matching Mastodon behaviour).
+pub async fn fanout_to_lists(
+    redis: &mut ConnectionManager,
+    db: &PgPool,
+    instance_id: Uuid,
+    author_id: i64,
+    status_id: i64,
+    in_reply_to_account_id: Option<i64>,
+    visibility: &str,
+) {
+    // List timelines never show direct messages.
+    if visibility == "direct" {
+        return;
+    }
+
+    // All lists that include this author (with owner + policy info).
+    let lists = sqlx::query!(
+        r#"SELECT l.id, l.account_id, l.replies_policy
+           FROM lists l
+           JOIN list_accounts la ON la.list_id = l.id
+           WHERE la.account_id = $1"#,
+        author_id,
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    if lists.is_empty() {
+        return;
+    }
+
+    // Batch-check which list feeds are initialized.
+    let pop_keys: Vec<String> = lists
+        .iter()
+        .map(|l| list_populated_key(instance_id, l.id))
+        .collect();
+    let initialized: Vec<Option<i64>> = match redis.mget(&pop_keys).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("fanout_to_lists mget error: {}", e);
+            return;
+        }
+    };
+
+    let score = status_id as f64;
+    let mut pipe = redis::pipe();
+    let mut any = false;
+
+    for (list, init) in lists.iter().zip(initialized.iter()) {
+        if init.is_none() {
+            continue;
+        }
+
+        // Apply replies_policy filter.
+        let passes = if let Some(reply_author) = in_reply_to_account_id {
+            match list.replies_policy.as_str() {
+                "none" => false,
+                "list" => sqlx::query_scalar!(
+                    "SELECT 1 FROM list_accounts WHERE list_id = $1 AND account_id = $2",
+                    list.id,
+                    reply_author,
+                )
+                .fetch_optional(db)
+                .await
+                .unwrap_or(None)
+                .is_some(),
+                _ => sqlx::query_scalar!(
+                    "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                    list.account_id,
+                    reply_author,
+                )
+                .fetch_optional(db)
+                .await
+                .unwrap_or(None)
+                .is_some(),
+            }
+        } else {
+            true
+        };
+
+        if passes {
+            let key = list_feed_key(instance_id, list.id);
+            pipe.zadd(&key, status_id, score);
+            pipe.zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1));
+            any = true;
+        }
+    }
+
+    if any {
+        let _: redis::RedisResult<()> = pipe.query_async(redis).await;
+    }
+}
+
+/// Remove a deleted status from all initialized list feeds that contain the author.
+pub async fn fanout_remove_from_lists(
+    redis: &mut ConnectionManager,
+    db: &PgPool,
+    instance_id: Uuid,
+    author_id: i64,
+    status_id: i64,
+) {
+    let list_ids: Vec<i64> = sqlx::query_scalar!(
+        "SELECT l.id FROM lists l JOIN list_accounts la ON la.list_id = l.id WHERE la.account_id = $1",
+        author_id,
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    if list_ids.is_empty() {
+        return;
+    }
+
+    let pop_keys: Vec<String> = list_ids
+        .iter()
+        .map(|&id| list_populated_key(instance_id, id))
+        .collect();
+    let initialized: Vec<Option<i64>> = match redis.mget(&pop_keys).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("fanout_remove_from_lists mget error: {}", e);
+            return;
+        }
+    };
+
+    let mut pipe = redis::pipe();
+    let mut any = false;
+    for (&list_id, init) in list_ids.iter().zip(initialized.iter()) {
+        if init.is_some() {
+            pipe.zrem(list_feed_key(instance_id, list_id), status_id);
+            any = true;
+        }
+    }
+    if any {
+        let _: redis::RedisResult<()> = pipe.query_async(redis).await;
+    }
+}
+
+/// Backfill a list feed with recent statuses from a newly-added member.
+pub async fn backfill_list_member(
+    redis: &mut ConnectionManager,
+    db: &PgPool,
+    instance_id: Uuid,
+    list_id: i64,
+    member_id: i64,
+    owner_id: i64,
+    replies_policy: &str,
+) {
+    if !is_list_feed_populated(redis, instance_id, list_id).await {
+        return;
+    }
+
+    let recent: Vec<i64> = match replies_policy {
+        "none" => sqlx::query_scalar!(
+            r#"SELECT id FROM statuses
+               WHERE account_id = $1 AND deleted_at IS NULL AND visibility != 'direct'
+                 AND in_reply_to_id IS NULL
+               ORDER BY id DESC LIMIT 20"#,
+            member_id,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+        "list" => sqlx::query_scalar!(
+            r#"SELECT s.id FROM statuses s
+               WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 'direct'
+                 AND (s.in_reply_to_id IS NULL OR EXISTS (
+                     SELECT 1 FROM statuses s2
+                     JOIN list_accounts la ON la.account_id = s2.account_id
+                     WHERE s2.id = s.in_reply_to_id AND la.list_id = $2
+                 ))
+               ORDER BY s.id DESC LIMIT 20"#,
+            member_id,
+            list_id,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+        _ => sqlx::query_scalar!(
+            r#"SELECT s.id FROM statuses s
+               WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 'direct'
+                 AND (s.in_reply_to_id IS NULL OR EXISTS (
+                     SELECT 1 FROM statuses s2
+                     WHERE s2.id = s.in_reply_to_id
+                       AND (s2.account_id = $2 OR EXISTS (
+                           SELECT 1 FROM follows f
+                           WHERE f.account_id = $2 AND f.target_account_id = s2.account_id
+                             AND f.state = 'accepted'
+                       ))
+                 ))
+               ORDER BY s.id DESC LIMIT 20"#,
+            member_id,
+            owner_id,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default(),
+    };
+
+    if recent.is_empty() {
+        return;
+    }
+
+    let key = list_feed_key(instance_id, list_id);
+    let mut pipe = redis::pipe();
+    for &id in &recent {
+        pipe.zadd(&key, id, id as f64);
+    }
+    pipe.zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1));
+    let _: redis::RedisResult<()> = pipe.query_async(redis).await;
+}
+
+/// Delete a list's Redis feed keys (called when the list itself is deleted).
+pub async fn delete_list_feed(redis: &mut ConnectionManager, instance_id: Uuid, list_id: i64) {
+    let _: redis::RedisResult<()> = redis::pipe()
+        .del(list_feed_key(instance_id, list_id))
+        .del(list_populated_key(instance_id, list_id))
+        .query_async(redis)
+        .await;
+}
+
+// ── Home-feed backfill ────────────────────────────────────────────────────
+
 /// Backfill the follower's feed with recent statuses from the newly-followed account.
 pub async fn backfill_follow(
     redis: &mut ConnectionManager,

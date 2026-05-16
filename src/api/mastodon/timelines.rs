@@ -469,6 +469,7 @@ async fn home_timeline_from_db(
 pub async fn list_timeline(
     State(state): State<AppState>,
     Path(list_id): Path<i64>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -489,6 +490,100 @@ pub async fn list_timeline(
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let replies_policy = list.replies_policy.as_str();
 
+    // Try Redis feed first; fall back to DB on cold start.
+    let mut redis = state.redis.clone();
+    let redis_ids = feed::list_feed_get(
+        &mut redis,
+        instance.id,
+        list_id,
+        max_id,
+        since_id,
+        min_id,
+        (limit * 3) as isize,
+    )
+    .await;
+
+    let statuses = if let Some(ids) = redis_ids {
+        hydrate_list_statuses(&state, &ids, auth.account_id, min_id.is_some(), limit).await?
+    } else {
+        // Cold start: populate feed in background, use DB for this request.
+        {
+            let mut redis2 = state.redis.clone();
+            let db = state.db.clone();
+            let iid = instance.id;
+            let owner_id = auth.account_id;
+            let policy = list.replies_policy.clone();
+            if feed::sync_fanout() {
+                feed::list_feed_populate(&mut redis2, iid, list_id, owner_id, &policy, &db).await;
+            } else {
+                tokio::spawn(async move {
+                    feed::list_feed_populate(&mut redis2, iid, list_id, owner_id, &policy, &db).await;
+                });
+            }
+        }
+        list_timeline_from_db(&state, list_id, auth.account_id, replies_policy, max_id, since_id, min_id, limit).await?
+    };
+
+    let result = build_status_list_with_context(&state, statuses, Some(auth.account_id), "home").await?;
+    let resp = with_pagination_link(&req_headers, &uri, result);
+    Ok(resp)
+}
+
+// Hydrate list feed IDs from Redis; replies_policy was applied at write time.
+async fn hydrate_list_statuses(
+    state: &AppState,
+    ids: &[i64],
+    viewer_id: i64,
+    asc: bool,
+    limit: i64,
+) -> AppResult<Vec<DbStatus>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut statuses = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.*
+           FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE s.id = ANY($2::bigint[])
+           AND s.deleted_at IS NULL
+           AND a.suspended_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM mutes m
+               WHERE m.account_id = $1 AND m.target_account_id = s.account_id
+               AND (m.expires_at IS NULL OR m.expires_at > now())
+           )
+           AND (s.account_id = $1 OR NOT EXISTS (
+               SELECT 1 FROM blocks b
+               WHERE (b.account_id = $1 AND b.target_account_id = s.account_id)
+                  OR (b.account_id = s.account_id AND b.target_account_id = $1)
+           ))"#,
+        viewer_id,
+        ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if asc {
+        statuses.sort_by_key(|s| s.id);
+    } else {
+        statuses.sort_by_key(|s| std::cmp::Reverse(s.id));
+    }
+    statuses.truncate(limit as usize);
+    Ok(statuses)
+}
+
+// DB fallback used on cold start.
+async fn list_timeline_from_db(
+    state: &AppState,
+    list_id: i64,
+    owner_id: i64,
+    replies_policy: &str,
+    max_id: Option<i64>,
+    since_id: Option<i64>,
+    min_id: Option<i64>,
+    limit: i64,
+) -> AppResult<Vec<DbStatus>> {
     // replies_policy values:
     //   "none"     — exclude all replies
     //   "list"     — include replies only when the in-reply-to author is also in this list
@@ -508,7 +603,7 @@ pub async fn list_timeline(
                      ))))",
     };
 
-    let statuses = if min_id.is_some() {
+    if min_id.is_some() {
         let sql = format!(
             r#"SELECT s.* FROM statuses s
                JOIN list_accounts la ON la.account_id = s.account_id
@@ -527,9 +622,10 @@ pub async fn list_timeline(
             .bind(min_id)
             .bind(limit)
             .bind(Option::<i64>::None)
-            .bind(auth.account_id)
+            .bind(owner_id)
             .fetch_all(&state.db)
-            .await?
+            .await
+            .map_err(crate::error::AppError::from)
     } else {
         let sql = format!(
             r#"SELECT s.* FROM statuses s
@@ -550,14 +646,11 @@ pub async fn list_timeline(
             .bind(max_id)
             .bind(since_id)
             .bind(limit)
-            .bind(auth.account_id)
+            .bind(owner_id)
             .fetch_all(&state.db)
-            .await?
-    };
-
-    let result = build_status_list_with_context(&state, statuses, Some(auth.account_id), "home").await?;
-    let resp = with_pagination_link(&req_headers, &uri, result);
-    Ok(resp)
+            .await
+            .map_err(crate::error::AppError::from)
+    }
 }
 
 // ── GET /api/v1/timelines/tag/:hashtag ───────────────────────────────────

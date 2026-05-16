@@ -6,7 +6,8 @@ use serde::Deserialize;
 use crate::{
     db::models,
     error::{AppError, AppResult},
-    middleware::AuthenticatedUser,
+    feed,
+    middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
 use super::{
@@ -119,6 +120,7 @@ pub async fn update_list(
 pub async fn delete_list(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:lists")?;
@@ -129,6 +131,11 @@ pub async fn delete_list(
     )
     .execute(&state.db)
     .await?;
+    {
+        let mut redis = state.redis.clone();
+        let iid = instance.id;
+        feed::delete_list_feed(&mut redis, iid, id).await;
+    }
     Ok(Json(serde_json::json!({})))
 }
 
@@ -177,11 +184,12 @@ pub struct ListAccountsForm {
 pub async fn add_list_accounts(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListAccountsForm>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:lists")?;
-    fetch_list(&state, id, auth.account_id).await?;
+    let list = fetch_list(&state, id, auth.account_id).await?;
 
     for id_str in &form.account_ids {
         if let Ok(account_id) = id_str.parse::<i64>() {
@@ -201,6 +209,20 @@ pub async fn add_list_accounts(
             )
             .execute(&state.db)
             .await?;
+            {
+                let mut redis = state.redis.clone();
+                let db = state.db.clone();
+                let iid = instance.id;
+                let owner_id = auth.account_id;
+                let policy = list.replies_policy.clone();
+                if feed::sync_fanout() {
+                    feed::backfill_list_member(&mut redis, &db, iid, id, account_id, owner_id, &policy).await;
+                } else {
+                    tokio::spawn(async move {
+                        feed::backfill_list_member(&mut redis, &db, iid, id, account_id, owner_id, &policy).await;
+                    });
+                }
+            }
         }
     }
 
