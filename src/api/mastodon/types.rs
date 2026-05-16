@@ -109,6 +109,8 @@ pub struct Status {
     pub emojis: Vec<CustomEmoji>,
     pub card: Option<PreviewCard>,
     pub poll: Option<Poll>,
+    pub quote: Option<Box<Status>>,
+    pub quote_approval: QuoteApproval,
     // Viewer-specific (None when not authenticated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub favourited: Option<bool>,
@@ -145,6 +147,13 @@ pub struct StatusTag {
 pub struct Application {
     pub name: String,
     pub website: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QuoteApproval {
+    pub automatic: Vec<String>,
+    pub manual: Vec<String>,
+    pub current_user: String,
 }
 
 // ── Media ──────────────────────────────────────────────────────────────────
