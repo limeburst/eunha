@@ -1,9 +1,22 @@
 use redis::{aio::ConnectionManager, AsyncCommands};
 use sqlx::PgPool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 const FEED_MAX_ITEMS: isize = 800;
 const FEED_TTL_SECS: u64 = 7 * 24 * 3600; // 1 week
+
+// When true, fanout/populate/backfill run inline (no tokio::spawn).
+// Set by integration tests to eliminate timing races.
+static SYNC_FANOUT: AtomicBool = AtomicBool::new(false);
+
+pub fn enable_sync_fanout() {
+    SYNC_FANOUT.store(true, Ordering::Relaxed);
+}
+
+pub fn sync_fanout() -> bool {
+    SYNC_FANOUT.load(Ordering::Relaxed)
+}
 
 fn feed_key(instance_id: Uuid, account_id: i64) -> String {
     format!("{}:feed:home:{}", instance_id, account_id)
@@ -33,8 +46,9 @@ pub async fn feed_push(
     status_id: i64,
 ) {
     let key = feed_key(instance_id, account_id);
+    // redis crate zadd API: zadd(key, member, score)
     let result: redis::RedisResult<()> = redis::pipe()
-        .zadd(&key, status_id as f64, status_id)
+        .zadd(&key, status_id, status_id as f64)
         .zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1))
         .ignore()
         .query_async(redis)
@@ -118,6 +132,12 @@ pub async fn feed_populate(
     account_id: i64,
     db: &PgPool,
 ) {
+    // Mark as populated immediately so fan-out during the populate window works.
+    // Fan-out uses ZADD (idempotent), so any push that races with populate is safe.
+    let _: redis::RedisResult<()> = redis
+        .set_ex(populated_key(instance_id, account_id), 1i64, FEED_TTL_SECS)
+        .await;
+
     let status_ids: Vec<i64> = sqlx::query_scalar!(
         r#"WITH candidate_ids AS (
                SELECT s.id FROM statuses s
@@ -150,15 +170,12 @@ pub async fn feed_populate(
         let key = feed_key(instance_id, account_id);
         let mut pipe = redis::pipe();
         for &id in &status_ids {
-            pipe.zadd(&key, id as f64, id);
+            // redis crate zadd API: zadd(key, member, score)
+            pipe.zadd(&key, id, id as f64);
         }
         pipe.expire(&key, FEED_TTL_SECS as i64);
         let _: redis::RedisResult<()> = pipe.query_async(redis).await;
     }
-
-    let _: redis::RedisResult<()> = redis
-        .set_ex(populated_key(instance_id, account_id), 1i64, FEED_TTL_SECS)
-        .await;
 }
 
 /// Fan-out a newly posted status to all followers' initialized feeds,
@@ -228,7 +245,8 @@ pub async fn fanout_new_status(
     for (&id, init) in recipients.iter().zip(initialized.iter()) {
         if init.is_some() {
             let key = feed_key(instance_id, id);
-            pipe.zadd(&key, score, status_id);
+            // redis crate zadd API: zadd(key, member, score)
+            pipe.zadd(&key, status_id, score);
             pipe.zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1));
             any = true;
         }
@@ -307,7 +325,8 @@ pub async fn backfill_follow(
     let key = feed_key(instance_id, follower_id);
     let mut pipe = redis::pipe();
     for &id in &recent {
-        pipe.zadd(&key, id as f64, id);
+        // redis crate zadd API: zadd(key, member, score)
+        pipe.zadd(&key, id, id as f64);
     }
     pipe.zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1));
     let _: redis::RedisResult<()> = pipe.query_async(redis).await;

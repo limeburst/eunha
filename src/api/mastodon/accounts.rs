@@ -568,9 +568,13 @@ pub async fn follow_account(
         let db = state.db.clone();
         let iid = instance.id;
         let follower_id = auth.account_id;
-        tokio::spawn(async move {
+        if feed::sync_fanout() {
             feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
-        });
+        } else {
+            tokio::spawn(async move {
+                feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
+            });
+        }
     } else {
         let requester = fetch_account(&state, auth.account_id).await?;
         push::create_and_push(
@@ -1373,9 +1377,13 @@ pub async fn authorize_follow_request(
         let db = state.db.clone();
         let iid = instance.id;
         let followed_id = auth.account_id;
-        tokio::spawn(async move {
+        if feed::sync_fanout() {
             feed::backfill_follow(&mut redis, &db, iid, requester_id, followed_id).await;
-        });
+        } else {
+            tokio::spawn(async move {
+                feed::backfill_follow(&mut redis, &db, iid, requester_id, followed_id).await;
+            });
+        }
     }
 
     build_relationship(&state, auth.account_id, requester_id).await.map(Json)

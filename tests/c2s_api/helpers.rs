@@ -234,6 +234,9 @@ pub struct TestContext {
 
 impl TestContext {
     pub async fn new(label: &str) -> Self {
+        // Make fanout/populate/backfill run inline so tests don't race with background tasks.
+        eunha::feed::enable_sync_fanout();
+
         // Use a unique subdomain per test so instances are isolated.
         let uid = &Uuid::new_v4().to_string()[..8];
         let domain = format!("{}-{}.c2s-test.invalid", label, uid);
@@ -260,8 +263,11 @@ impl TestContext {
             .await
             .expect("failed to connect to test database (test_db)");
 
+        let redis_url = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
         let config = eunha::config::Config {
             database_url: db_url,
+            redis_url,
             bind_address: "127.0.0.1:0".into(),
             console_domain: "console.c2s-test.invalid".into(),
             media_storage: eunha::config::MediaStorageConfig {
@@ -278,7 +284,8 @@ impl TestContext {
                 from: "test@test.invalid".into(),
             },
         };
-        let state = eunha::state::AppState::new(db, config).await;
+        let state = eunha::state::AppState::new(db, config).await
+            .expect("failed to initialize AppState");
         let app = eunha::build_app(state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -374,7 +381,7 @@ pub async fn seed_account_and_token(
     .await
     .unwrap();
 
-    let app_id = sqlx::query_scalar!(
+    let app_id: i64 = sqlx::query_scalar!(
         r#"INSERT INTO oauth_applications
              (instance_id, name, client_id, client_secret, redirect_uris, scopes)
            VALUES ($1,'test',gen_random_uuid()::text,gen_random_uuid()::text,'urn:ietf:wg:oauth:2.0:oob','read write follow')
@@ -410,8 +417,8 @@ pub fn hash_password(password: &str) -> String {
 /// Create an additional access token for `account_id` with the given scopes.
 /// Use this to test scope enforcement (e.g. a read-only token trying a write endpoint).
 pub async fn seed_token_with_scopes(db: &PgPool, account_id: i64, scopes: &str) -> String {
-    let app_id: Uuid = sqlx::query_scalar!(
-        r#"SELECT application_id as "application_id!: Uuid" FROM oauth_access_tokens
+    let app_id: i64 = sqlx::query_scalar!(
+        r#"SELECT application_id as "application_id!: i64" FROM oauth_access_tokens
            WHERE account_id = $1 AND application_id IS NOT NULL LIMIT 1"#,
         account_id,
     )

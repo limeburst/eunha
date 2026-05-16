@@ -191,9 +191,13 @@ pub async fn home_timeline(
             let db = state.db.clone();
             let iid = instance.id;
             let account_id = auth.account_id;
-            tokio::spawn(async move {
+            if feed::sync_fanout() {
                 feed::feed_populate(&mut redis2, iid, account_id, &db).await;
-            });
+            } else {
+                tokio::spawn(async move {
+                    feed::feed_populate(&mut redis2, iid, account_id, &db).await;
+                });
+            }
         }
         home_timeline_from_db(&state, auth.account_id, max_id, since_id, min_id, limit).await?
     };

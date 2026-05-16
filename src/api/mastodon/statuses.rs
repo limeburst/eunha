@@ -445,9 +445,13 @@ pub async fn post_status(
         let iid = instance.id;
         let author_id = account.id;
         let status_id = status.id;
-        tokio::spawn(async move {
+        if feed::sync_fanout() {
             feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
-        });
+        } else {
+            tokio::spawn(async move {
+                feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
+            });
+        }
     }
 
     Ok((axum::http::StatusCode::OK, Json(api_status)).into_response())
@@ -808,9 +812,13 @@ pub async fn delete_status(
         let db = state.db.clone();
         let iid = status.instance_id;
         let author_id = account.id;
-        tokio::spawn(async move {
+        if feed::sync_fanout() {
             feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
-        });
+        } else {
+            tokio::spawn(async move {
+                feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
+            });
+        }
     }
 
     let media = fetch_status_media(&state, id).await?;
