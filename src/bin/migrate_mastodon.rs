@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
     tracing::info!("instance_id = {}", instance_id);
 
     tracing::info!("migrating accounts...");
-    let account_map = migrate_accounts(&src, &mut *tx, instance_id, args.limit_accounts, &args.domain).await?;
+    let (account_map, local_usernames) = migrate_accounts(&src, &mut *tx, instance_id, args.limit_accounts, &args.domain).await?;
     tracing::info!("migrated {} accounts", account_map.len());
 
     tracing::info!("migrating users...");
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
     tracing::info!("migrated {} oauth applications", app_map.len());
 
     tracing::info!("migrating statuses...");
-    let status_map = migrate_statuses(&src, &mut *tx, instance_id, &account_map, &app_map).await?;
+    let status_map = migrate_statuses(&src, &mut *tx, instance_id, &args.domain, &account_map, &local_usernames, &app_map).await?;
     tracing::info!("migrated {} statuses", status_map.len());
 
     tracing::info!("migrating follows...");
@@ -309,7 +309,7 @@ async fn migrate_accounts(
     instance_id: Uuid,
     limit: Option<i64>,
     instance_domain: &str,
-) -> Result<HashMap<i64, i64>> {
+) -> Result<(HashMap<i64, i64>, HashMap<i64, String>)> {
     let rows = sqlx::query(
         r#"SELECT a.*,
                COALESCE(s.followers_count, 0) AS followers_count,
@@ -324,6 +324,7 @@ async fn migrate_accounts(
     .await?;
 
     let mut map = HashMap::new();
+    let mut local_usernames: HashMap<i64, String> = HashMap::new();
 
     for row in &rows {
         let src_id: i64 = row.get("id");
@@ -350,14 +351,11 @@ async fn migrate_accounts(
         let note: Option<String> = row.try_get("note").ok().flatten();
         let url_src: Option<String> = row.try_get("url").ok().flatten();
         let uri_src: Option<String> = row.try_get("uri").ok().flatten();
-        // For local accounts, Mastodon may leave url/uri empty — derive them.
+        // Local accounts always get canonical URIs on the new instance domain.
+        // Remote accounts keep their original urls from the source.
         let (url, uri, inbox_url_derived, outbox_url_derived) = if is_local {
-            let base_uri = uri_src.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-                format!("https://{}/users/{}", instance_domain, username)
-            });
-            let base_url = url_src.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-                format!("https://{}/@{}", instance_domain, username)
-            });
+            let base_uri = format!("https://{}/users/{}", instance_domain, username);
+            let base_url = format!("https://{}/@{}", instance_domain, username);
             let inbox = format!("{}/inbox", base_uri);
             let outbox = format!("{}/outbox", base_uri);
             (Some(base_url), Some(base_uri), Some(inbox), Some(outbox))
@@ -449,9 +447,12 @@ async fn migrate_accounts(
         if inserted.is_some() {
             map.insert(src_id, src_id);
         }
+        if is_local {
+            local_usernames.insert(src_id, username.clone());
+        }
     }
 
-    Ok(map)
+    Ok((map, local_usernames))
 }
 
 fn parse_mastodon_settings(yaml: &str) -> (String, bool, Option<String>) {
@@ -594,7 +595,9 @@ async fn migrate_statuses(
     src: &PgPool,
     dst: &mut PgConnection,
     instance_id: Uuid,
+    instance_domain: &str,
     account_map: &HashMap<i64, i64>,
+    local_usernames: &HashMap<i64, String>,
     app_map: &HashMap<i64, i64>,
 ) -> Result<HashMap<i64, i64>> {
     // Mastodon `visibility` is an integer enum: 0=public 1=unlisted 2=private 3=direct
@@ -617,8 +620,14 @@ async fn migrate_statuses(
         };
         let language: Option<String> = row.try_get("language").ok().flatten();
         let sensitive: Option<bool> = row.try_get("sensitive").ok().flatten();
-        let url: Option<String> = row.try_get("url").ok().flatten();
-        let uri: Option<String> = row.try_get("uri").ok().flatten();
+        // For local statuses, always build canonical URI/URL from the new instance domain.
+        let (url, uri) = if let Some(username) = local_usernames.get(&src_account_id) {
+            let canonical_uri = format!("https://{}/users/{}/statuses/{}", instance_domain, username, src_id);
+            let canonical_url = format!("https://{}/@{}/{}", instance_domain, username, src_id);
+            (Some(canonical_url), Some(canonical_uri))
+        } else {
+            (row.try_get("url").ok().flatten(), row.try_get("uri").ok().flatten())
+        };
         let in_reply_to_id_src: Option<i64> = row.try_get("in_reply_to_id").ok().flatten();
         let in_reply_to_account_id_src: Option<i64> = row.try_get("in_reply_to_account_id").ok().flatten();
         let reply: bool = row.try_get::<bool, _>("reply").ok().unwrap_or(in_reply_to_id_src.is_some());

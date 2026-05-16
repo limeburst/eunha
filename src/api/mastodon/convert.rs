@@ -142,19 +142,6 @@ pub fn status_from_db_with_app(
         Box::new(status_from_db(&rs, &ra, rm, None, viewer_context.clone(), reblog_mentions, &[]))
     });
 
-    // For local statuses, derive uri/url from the account's canonical uri so that
-    // migrated statuses (which still have the old domain stored) resolve correctly.
-    let (status_uri, status_url) = if account.domain.is_none() {
-        let uri = format!("{}/statuses/{}", account.uri, s.id);
-        let url = status_url_from_uri(&uri);
-        (uri, url)
-    } else {
-        (
-            s.uri.clone().unwrap_or_else(|| s.id.to_string()),
-            s.url.clone().or_else(|| status_url_from_uri(s.uri.as_deref()?)),
-        )
-    };
-
     types::Status {
         id: s.id.to_string(),
         created_at: s.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
@@ -164,8 +151,8 @@ pub fn status_from_db_with_app(
         spoiler_text: s.spoiler_text.clone(),
         visibility: s.visibility.clone(),
         language: s.language.clone(),
-        uri: status_uri,
-        url: status_url,
+        uri: s.uri.clone().unwrap_or_else(|| s.id.to_string()),
+        url: s.url.clone().or_else(|| status_url_from_uri(s.uri.as_deref()?)),
         replies_count: s.replies_count,
         reblogs_count: s.reblogs_count,
         favourites_count: s.favourites_count,
