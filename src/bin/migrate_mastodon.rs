@@ -71,15 +71,9 @@ async fn main() -> Result<()> {
 
     let mut tx = dst.begin().await.context("beginning transaction")?;
 
-    let instance_id = if let Some(id) = args.instance_id {
-        tracing::info!("using provided instance_id: {}", id);
-        id
-    } else {
-        tracing::info!("migrating instance: {}", args.domain);
-        let id = migrate_instance(&src, &mut *tx, &args.domain).await?;
-        tracing::info!("instance_id = {}", id);
-        id
-    };
+    tracing::info!("migrating instance: {}", args.domain);
+    let instance_id = migrate_instance(&src, &mut *tx, &args.domain, args.instance_id).await?;
+    tracing::info!("instance_id = {}", instance_id);
 
     tracing::info!("migrating accounts...");
     let (account_map, local_usernames) = migrate_accounts(&src, &mut *tx, instance_id, args.limit_accounts, &args.domain).await?;
@@ -250,7 +244,8 @@ async fn setup_admin_user(
     Ok(())
 }
 
-async fn migrate_instance(src: &PgPool, dst: &mut PgConnection, domain: &str) -> Result<Uuid> {
+async fn migrate_instance(src: &PgPool, dst: &mut PgConnection, domain: &str, instance_id: Option<Uuid>) -> Result<Uuid> {
+    let instance_id = instance_id.unwrap_or_else(Uuid::new_v4);
     let settings_rows = sqlx::query(
         "SELECT var, value FROM settings WHERE thing_type IS NULL LIMIT 100"
     )
@@ -286,9 +281,9 @@ async fn migrate_instance(src: &PgPool, dst: &mut PgConnection, domain: &str) ->
 
     let id: Uuid = sqlx::query_scalar(
         r#"INSERT INTO instances
-             (domain, title, description, short_description, contact_email,
+             (id, domain, title, description, short_description, contact_email,
               registrations_open, private_key, public_key)
-           VALUES ($1,$2,$3,$4,$5,true,$6,$7)
+           VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8)
            ON CONFLICT (domain) DO UPDATE
              SET title = EXCLUDED.title,
                  description = EXCLUDED.description,
@@ -299,6 +294,7 @@ async fn migrate_instance(src: &PgPool, dst: &mut PgConnection, domain: &str) ->
                  updated_at = now()
            RETURNING id"#,
     )
+    .bind(instance_id)
     .bind(domain)
     .bind(&title)
     .bind(&description)
