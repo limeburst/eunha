@@ -168,24 +168,28 @@ pub async fn home_timeline(
     let statuses = if min_id.is_some() {
         sqlx::query_as!(
             DbStatus,
-            r#"SELECT s.*
-               FROM statuses s
-               JOIN accounts a ON a.id = s.account_id
-               WHERE (
-                   s.account_id IN (
+            r#"WITH candidate_ids AS MATERIALIZED (
+                   SELECT s.id FROM statuses s
+                   WHERE s.account_id IN (
                        SELECT target_account_id FROM follows
                        WHERE account_id = $1 AND state = 'accepted'
                        UNION ALL SELECT $1
                    )
-                   OR (
-                       s.visibility = 'public'
-                       AND EXISTS (
-                           SELECT 1 FROM status_tags st
-                           JOIN tag_follows tf ON tf.tag_id = st.tag_id
-                           WHERE st.status_id = s.id AND tf.account_id = $1
-                       )
-                   )
+                   AND s.deleted_at IS NULL
+                   AND ($2::bigint IS NULL OR s.id > $2)
+                   UNION
+                   SELECT st.status_id AS id FROM status_tags st
+                   JOIN tag_follows tf ON tf.tag_id = st.tag_id
+                   JOIN statuses s ON s.id = st.status_id
+                   WHERE tf.account_id = $1
+                   AND s.visibility = 'public'
+                   AND s.deleted_at IS NULL
+                   AND ($2::bigint IS NULL OR s.id > $2)
                )
+               SELECT s.*
+               FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.id IN (SELECT id FROM candidate_ids)
                AND s.deleted_at IS NULL
                AND a.suspended_at IS NULL
                AND (a.domain IS NULL OR NOT EXISTS (
@@ -230,7 +234,6 @@ pub async fn home_timeline(
                        WHERE m.status_id = s.id AND m.account_id = $1
                    )
                )
-               AND ($2::bigint IS NULL OR s.id > $2)
                AND (s.text != ''
                     OR s.reblog_of_id IS NOT NULL
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
@@ -245,24 +248,30 @@ pub async fn home_timeline(
     } else {
         sqlx::query_as!(
             DbStatus,
-            r#"SELECT s.*
-               FROM statuses s
-               JOIN accounts a ON a.id = s.account_id
-               WHERE (
-                   s.account_id IN (
+            r#"WITH candidate_ids AS MATERIALIZED (
+                   SELECT s.id FROM statuses s
+                   WHERE s.account_id IN (
                        SELECT target_account_id FROM follows
                        WHERE account_id = $1 AND state = 'accepted'
                        UNION ALL SELECT $1
                    )
-                   OR (
-                       s.visibility = 'public'
-                       AND EXISTS (
-                           SELECT 1 FROM status_tags st
-                           JOIN tag_follows tf ON tf.tag_id = st.tag_id
-                           WHERE st.status_id = s.id AND tf.account_id = $1
-                       )
-                   )
+                   AND s.deleted_at IS NULL
+                   AND ($2::bigint IS NULL OR s.id < $2)
+                   AND ($3::bigint IS NULL OR s.id > $3)
+                   UNION
+                   SELECT st.status_id AS id FROM status_tags st
+                   JOIN tag_follows tf ON tf.tag_id = st.tag_id
+                   JOIN statuses s ON s.id = st.status_id
+                   WHERE tf.account_id = $1
+                   AND s.visibility = 'public'
+                   AND s.deleted_at IS NULL
+                   AND ($2::bigint IS NULL OR s.id < $2)
+                   AND ($3::bigint IS NULL OR s.id > $3)
                )
+               SELECT s.*
+               FROM statuses s
+               JOIN accounts a ON a.id = s.account_id
+               WHERE s.id IN (SELECT id FROM candidate_ids)
                AND s.deleted_at IS NULL
                AND a.suspended_at IS NULL
                AND (a.domain IS NULL OR NOT EXISTS (
@@ -307,8 +316,6 @@ pub async fn home_timeline(
                        WHERE m.status_id = s.id AND m.account_id = $1
                    )
                )
-               AND ($2::bigint IS NULL OR s.id < $2)
-               AND ($3::bigint IS NULL OR s.id > $3)
                AND (s.text != ''
                     OR s.reblog_of_id IS NOT NULL
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
