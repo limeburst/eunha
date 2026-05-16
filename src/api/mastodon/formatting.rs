@@ -16,6 +16,19 @@ pub static URL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new("https?://[^\\s<>&\"]+").unwrap()
 });
 
+fn html_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn html_escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 pub fn render_content(
     text: &str,
     domain: &str,
@@ -57,8 +70,8 @@ fn linkify_entities(
             end: full.end(),
             html: format!(
                 r#"<a href="{}" class="mention hashtag" rel="tag">#<span>{}</span></a>"#,
-                ammonia::clean_text(&url),
-                ammonia::clean_text(tag_text),
+                html_escape_attr(&url),
+                html_escape_text(tag_text),
             ),
         });
     }
@@ -78,8 +91,8 @@ fn linkify_entities(
                 end: full.end(),
                 html: format!(
                     r#"<span class="h-card" translate="no"><a href="{}" class="u-url mention">@<span>{}</span></a></span>"#,
-                    ammonia::clean_text(url),
-                    ammonia::clean_text(display),
+                    html_escape_attr(url),
+                    html_escape_text(display),
                 ),
             });
         }
@@ -92,8 +105,8 @@ fn linkify_entities(
             end: m.end(),
             html: format!(
                 r#"<a href="{}" target="_blank" rel="nofollow noopener noreferrer">{}</a>"#,
-                ammonia::clean_text(url),
-                ammonia::clean_text(url),
+                html_escape_attr(url),
+                html_escape_text(url),
             ),
         });
     }
@@ -106,11 +119,11 @@ fn linkify_entities(
         if entity.start < last_end {
             continue;
         }
-        result.push_str(&ammonia::clean_text(&text[last_end..entity.start]));
+        result.push_str(&html_escape_text(&text[last_end..entity.start]));
         result.push_str(&entity.html);
         last_end = entity.end;
     }
-    result.push_str(&ammonia::clean_text(&text[last_end..]));
+    result.push_str(&html_escape_text(&text[last_end..]));
     result
 }
 

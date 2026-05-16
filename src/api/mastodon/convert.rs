@@ -6,6 +6,12 @@ use super::types;
 const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
 const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
 
+fn status_url_from_uri(uri: &str) -> Option<String> {
+    let (base, rest) = uri.split_once("/users/")?;
+    let (username, id) = rest.split_once("/statuses/")?;
+    Some(format!("{}/@{}/{}", base, username, id))
+}
+
 pub fn account_from_db(a: &models::Account) -> types::Account {
     let (url, uri) = if a.domain.is_none() && !a.uri.is_empty() {
         // Local accounts: uri is authoritative; derive url from it
@@ -138,7 +144,7 @@ pub fn status_from_db_with_app(
 
     types::Status {
         id: s.id.to_string(),
-        created_at: s.created_at.to_rfc3339(),
+        created_at: s.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
         in_reply_to_id: s.in_reply_to_id.map(|i| i.to_string()),
         in_reply_to_account_id: s.in_reply_to_account_id.map(|i| i.to_string()),
         sensitive: s.sensitive,
@@ -146,12 +152,12 @@ pub fn status_from_db_with_app(
         visibility: s.visibility.clone(),
         language: s.language.clone(),
         uri: s.uri.clone().unwrap_or_else(|| s.id.to_string()),
-        url: s.url.clone(),
+        url: s.url.clone().or_else(|| status_url_from_uri(s.uri.as_deref()?)),
         replies_count: s.replies_count,
         reblogs_count: s.reblogs_count,
         favourites_count: s.favourites_count,
         quotes_count: 0,
-        edited_at: s.edited_at.map(|t| t.to_rfc3339()),
+        edited_at: s.edited_at.map(|t| t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
         content,
         reblog: reblog_status,
         application,

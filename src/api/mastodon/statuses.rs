@@ -671,8 +671,21 @@ pub async fn get_status(
     } else {
         None
     };
+    let application = if let Some(app_id) = status.application_id {
+        sqlx::query!(
+            "SELECT name, website FROM oauth_applications WHERE id = $1",
+            app_id,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| super::types::Application { name: r.name, website: r.website })
+    } else {
+        None
+    };
 
-    Ok(Json(build_status(&state, &status, &account, media, reblog, viewer_ctx).await?))
+    Ok(Json(super::accounts::build_status_with_app(&state, &status, &account, media, reblog, viewer_ctx, application).await?))
 }
 
 // ── DELETE /api/v1/statuses/:id ────────────────────────────────────────────
