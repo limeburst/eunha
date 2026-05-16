@@ -3,8 +3,6 @@ use axum::{
     http::header,
     Json,
 };
-use once_cell::sync::Lazy;
-use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -20,21 +18,10 @@ use crate::{
 use super::{
     accounts::{build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch},
     convert::account_from_db,
+    formatting::{HASHTAG_RE, MENTION_RE, render_content},
     types::{Status, StatusContext, StatusEdit, StatusSource},
 };
 use super::scheduled_statuses::ScheduledStatusResponse;
-
-static HASHTAG_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(^|[\s,.:;!?\(\[\{/])#([a-zA-Z][a-zA-Z0-9_]*)").unwrap()
-});
-
-static MENTION_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(^|[\s,.:;!?\(\[\{/])@([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9._:\-]+))?").unwrap()
-});
-
-static URL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new("https?://[^\\s<>&\"]+").unwrap()
-});
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PollForm {
@@ -196,15 +183,14 @@ pub async fn post_status(
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
-             (id, instance_id, account_id, application_id, text, content, spoiler_text, visibility,
+             (id, instance_id, account_id, application_id, text, spoiler_text, visibility,
               language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url)
-           VALUES ($1,$2,$3,$13,$4,$5,$6,$7,$8,$9,$10,$11,$15,$12,$14,$14)
+           VALUES ($1,$2,$3,$12,$4,$5,$6,$7,$8,$9,$10,$14,$11,$13,$13)
            RETURNING *"#,
         status_id,
         instance.id,
         account.id,
         text,
-        content,
         form.spoiler_text.unwrap_or_default(),
         visibility,
         form.language,
@@ -356,7 +342,7 @@ pub async fn post_status(
     let media = fetch_status_media(&state, status.id).await?;
     let api_status = super::accounts::build_status_with_app(&state, &status, &account, media, None, None, application).await?;
 
-    spawn_card_fetch(&state, status.id, status.content.clone());
+    spawn_card_fetch(&state, status.id, content);
 
     if matches!(visibility.as_str(), "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {
@@ -915,8 +901,8 @@ pub async fn reblog_status(
     let boost_id = crate::snowflake::next_id();
     let boost = sqlx::query_as!(
         DbStatus,
-        r#"INSERT INTO statuses (id, instance_id, account_id, text, content, visibility, reblog_of_id)
-           VALUES ($1,$2,$3,'','',$4,$5)
+        r#"INSERT INTO statuses (id, instance_id, account_id, text, visibility, reblog_of_id)
+           VALUES ($1,$2,$3,'',$4,$5)
            RETURNING *"#,
         boost_id,
         instance.id,
@@ -1018,7 +1004,7 @@ pub async fn get_status_context(
                JOIN reply_tree r ON s.in_reply_to_id = r.id
              WHERE s.deleted_at IS NULL AND r.depth < $3
            )
-           SELECT id, instance_id, account_id, application_id, text, content, spoiler_text,
+           SELECT id, instance_id, account_id, application_id, text, spoiler_text,
                   in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
                   visibility, language, sensitive, url, uri,
                   replies_count, reblogs_count, favourites_count,
@@ -1487,20 +1473,48 @@ pub async fn edit_status(
         return Err(AppError::Unprocessable("Reblogs cannot be edited".into()));
     }
 
-    // Save current version to edits before updating
-    sqlx::query!(
-        r#"INSERT INTO status_edits (status_id, account_id, text, content, spoiler_text, sensitive)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-        id, auth.account_id, status.text, status.content, status.spoiler_text, status.sensitive,
-    )
-    .execute(&state.db)
-    .await?;
-
     let instance_domain = sqlx::query_scalar!(
         "SELECT domain FROM instances WHERE id = $1",
         status.instance_id,
     )
     .fetch_one(&state.db)
+    .await?;
+
+    // Render old content for the status_edits snapshot
+    let old_mention_rows = sqlx::query!(
+        r#"SELECT a.username, a.domain, a.url FROM mentions m
+           JOIN accounts a ON a.id = m.account_id
+           WHERE m.status_id = $1"#,
+        id,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let old_mention_map: HashMap<String, (String, String)> = {
+        let mut map = HashMap::new();
+        for m in &old_mention_rows {
+            let key_short = m.username.to_lowercase();
+            let display = match &m.domain {
+                Some(d) => format!("{}@{}", m.username, d),
+                None => m.username.clone(),
+            };
+            let url = m.url.clone();
+            map.entry(key_short.clone()).or_insert_with(|| (url.clone(), display.clone()));
+            if let Some(d) = &m.domain {
+                map.entry(format!("{}@{}", key_short, d)).or_insert_with(|| (url, display));
+            }
+        }
+        map
+    };
+    let old_content = render_content(&status.text, &instance_domain, &old_mention_map);
+
+    // Save current version to edits before updating
+    sqlx::query!(
+        r#"INSERT INTO status_edits (status_id, account_id, text, content, spoiler_text, sensitive)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+        id, auth.account_id, status.text, old_content, status.spoiler_text, status.sensitive,
+    )
+    .execute(&state.db)
     .await?;
 
     let new_text = form.status.unwrap_or_else(|| status.text.clone());
@@ -1517,14 +1531,15 @@ pub async fn edit_status(
     let new_language = form.language.or(status.language.clone());
 
     sqlx::query!(
-        "UPDATE statuses SET text = $1, content = $2, spoiler_text = $3, sensitive = $4, language = $5, edited_at = now() WHERE id = $6",
-        new_text, new_content, new_spoiler, new_sensitive, new_language, id,
+        "UPDATE statuses SET text = $1, spoiler_text = $2, sensitive = $3, language = $4, edited_at = now() WHERE id = $5",
+        new_text, new_spoiler, new_sensitive, new_language, id,
     )
     .execute(&state.db)
     .await?;
 
     store_status_tags(&state, id, auth.account_id, &hashtags).await?;
     store_status_mentions(&state, id, &resolved).await?;
+    spawn_card_fetch(&state, id, new_content);
 
     // Send "update" notifications to users who have interacted with this status
     let interacted: Vec<i64> = sqlx::query_scalar!(
@@ -1595,6 +1610,22 @@ pub async fn get_status_history(
     .fetch_all(&state.db)
     .await?;
 
+    // Render current version content on the fly
+    let current_mentions = super::accounts::fetch_status_mentions(&state, id).await.unwrap_or_default();
+    let current_content = if account.domain.is_none() {
+        let instance_domain = sqlx::query_scalar!(
+            "SELECT domain FROM instances WHERE id = $1",
+            status.instance_id,
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or_default();
+        let map = super::formatting::mention_map_from_api(&current_mentions);
+        super::formatting::render_content(&status.text, &instance_domain, &map)
+    } else {
+        ammonia::clean(&status.text)
+    };
+
     let api_account = account_from_db(&account);
     let mut result: Vec<StatusEdit> = edits.iter().map(|e| StatusEdit {
         content: e.content.clone(),
@@ -1609,7 +1640,7 @@ pub async fn get_status_history(
 
     // Append current version
     result.push(StatusEdit {
-        content: status.content.clone(),
+        content: current_content,
         spoiler_text: status.spoiler_text.clone(),
         sensitive: status.sensitive,
         created_at: status.edited_at.unwrap_or(status.created_at).to_rfc3339(),
@@ -1897,104 +1928,6 @@ pub async fn build_viewer_context(
         bookmarked,
         pinned,
     })
-}
-
-pub fn render_content(
-    text: &str,
-    domain: &str,
-    mention_map: &HashMap<String, (String, String)>,
-) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-    text.split("\n\n")
-        .map(|para| {
-            let linked = linkify_entities(para, domain, mention_map);
-            format!("<p>{}</p>", linked.replace('\n', "<br />"))
-        })
-        .collect::<Vec<_>>()
-        .join("")
-}
-
-fn linkify_entities(
-    text: &str,
-    domain: &str,
-    mention_map: &HashMap<String, (String, String)>,
-) -> String {
-    struct Entity {
-        start: usize,
-        end: usize,
-        html: String,
-    }
-
-    let mut entities: Vec<Entity> = Vec::new();
-
-    for cap in HASHTAG_RE.captures_iter(text) {
-        let full = cap.get(0).unwrap();
-        let prefix_len = cap.get(1).unwrap().as_str().len();
-        let tag_text = &cap[2];
-        let tag_lower = tag_text.to_lowercase();
-        let url = format!("https://{}/tags/{}", domain, urlencoding::encode(&tag_lower));
-        entities.push(Entity {
-            start: full.start() + prefix_len,
-            end: full.end(),
-            html: format!(
-                r#"<a href="{}" class="mention hashtag" rel="tag">#<span>{}</span></a>"#,
-                ammonia::clean_text(&url),
-                ammonia::clean_text(tag_text),
-            ),
-        });
-    }
-
-    for cap in MENTION_RE.captures_iter(text) {
-        let full = cap.get(0).unwrap();
-        let prefix_len = cap.get(1).unwrap().as_str().len();
-        let username = cap[2].to_lowercase();
-        let mention_domain = cap.get(3).map(|m| m.as_str().to_lowercase());
-        let key = match &mention_domain {
-            Some(d) => format!("{}@{}", username, d),
-            None => username.clone(),
-        };
-        if let Some((url, display)) = mention_map.get(&key) {
-            entities.push(Entity {
-                start: full.start() + prefix_len,
-                end: full.end(),
-                html: format!(
-                    r#"<span class="h-card" translate="no"><a href="{}" class="u-url mention">@<span>{}</span></a></span>"#,
-                    ammonia::clean_text(url),
-                    ammonia::clean_text(display),
-                ),
-            });
-        }
-    }
-
-    for m in URL_RE.find_iter(text) {
-        let url = m.as_str();
-        entities.push(Entity {
-            start: m.start(),
-            end: m.end(),
-            html: format!(
-                r#"<a href="{}" target="_blank" rel="nofollow noopener noreferrer">{}</a>"#,
-                ammonia::clean_text(url),
-                ammonia::clean_text(url),
-            ),
-        });
-    }
-
-    entities.sort_by_key(|e| e.start);
-
-    let mut result = String::with_capacity(text.len() * 2);
-    let mut last_end = 0usize;
-    for entity in &entities {
-        if entity.start < last_end {
-            continue;
-        }
-        result.push_str(&ammonia::clean_text(&text[last_end..entity.start]));
-        result.push_str(&entity.html);
-        last_end = entity.end;
-    }
-    result.push_str(&ammonia::clean_text(&text[last_end..]));
-    result
 }
 
 pub fn extract_hashtags(text: &str) -> Vec<String> {

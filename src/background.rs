@@ -85,8 +85,9 @@ async fn publish_one(
 
     use crate::api::mastodon::statuses::{
         extract_hashtags, extract_mention_handles, resolve_mention_accounts,
-        build_mention_map, render_content, store_status_tags, store_status_mentions,
+        build_mention_map, store_status_tags, store_status_mentions,
     };
+    use crate::api::mastodon::formatting::render_content;
 
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
@@ -100,11 +101,11 @@ async fn publish_one(
     let status = sqlx::query_as!(
         crate::db::models::Status,
         r#"INSERT INTO statuses
-             (id, instance_id, account_id, text, content, spoiler_text, visibility,
+             (id, instance_id, account_id, text, spoiler_text, visibility,
               language, sensitive, in_reply_to_id, uri, url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
            RETURNING *"#,
-        status_id, instance.id, account.id, text, content, spoiler_text, visibility,
+        status_id, instance.id, account.id, text, spoiler_text, visibility,
         language, sensitive, in_reply_to_id, uri,
     )
     .fetch_one(&state.db)
@@ -163,7 +164,7 @@ async fn publish_one(
     use crate::api::mastodon::accounts::{build_status, fetch_status_media, spawn_card_fetch};
     let mut status_with_uri = status.clone();
     status_with_uri.uri = Some(uri);
-    spawn_card_fetch(state, status_with_uri.id, status_with_uri.content.clone());
+    spawn_card_fetch(state, status_with_uri.id, content);
     if let Ok(media) = fetch_status_media(state, status_with_uri.id).await {
         if let Ok(api_status) = build_status(state, &status_with_uri, &account, media, None, None).await {
             if matches!(visibility, "public" | "unlisted" | "private") {

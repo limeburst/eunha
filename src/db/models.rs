@@ -129,7 +129,6 @@ pub struct Status {
     pub account_id: i64,
     pub application_id: Option<Uuid>,
     pub text: String,
-    pub content: String,
     pub spoiler_text: String,
     pub in_reply_to_id: Option<i64>,
     pub in_reply_to_account_id: Option<i64>,

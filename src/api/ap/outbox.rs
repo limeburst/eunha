@@ -51,7 +51,7 @@ pub async fn get_outbox(
     }
 
     let statuses = sqlx::query!(
-        r#"SELECT s.id, s.content, s.spoiler_text, s.visibility, s.sensitive,
+        r#"SELECT s.id, s.text, s.spoiler_text, s.visibility, s.sensitive,
                   s.created_at, s.uri, s.url, s.in_reply_to_id
            FROM statuses s
            WHERE s.account_id = $1
@@ -68,6 +68,39 @@ pub async fn get_outbox(
     .fetch_all(&state.db)
     .await?;
 
+    // Batch-fetch mentions for all statuses in this page
+    let status_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+    let mention_rows = if !status_ids.is_empty() {
+        sqlx::query!(
+            r#"SELECT m.status_id, a.username, a.domain, a.url
+               FROM mentions m
+               JOIN accounts a ON a.id = m.account_id
+               WHERE m.status_id = ANY($1::bigint[])"#,
+            &status_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let mut mention_maps: std::collections::HashMap<i64, std::collections::HashMap<String, (String, String)>> =
+        std::collections::HashMap::new();
+    for m in &mention_rows {
+        let map = mention_maps.entry(m.status_id).or_default();
+        let key_short = m.username.to_lowercase();
+        let display = match &m.domain {
+            Some(d) => format!("{}@{}", m.username, d),
+            None => m.username.clone(),
+        };
+        let url = m.url.clone();
+        map.entry(key_short.clone()).or_insert_with(|| (url.clone(), display.clone()));
+        if let Some(d) = &m.domain {
+            map.entry(format!("{}@{}", key_short, d)).or_insert_with(|| (url, display));
+        }
+    }
+
+    use crate::api::mastodon::formatting::render_content;
     let actor_url = format!("https://{}/users/{}", instance.domain, username);
 
     let items: Vec<Value> = statuses
@@ -76,6 +109,9 @@ pub async fn get_outbox(
             let note_url = s.url.clone().unwrap_or_else(|| {
                 format!("https://{}/users/{}/statuses/{}", instance.domain, username, s.id)
             });
+            let empty_map = std::collections::HashMap::new();
+            let mention_map = mention_maps.get(&s.id).unwrap_or(&empty_map);
+            let content = render_content(&s.text, &instance.domain, mention_map);
             json!({
                 "@context": "https://www.w3.org/ns/activitystreams",
                 "id": format!("{}/activity", note_url),
@@ -95,8 +131,8 @@ pub async fn get_outbox(
                     "to": ["https://www.w3.org/ns/activitystreams#Public"],
                     "cc": [format!("{}/followers", actor_url)],
                     "sensitive": s.sensitive,
-                    "content": s.content,
-                    "contentMap": { "und": s.content },
+                    "content": content,
+                    "contentMap": { "und": content },
                     "attachment": [],
                     "tag": [],
                 }

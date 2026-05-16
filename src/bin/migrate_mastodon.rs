@@ -569,12 +569,12 @@ async fn migrate_statuses(
 
         let new_id: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO statuses
-                 (id, instance_id, account_id, text, content, spoiler_text,
+                 (id, instance_id, account_id, text, spoiler_text,
                   visibility, language, sensitive, url, uri,
                   in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
                   replies_count, reblogs_count, favourites_count,
                   deleted_at, edited_at, created_at)
-               VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$19,$12,$20,$13,$14,$15,$16,$17,$18)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$19,$12,$20,$13,$14,$15,$16,$17,$18)
                ON CONFLICT DO NOTHING
                RETURNING id"#,
         )

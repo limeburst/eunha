@@ -1,5 +1,6 @@
 /// Conversions from DB models → Mastodon API types.
 use crate::db::models;
+use super::formatting::{mention_map_from_api, render_content};
 use super::types;
 
 const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
@@ -79,14 +80,38 @@ pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
     }
 }
 
+/// Render status content from raw text, matching the Mastodon convention:
+/// - local statuses: render from plaintext (linkify mentions/hashtags/URLs)
+/// - remote statuses: sanitize the ActivityPub HTML
+fn render_status_content(
+    s: &models::Status,
+    account: &models::Account,
+    mentions: &[types::StatusMention],
+) -> String {
+    if account.domain.is_none() {
+        // Local: text is raw plaintext, render to annotated HTML
+        let domain = s.uri.as_deref()
+            .and_then(|uri| uri.strip_prefix("https://"))
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or("");
+        let map = mention_map_from_api(mentions);
+        render_content(&s.text, domain, &map)
+    } else {
+        // Remote: text is ActivityPub HTML, sanitize before serving
+        ammonia::clean(&s.text)
+    }
+}
+
 pub fn status_from_db(
     s: &models::Status,
     account: &models::Account,
     media: Vec<models::MediaAttachment>,
     reblog: Option<(models::Status, models::Account, Vec<models::MediaAttachment>)>,
     viewer_context: Option<StatusViewerContext>,
+    mentions: &[types::StatusMention],
+    reblog_mentions: &[types::StatusMention],
 ) -> types::Status {
-    status_from_db_with_app(s, account, media, reblog, viewer_context, None)
+    status_from_db_with_app(s, account, media, reblog, viewer_context, None, mentions, reblog_mentions)
 }
 
 pub fn status_from_db_with_app(
@@ -96,9 +121,12 @@ pub fn status_from_db_with_app(
     reblog: Option<(models::Status, models::Account, Vec<models::MediaAttachment>)>,
     viewer_context: Option<StatusViewerContext>,
     application: Option<types::Application>,
+    mentions: &[types::StatusMention],
+    reblog_mentions: &[types::StatusMention],
 ) -> types::Status {
+    let content = render_status_content(s, account, mentions);
     let reblog_status = reblog.map(|(rs, ra, rm)| {
-        Box::new(status_from_db(&rs, &ra, rm, None, viewer_context.clone()))
+        Box::new(status_from_db(&rs, &ra, rm, None, viewer_context.clone(), reblog_mentions, &[]))
     });
 
     types::Status {
@@ -117,7 +145,7 @@ pub fn status_from_db_with_app(
         favourites_count: s.favourites_count,
         quotes_count: 0,
         edited_at: s.edited_at.map(|t| t.to_rfc3339()),
-        content: s.content.clone(),
+        content,
         reblog: reblog_status,
         application,
         account: account_from_db(account),

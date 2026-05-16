@@ -6,6 +6,7 @@ pub mod conversations;
 pub mod trends;
 pub mod convert;
 pub mod domain_blocks;
+pub mod formatting;
 pub mod emojis;
 pub mod favourites;
 pub mod featured_tags;

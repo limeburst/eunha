@@ -102,7 +102,7 @@ pub async fn search(
                      WHERE (b.account_id = $5 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $5)
                  ))
-                 AND to_tsvector('simple', coalesce(s.content, '') || ' ' || coalesce(s.text, ''))
+                 AND to_tsvector('simple', coalesce(s.text, ''))
                      @@ websearch_to_tsquery('simple', $2)
                ORDER BY s.id DESC LIMIT $3"#,
             instance.id, fts_query, limit, filter_account_id, viewer_id

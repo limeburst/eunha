@@ -70,7 +70,7 @@ pub async fn public_timeline(
                  ))
                  AND ($3::bigint IS NULL OR s.id > $3)
                  AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-                 AND (s.text != '' OR s.content != ''
+                 AND (s.text != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND ($7::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
@@ -118,7 +118,7 @@ pub async fn public_timeline(
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($5::bigint IS NULL OR s.id > $5)
                  AND (NOT $7::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-                 AND (s.text != '' OR s.content != ''
+                 AND (s.text != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND ($8::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
@@ -231,7 +231,7 @@ pub async fn home_timeline(
                    )
                )
                AND ($2::bigint IS NULL OR s.id > $2)
-               AND (s.text != '' OR s.content != ''
+               AND (s.text != ''
                     OR s.reblog_of_id IS NOT NULL
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                ORDER BY s.id ASC
@@ -309,7 +309,7 @@ pub async fn home_timeline(
                )
                AND ($2::bigint IS NULL OR s.id < $2)
                AND ($3::bigint IS NULL OR s.id > $3)
-               AND (s.text != '' OR s.content != ''
+               AND (s.text != ''
                     OR s.reblog_of_id IS NOT NULL
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                ORDER BY s.id DESC
@@ -379,7 +379,7 @@ pub async fn list_timeline(
                WHERE la.list_id = $1
                  AND s.deleted_at IS NULL
                  AND ($2::bigint IS NULL OR s.id > $2)
-                 AND (s.text != '' OR s.content != ''
+                 AND (s.text != ''
                       OR s.reblog_of_id IS NOT NULL
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  {reply_filter}
@@ -402,7 +402,7 @@ pub async fn list_timeline(
                  AND s.deleted_at IS NULL
                  AND ($2::bigint IS NULL OR s.id < $2)
                  AND ($3::bigint IS NULL OR s.id > $3)
-                 AND (s.text != '' OR s.content != ''
+                 AND (s.text != ''
                       OR s.reblog_of_id IS NOT NULL
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  {reply_filter}
@@ -720,13 +720,18 @@ async fn build_status_list(
         let reblog = reblog_map.get(&s.id).cloned();
         let effective_id = s.reblog_of_id.unwrap_or(s.id);
         let ctx = ctxs.get(&effective_id).cloned();
-        let mut api = status_from_db(s, account, media, reblog, ctx);
+        let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        let rb_mentions = reblog.as_ref()
+            .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+            .cloned()
+            .unwrap_or_default();
+        let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
-        api.mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        api.mentions = mentions;
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
-            rb.mentions = mentions_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = rb_mentions;
         }
         result.push(api);
     }

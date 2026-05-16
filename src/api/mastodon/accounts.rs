@@ -273,13 +273,18 @@ pub async fn get_account_statuses(
             let reblog = pin_reblog_map.get(&s.id).cloned();
             let effective_id = s.reblog_of_id.unwrap_or(s.id);
             let ctx = pin_ctxs.get(&effective_id).cloned();
-            let mut api_status = status_from_db(s, &account, media, reblog, ctx);
+            let mentions = pin_mentions_map.get(&s.id).cloned().unwrap_or_default();
+            let rb_mentions = reblog.as_ref()
+                .and_then(|(rs, _, _)| pin_mentions_map.get(&rs.id))
+                .cloned()
+                .unwrap_or_default();
+            let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
             api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
-            api_status.mentions = pin_mentions_map.get(&s.id).cloned().unwrap_or_default();
+            api_status.mentions = mentions;
             if let Some(ref mut rb) = api_status.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
                 rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
-                rb.mentions = pin_mentions_map.get(&rid).cloned().unwrap_or_default();
+                rb.mentions = rb_mentions;
             }
             api_status.pinned = Some(true);
             result.push(api_status);
@@ -308,7 +313,7 @@ pub async fn get_account_statuses(
                    OR ($6::boolean = true AND visibility = 'private')
                  )
                  AND (
-                   text != '' OR content != ''
+                   text != ''
                    OR reblog_of_id IS NOT NULL
                    OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
                  )
@@ -351,7 +356,7 @@ pub async fn get_account_statuses(
                    OR ($7::boolean = true AND visibility = 'private')
                  )
                  AND (
-                   text != '' OR content != ''
+                   text != ''
                    OR reblog_of_id IS NOT NULL
                    OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = statuses.id)
                  )
@@ -405,13 +410,18 @@ pub async fn get_account_statuses(
         let reblog = reblog_map.get(&s.id).cloned();
         let effective_id = s.reblog_of_id.unwrap_or(s.id);
         let ctx = ctxs.get(&effective_id).cloned();
-        let mut api = status_from_db(s, &account, media, reblog, ctx);
+        let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        let rb_mentions = reblog.as_ref()
+            .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+            .cloned()
+            .unwrap_or_default();
+        let mut api = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
-        api.mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        api.mentions = mentions;
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
-            rb.mentions = mentions_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = rb_mentions;
         }
         result.push(api);
     }
@@ -2331,16 +2341,27 @@ pub async fn build_status_with_app(
     application: Option<super::types::Application>,
 ) -> AppResult<super::types::Status> {
     let viewer_account_id = viewer_ctx.as_ref().map(|c| c.account_id);
-    let mut api = super::convert::status_from_db_with_app(s, account, media, reblog, viewer_ctx, application);
+
+    // Pre-fetch mentions for content rendering and the API `mentions` field
+    let mentions = fetch_status_mentions(state, s.id).await?;
+    let reblog_mentions = if let Some((ref rs, _, _)) = reblog {
+        fetch_status_mentions(state, rs.id).await?
+    } else {
+        vec![]
+    };
+
+    let mut api = super::convert::status_from_db_with_app(
+        s, account, media, reblog, viewer_ctx, application, &mentions, &reblog_mentions,
+    );
     let id: i64 = api.id.parse().unwrap_or(0);
     api.tags = fetch_status_tags(state, id).await?;
-    api.mentions = fetch_status_mentions(state, id).await?;
+    api.mentions = mentions;
     api.poll = fetch_status_poll(state, id, viewer_account_id).await?;
     api.card = fetch_status_card(state, id).await;
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
         rb.tags = fetch_status_tags(state, rid).await?;
-        rb.mentions = fetch_status_mentions(state, rid).await?;
+        rb.mentions = reblog_mentions;
         rb.poll = fetch_status_poll(state, rid, None).await?;
         rb.card = fetch_status_card(state, rid).await;
     }
