@@ -2,6 +2,7 @@ use reqwest::StatusCode;
 use serde_json::{json, Value};
 
 use super::helpers::TestContext;
+use sqlx::Executor as _;
 
 /// Public timeline must only contain statuses with visibility == "public".
 #[tokio::test]
@@ -848,5 +849,42 @@ async fn test_home_timeline_warn_filter_annotates_status() {
         filtered[0]["filter"]["filter_action"].as_str(),
         Some("warn"),
         "filtered entry should reference the warn filter",
+    );
+}
+
+/// Statuses with reply=true and a NULL in_reply_to_id (parent hard-deleted, as in
+/// Mastodon migrations) must not appear in the public timeline.
+///
+/// Regression: the old filter `in_reply_to_id IS NULL OR in_reply_to_account_id = account_id`
+/// incorrectly included such statuses because after FK cascade in_reply_to_id becomes NULL.
+/// The new filter uses the persistent `reply` boolean.
+#[tokio::test]
+async fn test_public_timeline_excludes_reply_with_deleted_parent() {
+    let ctx = TestContext::new("pub-reply-deleted-parent").await;
+
+    // Bob posts a public status that will become an "orphaned reply".
+    let status = ctx.api.post_status(&ctx.bob_token, "orphaned reply post", "public").await;
+    let status_id: i64 = status["id"].as_str().unwrap().parse().unwrap();
+
+    // The status currently has reply=false and appears in the timeline.
+    let before: Vec<Value> = ctx.api.get("/api/v1/timelines/public", None)
+        .await.json().await.unwrap();
+    assert!(
+        before.iter().any(|s| s["id"].as_str().map(|id| id.parse::<i64>().ok()) == Some(Some(status_id))),
+        "status should appear in public timeline before reply flag is set",
+    );
+
+    // Simulate a migrated status whose parent was hard-deleted in Mastodon:
+    // reply=true but in_reply_to_id=NULL (FK cascade already happened).
+    ctx.db.execute(
+        sqlx::query("UPDATE statuses SET reply = true, in_reply_to_id = NULL WHERE id = $1")
+            .bind(status_id),
+    ).await.unwrap();
+
+    let after: Vec<Value> = ctx.api.get("/api/v1/timelines/public", None)
+        .await.json().await.unwrap();
+    assert!(
+        !after.iter().any(|s| s["id"].as_str().map(|id| id.parse::<i64>().ok()) == Some(Some(status_id))),
+        "status with reply=true and deleted parent should be excluded from public timeline",
     );
 }
