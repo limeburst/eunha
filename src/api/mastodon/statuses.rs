@@ -192,12 +192,13 @@ pub async fn post_status(
     let status_id = crate::snowflake::next_id();
     let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status_id);
 
+    let is_reply = in_reply_to_id.is_some();
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
              (id, instance_id, account_id, application_id, text, content, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, in_reply_to_account_id, idempotency_key, uri, url)
-           VALUES ($1,$2,$3,$13,$4,$5,$6,$7,$8,$9,$10,$11,$12,$14,$14)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url)
+           VALUES ($1,$2,$3,$13,$4,$5,$6,$7,$8,$9,$10,$11,$15,$12,$14,$14)
            RETURNING *"#,
         status_id,
         instance.id,
@@ -213,6 +214,7 @@ pub async fn post_status(
         idempotency_key,
         auth.application_id,
         uri,
+        is_reply,
     )
     .fetch_one(&state.db)
     .await?;
@@ -1017,7 +1019,7 @@ pub async fn get_status_context(
              WHERE s.deleted_at IS NULL AND r.depth < $3
            )
            SELECT id, instance_id, account_id, application_id, text, content, spoiler_text,
-                  in_reply_to_id, in_reply_to_account_id, reblog_of_id,
+                  in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
                   visibility, language, sensitive, url, uri,
                   replies_count, reblogs_count, favourites_count,
                   deleted_at, edited_at, created_at, conversation_id, idempotency_key

@@ -551,6 +551,8 @@ async fn migrate_statuses(
         let url: Option<String> = row.try_get("url").ok().flatten();
         let uri: Option<String> = row.try_get("uri").ok().flatten();
         let in_reply_to_id_src: Option<i64> = row.try_get("in_reply_to_id").ok().flatten();
+        let in_reply_to_account_id_src: Option<i64> = row.try_get("in_reply_to_account_id").ok().flatten();
+        let reply: bool = row.try_get::<bool, _>("reply").ok().unwrap_or(in_reply_to_id_src.is_some());
         let reblog_of_id_src: Option<i64> = row.try_get("reblog_of_id").ok().flatten();
         let replies_count: Option<i64> = row.try_get("replies_count").ok().flatten();
         let reblogs_count: Option<i64> = row.try_get("reblogs_count").ok().flatten();
@@ -562,16 +564,17 @@ async fn migrate_statuses(
         // Best-effort remapping using already-processed statuses (ORDER BY id ensures
         // originals come before their boosts/replies in the vast majority of cases).
         let in_reply_to_id: Option<i64> = in_reply_to_id_src.and_then(|id| map.get(&id)).copied();
+        let in_reply_to_account_id: Option<i64> = in_reply_to_account_id_src.and_then(|id| account_map.get(&id)).copied();
         let reblog_of_id: Option<i64> = reblog_of_id_src.and_then(|id| map.get(&id)).copied();
 
         let new_id: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO statuses
                  (id, instance_id, account_id, text, content, spoiler_text,
                   visibility, language, sensitive, url, uri,
-                  in_reply_to_id, reblog_of_id,
+                  in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
                   replies_count, reblogs_count, favourites_count,
                   deleted_at, edited_at, created_at)
-               VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+               VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$19,$12,$20,$13,$14,$15,$16,$17,$18)
                ON CONFLICT DO NOTHING
                RETURNING id"#,
         )
@@ -593,6 +596,8 @@ async fn migrate_statuses(
         .bind(deleted_at)
         .bind(edited_at)
         .bind(created_at)
+        .bind(in_reply_to_account_id)
+        .bind(reply)
         .fetch_optional(&mut *dst)
         .await?;
 

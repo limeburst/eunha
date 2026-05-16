@@ -145,6 +145,7 @@ pub struct Status {
     pub deleted_at: Option<DateTime<Utc>>,
     pub edited_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub reply: bool,
     pub conversation_id: Option<i64>,
     pub idempotency_key: Option<String>,
 }
