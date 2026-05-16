@@ -32,21 +32,22 @@ pub async fn nodeinfo(
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
             r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
-               JOIN accounts a ON a.id = s.account_id
-               WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL
+               WHERE s.account_id IN (
+                   SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+               ) AND s.deleted_at IS NULL
                  AND s.created_at > now() - interval '30 days'"#,
             instance.id
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
             r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
-               JOIN accounts a ON a.id = s.account_id
-               WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL
+               WHERE s.account_id IN (
+                   SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+               ) AND s.deleted_at IS NULL
                  AND s.created_at > now() - interval '180 days'"#,
             instance.id
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
-            r#"SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
-               WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL"#,
+            "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE instance_id = $1 AND domain IS NULL",
             instance.id
         ).fetch_one(&state.db),
     )?;

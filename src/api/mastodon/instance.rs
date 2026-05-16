@@ -112,8 +112,9 @@ pub async fn get_instance_v2(
     let active_month = sqlx::query_scalar!(
         r#"SELECT COUNT(DISTINCT s.account_id)
            FROM statuses s
-           JOIN accounts a ON a.id = s.account_id
-           WHERE a.instance_id = $1 AND a.domain IS NULL
+           WHERE s.account_id IN (
+               SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+           ) AND s.deleted_at IS NULL
              AND s.created_at > now() - interval '30 days'"#,
         instance.id,
     )
@@ -245,8 +246,9 @@ pub async fn get_instance_activity(
              COUNT(s.id) AS statuses,
              COUNT(DISTINCT s.account_id) AS logins
            FROM statuses s
-           JOIN accounts a ON a.id = s.account_id
-           WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL
+           WHERE s.account_id IN (
+               SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+           ) AND s.deleted_at IS NULL
              AND s.created_at >= date_trunc('week', now()) - interval '11 weeks'
            GROUP BY date_trunc('week', s.created_at)
            ORDER BY week DESC"#,
@@ -303,9 +305,7 @@ async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i6
     .unwrap_or(0);
 
     let status_count = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) FROM statuses s
-           JOIN accounts a ON a.id = s.account_id
-           WHERE a.instance_id = $1 AND a.domain IS NULL AND s.deleted_at IS NULL"#,
+        "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE instance_id = $1 AND domain IS NULL",
         instance_id,
     )
     .fetch_one(&state.db)
