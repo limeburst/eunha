@@ -85,6 +85,12 @@ async fn resolve_token(state: &AppState, token: &str) -> Option<i64> {
     .flatten()
 }
 
+/// Returns true for streams that require authentication.
+fn requires_auth(stream: &str) -> bool {
+    matches!(stream, "user" | "user:notification" | "direct")
+        || stream.starts_with("list:")
+}
+
 async fn run(
     mut socket: WebSocket,
     initial_stream: Option<String>,
@@ -111,7 +117,10 @@ async fn run(
 
     // Active stream subscriptions. Seeded by ?stream= query param; updated via
     // {"type":"subscribe"/"unsubscribe","stream":"..."} messages (multiplexed protocol).
-    let mut subscribed: HashSet<String> = initial_stream.into_iter().collect();
+    let mut subscribed: HashSet<String> = initial_stream
+        .into_iter()
+        .filter(|s| !requires_auth(s) || account_id.is_some())
+        .collect();
 
     let mut rx = state.streaming.subscribe();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
@@ -123,13 +132,7 @@ async fn run(
                 match result {
                     Ok(event) => {
                         for stream in &subscribed {
-                            let msg = if stream == "user" {
-                                to_wire_user(&event, account_id, instance_id, &following, &state.db).await
-                            } else if stream.starts_with("list:") || stream == "direct" {
-                                to_wire_authenticated(&event, stream, account_id, instance_id, &state.db).await
-                            } else {
-                                to_wire(&event, stream, account_id, instance_id, &following)
-                            };
+                            let msg = route_event(&event, stream, account_id, instance_id, &following, &state.db).await;
                             if let Some(msg) = msg {
                                 if socket.send(Message::Text(msg.into())).await.is_err() {
                                     return;
@@ -146,7 +149,7 @@ async fn run(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        tracing::info!(stream = ?subscribed, text = %text, "streaming: client message");
+                        tracing::debug!(stream = ?subscribed, text = %text, "streaming: client message");
                         #[derive(Deserialize)]
                         struct Cmd {
                             #[serde(rename = "type")]
@@ -157,9 +160,8 @@ async fn run(
                             match cmd.kind.as_str() {
                                 "subscribe" => {
                                     if let Some(s) = cmd.stream {
-                                        // user stream requires authentication
-                                        if s == "user" && account_id.is_none() {
-                                            tracing::warn!("streaming: unauthenticated user stream subscribe ignored");
+                                        if requires_auth(&s) && account_id.is_none() {
+                                            tracing::warn!(stream = %s, "streaming: unauthenticated subscribe to auth-required stream ignored");
                                         } else {
                                             tracing::info!(stream = %s, "streaming: subscribed");
                                             subscribed.insert(s);
@@ -180,11 +182,11 @@ async fn run(
                         let _ = socket.send(Message::Pong(p)).await;
                     }
                     Some(Ok(Message::Close(frame))) => {
-                        tracing::info!(?frame, "streaming: client close frame");
+                        tracing::debug!(?frame, "streaming: client close frame");
                         break;
                     }
                     Some(Ok(other)) => {
-                        tracing::info!(?other, "streaming: unexpected message type");
+                        tracing::debug!(?other, "streaming: unexpected message type");
                         break;
                     }
                     Some(Err(e)) => {
@@ -192,7 +194,7 @@ async fn run(
                         break;
                     }
                     None => {
-                        tracing::info!("streaming: socket recv returned None");
+                        tracing::debug!("streaming: socket recv returned None");
                         break;
                     }
                 }
@@ -207,8 +209,28 @@ async fn run(
     }
 }
 
-/// Like `to_wire` but for the `user` stream: injects per-viewer context fields
-/// (favourited, reblogged, bookmarked, etc.) via a DB lookup.
+/// Dispatch an event to the right handler based on the subscribed stream name.
+async fn route_event(
+    event: &Event,
+    stream: &str,
+    account_id: Option<i64>,
+    instance_id: Uuid,
+    following: &HashSet<i64>,
+    db: &sqlx::PgPool,
+) -> Option<String> {
+    match stream {
+        "user" => to_wire_user(event, account_id, instance_id, following, db).await,
+        "user:notification" => to_wire_user_notification(event, account_id),
+        s if s.starts_with("list:") || s == "direct" => {
+            to_wire_authenticated(event, s, account_id, instance_id, db).await
+        }
+        _ => to_wire(event, stream, account_id, instance_id, following),
+    }
+}
+
+// ── user stream (with per-viewer context injection) ────────────────────────
+
+/// `user` stream: delivers status updates (with viewer context) and notifications.
 async fn to_wire_user(
     event: &Event,
     account_id: Option<i64>,
@@ -231,43 +253,85 @@ async fn to_wire_user(
             if !deliver {
                 return None;
             }
-            let aid = account_id?;
-
-            let favourited = sqlx::query_scalar!(
-                "SELECT 1 AS e FROM favourites WHERE account_id = $1 AND status_id = $2",
-                aid, status_id
-            )
-            .fetch_optional(db).await.ok().flatten().is_some();
-
-            let reblogged = sqlx::query_scalar!(
-                "SELECT 1 AS e FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
-                aid, status_id
-            )
-            .fetch_optional(db).await.ok().flatten().is_some();
-
-            let bookmarked = sqlx::query_scalar!(
-                "SELECT 1 AS e FROM bookmarks WHERE account_id = $1 AND status_id = $2",
-                aid, status_id
-            )
-            .fetch_optional(db).await.ok().flatten().is_some();
-
-            // Inject viewer context fields into the existing payload JSON.
-            let mut value: serde_json::Value = serde_json::from_str(payload).ok()?;
-            if let serde_json::Value::Object(ref mut obj) = value {
-                obj.insert("favourited".into(), serde_json::json!(favourited));
-                obj.insert("reblogged".into(), serde_json::json!(reblogged));
-                obj.insert("muted".into(), serde_json::json!(false));
-                obj.insert("bookmarked".into(), serde_json::json!(bookmarked));
-                obj.insert("pinned".into(), serde_json::json!(false));
-                obj.insert("filtered".into(), serde_json::json!([]));
-            }
-            let enriched = serde_json::to_string(&value).ok()?;
+            let enriched = inject_viewer_context(payload, account_id?, *status_id, db).await?;
             Some(wire("update", &["user"], &enriched))
         }
+
+        Event::StatusUpdate {
+            instance_id: ev_iid,
+            author_id,
+            status_id,
+            payload,
+            ..
+        } => {
+            let deliver = *ev_iid == instance_id
+                && account_id
+                    .map(|aid| aid == *author_id || following.contains(author_id))
+                    .unwrap_or(false);
+            if !deliver {
+                return None;
+            }
+            let enriched = inject_viewer_context(payload, account_id?, *status_id, db).await?;
+            Some(wire("status.update", &["user"], &enriched))
+        }
+
         // Notifications and deletes fall through to the standard path.
         other => to_wire(other, "user", account_id, instance_id, following),
     }
 }
+
+/// `user:notification` stream: delivers notifications only, no status events.
+fn to_wire_user_notification(event: &Event, account_id: Option<i64>) -> Option<String> {
+    match event {
+        Event::Notification { for_account_id, payload } => {
+            if account_id != Some(*for_account_id) {
+                return None;
+            }
+            Some(wire("notification", &["user", "user:notification"], payload))
+        }
+        _ => None,
+    }
+}
+
+// ── Viewer-context injection ───────────────────────────────────────────────
+
+async fn inject_viewer_context(
+    payload: &str,
+    aid: i64,
+    status_id: i64,
+    db: &sqlx::PgPool,
+) -> Option<String> {
+    let favourited = sqlx::query_scalar!(
+        "SELECT 1 AS e FROM favourites WHERE account_id = $1 AND status_id = $2",
+        aid, status_id
+    )
+    .fetch_optional(db).await.ok().flatten().is_some();
+
+    let reblogged = sqlx::query_scalar!(
+        "SELECT 1 AS e FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
+        aid, status_id
+    )
+    .fetch_optional(db).await.ok().flatten().is_some();
+
+    let bookmarked = sqlx::query_scalar!(
+        "SELECT 1 AS e FROM bookmarks WHERE account_id = $1 AND status_id = $2",
+        aid, status_id
+    )
+    .fetch_optional(db).await.ok().flatten().is_some();
+
+    let mut value: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if let serde_json::Value::Object(ref mut obj) = value {
+        obj.insert("favourited".into(), serde_json::json!(favourited));
+        obj.insert("reblogged".into(), serde_json::json!(reblogged));
+        obj.insert("muted".into(), serde_json::json!(false));
+        obj.insert("bookmarked".into(), serde_json::json!(bookmarked));
+        obj.insert("pinned".into(), serde_json::json!(false));
+        obj.insert("filtered".into(), serde_json::json!([]));
+    }
+    serde_json::to_string(&value).ok()
+}
+
+// ── Public / hashtag streams (no DB lookups) ──────────────────────────────
 
 /// Build the Mastodon streaming wire format for an event, or return `None`
 /// if the event should not be delivered to this subscription.
@@ -284,34 +348,29 @@ fn to_wire(
             author_id,
             is_public,
             hashtags,
+            has_media,
             payload,
             ..
         } => {
-            let deliver = match stream {
-                "public" => *is_public,
-                "public:local" => *is_public && *ev_iid == instance_id,
-                "user" => {
-                    *ev_iid == instance_id
-                        && account_id
-                            .map(|aid| aid == *author_id || following.contains(author_id))
-                            .unwrap_or(false)
-                }
-                s if s.starts_with("hashtag:local:") => {
-                    let tag = &s["hashtag:local:".len()..];
-                    *is_public && *ev_iid == instance_id
-                        && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
-                }
-                s if s.starts_with("hashtag:") && !s.starts_with("hashtag:local") => {
-                    let tag = &s["hashtag:".len()..];
-                    *is_public && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
-                }
-                _ => false,
-            };
-            if !deliver {
+            if !should_deliver(stream, *is_public, *has_media, hashtags, *ev_iid, instance_id, *author_id, account_id, following) {
                 return None;
             }
-            let stream_arr = stream_label(stream);
-            Some(wire("update", &stream_arr, payload))
+            Some(wire("update", &stream_label(stream), payload))
+        }
+
+        Event::StatusUpdate {
+            instance_id: ev_iid,
+            author_id,
+            is_public,
+            hashtags,
+            has_media,
+            payload,
+            ..
+        } => {
+            if !should_deliver(stream, *is_public, *has_media, hashtags, *ev_iid, instance_id, *author_id, account_id, following) {
+                return None;
+            }
+            Some(wire("status.update", &stream_label(stream), payload))
         }
 
         Event::Notification {
@@ -334,11 +393,12 @@ fn to_wire(
             if *ev_iid != instance_id {
                 return None;
             }
-            let stream_arr = stream_label(stream);
-            // delete payload is just the ID string, not double-encoded JSON.
+            if !is_status_stream(stream) {
+                return None;
+            }
             Some(
                 serde_json::json!({
-                    "stream": stream_arr,
+                    "stream": stream_label(stream),
                     "event": "delete",
                     "payload": status_id.to_string(),
                 })
@@ -347,6 +407,46 @@ fn to_wire(
         }
     }
 }
+
+/// Decide if a `NewStatus` / `StatusUpdate` should be delivered to `stream`.
+fn should_deliver(
+    stream: &str,
+    is_public: bool,
+    has_media: bool,
+    hashtags: &[String],
+    ev_iid: Uuid,
+    instance_id: Uuid,
+    author_id: i64,
+    account_id: Option<i64>,
+    following: &HashSet<i64>,
+) -> bool {
+    match stream {
+        "public" => is_public,
+        "public:local" => is_public && ev_iid == instance_id,
+        "public:media" => is_public && has_media,
+        "public:local:media" => is_public && has_media && ev_iid == instance_id,
+        // public:remote needs federated content; always false until AP inbox is wired.
+        "public:remote" | "public:remote:media" => false,
+        "user" => {
+            ev_iid == instance_id
+                && account_id
+                    .map(|aid| aid == author_id || following.contains(&author_id))
+                    .unwrap_or(false)
+        }
+        s if s.starts_with("hashtag:local:") => {
+            let tag = &s["hashtag:local:".len()..];
+            is_public && ev_iid == instance_id
+                && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
+        }
+        s if s.starts_with("hashtag:") => {
+            let tag = &s["hashtag:".len()..];
+            is_public && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
+        }
+        _ => false,
+    }
+}
+
+// ── list: and direct streams (DB lookups) ─────────────────────────────────
 
 /// Handle `list:N` and `direct` streams which require DB lookups.
 async fn to_wire_authenticated(
@@ -369,37 +469,43 @@ async fn to_wire_authenticated(
             if *ev_iid != instance_id {
                 return None;
             }
-            let deliver = if stream == "direct" {
-                *is_direct
-                    && sqlx::query_scalar!(
-                        "SELECT 1 AS e FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
-                        status_id, aid
-                    )
-                    .fetch_optional(db).await.ok().flatten().is_some()
-                    || (*is_direct && *author_id == aid)
-            } else if let Some(list_id_str) = stream.strip_prefix("list:") {
-                if let Ok(list_id) = list_id_str.parse::<i64>() {
-                    // Deliver if the author is in this list owned by the viewer
-                    sqlx::query_scalar!(
-                        r#"SELECT 1 AS e FROM list_accounts la
-                           JOIN lists l ON l.id = la.list_id
-                           WHERE la.list_id = $1 AND la.account_id = $2
-                             AND l.account_id = $3"#,
-                        list_id, *author_id, aid,
-                    )
-                    .fetch_optional(db).await.ok().flatten().is_some()
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            let deliver = deliver_authenticated(stream, *is_direct, *status_id, *author_id, aid, db).await;
             if !deliver {
                 return None;
             }
             let stream_arr = stream_label(stream);
             Some(wire("update", &stream_arr, payload))
         }
+
+        Event::StatusUpdate {
+            instance_id: ev_iid,
+            author_id,
+            payload,
+            ..
+        } => {
+            if *ev_iid != instance_id {
+                return None;
+            }
+            if let Some(list_id_str) = stream.strip_prefix("list:") {
+                if let Ok(list_id) = list_id_str.parse::<i64>() {
+                    let in_list = sqlx::query_scalar!(
+                        r#"SELECT 1 AS e FROM list_accounts la
+                           JOIN lists l ON l.id = la.list_id
+                           WHERE la.list_id = $1 AND la.account_id = $2
+                             AND l.account_id = $3"#,
+                        list_id, *author_id, aid,
+                    )
+                    .fetch_optional(db).await.ok().flatten().is_some();
+                    if !in_list {
+                        return None;
+                    }
+                    let stream_arr = stream_label(stream);
+                    return Some(wire("status.update", &stream_arr, payload));
+                }
+            }
+            None
+        }
+
         Event::DeleteStatus { instance_id: ev_iid, status_id } => {
             if *ev_iid != instance_id {
                 return None;
@@ -411,8 +517,51 @@ async fn to_wire_authenticated(
                 "payload": status_id.to_string(),
             }).to_string())
         }
+
         Event::Notification { .. } => None,
     }
+}
+
+async fn deliver_authenticated(
+    stream: &str,
+    is_direct: bool,
+    status_id: i64,
+    author_id: i64,
+    aid: i64,
+    db: &sqlx::PgPool,
+) -> bool {
+    if stream == "direct" {
+        // Deliver if the viewer authored it, or if they are mentioned.
+        return is_direct && (author_id == aid || sqlx::query_scalar!(
+            "SELECT 1 AS e FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
+            status_id, aid
+        )
+        .fetch_optional(db).await.ok().flatten().is_some());
+    }
+
+    if let Some(list_id_str) = stream.strip_prefix("list:") {
+        if let Ok(list_id) = list_id_str.parse::<i64>() {
+            return sqlx::query_scalar!(
+                r#"SELECT 1 AS e FROM list_accounts la
+                   JOIN lists l ON l.id = la.list_id
+                   WHERE la.list_id = $1 AND la.account_id = $2
+                     AND l.account_id = $3"#,
+                list_id, author_id, aid,
+            )
+            .fetch_optional(db).await.ok().flatten().is_some();
+        }
+    }
+
+    false
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+fn is_status_stream(stream: &str) -> bool {
+    matches!(stream, "public" | "public:local" | "public:media" | "public:local:media"
+        | "public:remote" | "public:remote:media" | "user" | "direct")
+        || stream.starts_with("hashtag:")
+        || stream.starts_with("list:")
 }
 
 /// Encode an event as a Mastodon streaming JSON message.
@@ -430,9 +579,11 @@ fn wire(event: &str, streams: &[&str], payload: &str) -> String {
 fn stream_label(stream: &str) -> Vec<&str> {
     match stream {
         "public:local" => vec!["public", "public:local"],
-        s if s.starts_with("hashtag:local:") => {
-            vec!["hashtag", "hashtag:local"]
-        }
+        "public:media" => vec!["public", "public:media"],
+        "public:local:media" => vec!["public", "public:local", "public:local:media"],
+        "public:remote" => vec!["public", "public:remote"],
+        "public:remote:media" => vec!["public", "public:remote", "public:remote:media"],
+        s if s.starts_with("hashtag:local:") => vec!["hashtag", "hashtag:local"],
         s if s.starts_with("hashtag:") => vec!["hashtag"],
         s if s.starts_with("list:") => vec!["list"],
         other => vec![other],

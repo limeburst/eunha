@@ -358,6 +358,7 @@ pub async fn post_status(
                 is_direct: visibility == "direct",
                 status_id: status.id,
                 hashtags,
+                has_media: !api_status.media_attachments.is_empty(),
                 payload: std::sync::Arc::new(payload),
             });
         }
@@ -1014,6 +1015,7 @@ pub async fn reblog_status(
             is_direct: false,
             status_id: boost.id,
             hashtags,
+            has_media: !api_boost.media_attachments.is_empty(),
             payload: std::sync::Arc::new(payload),
         });
     }
@@ -1635,7 +1637,24 @@ pub async fn edit_status(
     let media = fetch_status_media(&state, id).await?;
     let reblog = fetch_reblog_data(&state, &updated_status).await?;
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
-    Ok(Json(build_status(&state, &updated_status, &account, media, reblog, Some(ctx)).await?))
+    let api_status = build_status(&state, &updated_status, &account, media, reblog, Some(ctx)).await?;
+
+    if matches!(updated_status.visibility.as_str(), "public" | "unlisted" | "private") {
+        if let Ok(payload) = serde_json::to_string(&api_status) {
+            let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
+            state.streaming.publish(Event::StatusUpdate {
+                instance_id: updated_status.instance_id,
+                author_id: account.id,
+                is_public: updated_status.visibility == "public",
+                status_id: id,
+                hashtags,
+                has_media: !api_status.media_attachments.is_empty(),
+                payload: std::sync::Arc::new(payload),
+            });
+        }
+    }
+
+    Ok(Json(api_status))
 }
 
 // ── GET /api/v1/statuses/:id/history ──────────────────────────────────────

@@ -11,6 +11,17 @@ pub enum Event {
         is_direct: bool,
         status_id: i64,
         hashtags: Vec<String>,
+        has_media: bool,
+        payload: Arc<String>,
+    },
+    /// Fired when a status is edited. Delivered as a `status.update` wire event.
+    StatusUpdate {
+        instance_id: Uuid,
+        author_id: i64,
+        is_public: bool,
+        status_id: i64,
+        hashtags: Vec<String>,
+        has_media: bool,
         payload: Arc<String>,
     },
     Notification {

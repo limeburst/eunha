@@ -177,6 +177,7 @@ async fn publish_one(
                         is_direct: visibility == "direct",
                         status_id: status_with_uri.id,
                         hashtags,
+                        has_media: !api_status.media_attachments.is_empty(),
                         payload: std::sync::Arc::new(payload),
                     });
                 }

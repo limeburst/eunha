@@ -38,5 +38,6 @@ mod reports;
 mod scope;
 mod search;
 mod statuses;
+mod streaming;
 mod tags;
 mod timelines;
