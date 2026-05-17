@@ -695,6 +695,7 @@ pub async fn get_account_followers(
     let limit = q.pagination.limit_clamped(40, 80);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let accounts = sqlx::query_as!(
         Account,
@@ -703,13 +704,14 @@ pub async fn get_account_followers(
            WHERE f.target_account_id = $1 AND f.state = 'accepted'
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($6::bigint IS NULL OR a.id > $6)
              AND ($4::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM blocks b
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                     OR (b.account_id = a.id AND b.target_account_id = $4)
              ))
            ORDER BY f.created_at DESC, a.id DESC LIMIT $5"#,
-        id, max_id, since_id, viewer_id, limit
+        id, max_id, since_id, viewer_id, limit, min_id
     )
     .fetch_all(&state.db)
     .await?;
@@ -751,6 +753,7 @@ pub async fn get_account_following(
     let limit = q.pagination.limit_clamped(40, 80);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let accounts = sqlx::query_as!(
         Account,
@@ -759,13 +762,14 @@ pub async fn get_account_following(
            WHERE f.account_id = $1 AND f.state = 'accepted'
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($6::bigint IS NULL OR a.id > $6)
              AND ($4::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM blocks b
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                     OR (b.account_id = a.id AND b.target_account_id = $4)
              ))
            ORDER BY f.created_at DESC, a.id DESC LIMIT $5"#,
-        id, max_id, since_id, viewer_id, limit
+        id, max_id, since_id, viewer_id, limit, min_id
     )
     .fetch_all(&state.db)
     .await?;
