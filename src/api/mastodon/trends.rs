@@ -81,16 +81,29 @@ pub async fn trending_statuses(
 
     let rows = sqlx::query_as!(
         crate::db::models::Status,
-        r#"SELECT * FROM statuses
-           WHERE instance_id = $1
-             AND deleted_at IS NULL
-             AND visibility = 'public'
-             AND reblog_of_id IS NULL
-             AND created_at > now() - interval '2 days'
-           ORDER BY (favourites_count + reblogs_count * 2) DESC, created_at DESC
+        r#"SELECT s.* FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE s.instance_id = $1
+             AND s.deleted_at IS NULL
+             AND s.visibility = 'public'
+             AND s.reblog_of_id IS NULL
+             AND s.created_at > now() - interval '2 days'
+             AND a.suspended_at IS NULL
+             AND ($3::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM blocks b
+                 WHERE (b.account_id = $3 AND b.target_account_id = s.account_id)
+                    OR (b.account_id = s.account_id AND b.target_account_id = $3)
+             ))
+             AND ($3::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM mutes mu
+                 WHERE mu.account_id = $3 AND mu.target_account_id = s.account_id
+                   AND (mu.expires_at IS NULL OR mu.expires_at > now())
+             ))
+           ORDER BY (s.favourites_count + s.reblogs_count * 2) DESC, s.created_at DESC
            LIMIT $2"#,
         instance.id,
         limit,
+        viewer_id,
     )
     .fetch_all(&state.db)
     .await?;

@@ -41,3 +41,4 @@ mod statuses;
 mod streaming;
 mod tags;
 mod timelines;
+mod trends;
