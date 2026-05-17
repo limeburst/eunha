@@ -623,7 +623,7 @@ pub async fn get_notification_requests(
     let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
-        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
+        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at, nr.updated_at,
                   a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
                   a.note, a.note_text, a.url, a.uri, a.header, a.header_static,
                   a.public_key, a.private_key, a.followers_count, a.following_count,
@@ -637,7 +637,7 @@ pub async fn get_notification_requests(
              AND ($3::bigint IS NULL OR nr.id < $3)
              AND ($4::bigint IS NULL OR nr.id > $4)
              AND ($5::bigint IS NULL OR nr.id > $5)
-           ORDER BY nr.updated_at DESC
+           ORDER BY nr.id DESC
            LIMIT $2"#,
         auth.account_id, limit, max_id, since_id, min_id,
     )
@@ -760,7 +760,7 @@ pub async fn get_notification_requests(
         result.push(NotificationRequest {
             id: r.id.to_string(),
             created_at: r.created_at.to_rfc3339(),
-            updated_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
             notifications_count: r.notifications_count.to_string(),
             last_status,
             account: super::convert::account_from_db(&acc),

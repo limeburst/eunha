@@ -890,3 +890,28 @@ async fn test_blocked_account_mention_does_not_create_notification() {
     assert!(bob_mention.is_none(),
         "mention from blocked account should not appear as notification for the blocker");
 }
+
+/// Notification request response includes a non-null updated_at field distinct from created_at bugs.
+#[tokio::test]
+async fn test_notification_request_has_updated_at() {
+    let ctx = TestContext::new("notif-req-updated-at").await;
+
+    ctx.api.http
+        .patch(ctx.api.url("/api/v2/notifications/policy"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"for_not_following": "filter"}))
+        .send()
+        .await
+        .unwrap();
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let requests: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!requests.is_empty(), "expected a notification request");
+
+    let req = &requests[0];
+    assert!(req["updated_at"].as_str().is_some(), "notification request must have updated_at");
+    assert!(req["created_at"].as_str().is_some(), "notification request must have created_at");
+}
