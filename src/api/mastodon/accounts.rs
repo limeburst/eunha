@@ -1267,21 +1267,38 @@ pub async fn unblock_account(
 pub async fn get_blocks(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
-) -> AppResult<Json<Vec<ApiAccount>>> {
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:blocks")?;
     let limit = q.limit_clamped(40, 80);
+    let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let accounts = sqlx::query_as!(
         Account,
         r#"SELECT a.* FROM accounts a
            JOIN blocks b ON b.target_account_id = a.id
            WHERE b.account_id = $1
-           ORDER BY b.created_at DESC LIMIT $2"#,
-        auth.account_id, limit,
+             AND ($2::bigint IS NULL OR a.id < $2)
+             AND ($3::bigint IS NULL OR a.id > $3)
+           ORDER BY b.created_at DESC, a.id DESC LIMIT $4"#,
+        auth.account_id, max_id, since_id, limit,
     )
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(api_accounts)))
 }
 
 // ── GET /api/v1/mutes ─────────────────────────────────────────────────────
@@ -1289,22 +1306,39 @@ pub async fn get_blocks(
 pub async fn get_mutes(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
-) -> AppResult<Json<Vec<ApiAccount>>> {
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:mutes")?;
     let limit = q.limit_clamped(40, 80);
+    let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let accounts = sqlx::query_as!(
         Account,
         r#"SELECT a.* FROM accounts a
            JOIN mutes m ON m.target_account_id = a.id
            WHERE m.account_id = $1
              AND (m.expires_at IS NULL OR m.expires_at > now())
-           ORDER BY m.created_at DESC LIMIT $2"#,
-        auth.account_id, limit,
+             AND ($2::bigint IS NULL OR a.id < $2)
+             AND ($3::bigint IS NULL OR a.id > $3)
+           ORDER BY m.created_at DESC, a.id DESC LIMIT $4"#,
+        auth.account_id, max_id, since_id, limit,
     )
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(api_accounts)))
 }
 
 // ── GET /api/v1/preferences ───────────────────────────────────────────────
