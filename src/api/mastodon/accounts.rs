@@ -2598,6 +2598,134 @@ pub async fn batch_status_emojis(
     Ok(map)
 }
 
+/// Batch-fetch polls for a list of status IDs. Returns map from status_id → Poll.
+pub async fn batch_status_polls(
+    state: &AppState,
+    status_ids: &[i64],
+    viewer_id: Option<i64>,
+) -> AppResult<std::collections::HashMap<i64, super::types::Poll>> {
+    use std::collections::HashMap;
+
+    if status_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let rows = sqlx::query!(
+        r#"SELECT id, status_id, options, multiple, votes_count, voters_count, expires_at
+           FROM polls WHERE status_id = ANY($1::bigint[])"#,
+        status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let poll_ids: Vec<uuid::Uuid> = rows.iter().map(|r| r.id).collect();
+    let vote_rows = if let Some(vid) = viewer_id {
+        sqlx::query!(
+            "SELECT poll_id, choice FROM poll_votes WHERE poll_id = ANY($1::uuid[]) AND account_id = $2 ORDER BY poll_id, choice",
+            &poll_ids, vid,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
+
+    let mut votes_by_poll: HashMap<uuid::Uuid, Vec<i32>> = HashMap::new();
+    for v in vote_rows {
+        votes_by_poll.entry(v.poll_id).or_default().push(v.choice);
+    }
+
+    let now = chrono::Utc::now();
+    let mut result = HashMap::new();
+    for row in rows {
+        let expired = row.expires_at.map_or(false, |t| t < now);
+        let options: Vec<super::types::PollOption> = row.options
+            .as_array()
+            .map(|arr| arr.iter().map(|o| super::types::PollOption {
+                title: o["title"].as_str().unwrap_or("").to_string(),
+                votes_count: o["votes_count"].as_i64(),
+            }).collect())
+            .unwrap_or_default();
+        let (voted, own_votes) = if viewer_id.is_some() {
+            let votes = votes_by_poll.get(&row.id).cloned().unwrap_or_default();
+            if votes.is_empty() {
+                (Some(false), Some(vec![]))
+            } else {
+                (Some(true), Some(votes))
+            }
+        } else {
+            (None, None)
+        };
+        result.insert(row.status_id, super::types::Poll {
+            id: row.id.to_string(),
+            expires_at: row.expires_at.map(|t| t.to_rfc3339()),
+            expired,
+            multiple: row.multiple,
+            votes_count: row.votes_count,
+            voters_count: row.voters_count,
+            options,
+            emojis: vec![],
+            voted,
+            own_votes,
+        });
+    }
+    Ok(result)
+}
+
+/// Batch-fetch preview cards for a list of status IDs. Returns map from status_id → PreviewCard.
+pub async fn batch_status_cards(
+    state: &AppState,
+    status_ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, super::types::PreviewCard>> {
+    use std::collections::HashMap;
+
+    if status_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let rows = sqlx::query!(
+        r#"SELECT spc.status_id, pc.url, pc.title, pc.description, pc.card_type,
+                  pc.image_url, pc.author_name, pc.author_url,
+                  pc.provider_name, pc.provider_url, pc.html, pc.width, pc.height,
+                  pc.embed_url, pc.blurhash
+           FROM status_preview_cards spc
+           JOIN preview_cards pc ON pc.id = spc.card_id
+           WHERE spc.status_id = ANY($1::bigint[])"#,
+        status_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut result = HashMap::new();
+    for r in rows {
+        result.entry(r.status_id).or_insert_with(|| super::types::PreviewCard {
+            url: r.url,
+            title: r.title,
+            description: r.description,
+            language: None,
+            card_type: r.card_type,
+            author_name: r.author_name,
+            author_url: r.author_url,
+            provider_name: r.provider_name,
+            provider_url: r.provider_url,
+            html: r.html,
+            width: r.width,
+            height: r.height,
+            image: r.image_url,
+            image_description: String::new(),
+            embed_url: r.embed_url,
+            blurhash: r.blurhash,
+            published_at: None,
+            authors: vec![],
+        });
+    }
+    Ok(result)
+}
+
 /// Builds a `Status` API object with tags and mentions populated from the DB.
 pub async fn build_status(
     state: &AppState,
