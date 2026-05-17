@@ -90,7 +90,6 @@ pub async fn block_domain(
            OR (target_account_id = $1 AND account_id IN (
                SELECT id FROM accounts WHERE domain = $2
            ))
-           AND state = 'accepted'
            RETURNING account_id, target_account_id"#,
         auth.account_id,
         domain,

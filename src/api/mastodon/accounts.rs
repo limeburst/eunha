@@ -298,6 +298,8 @@ pub async fn get_account_statuses(
             .chain(pin_reblog_map.values().map(|(rs, _, _)| rs.clone()))
             .collect();
         let pin_emojis_map = batch_status_emojis(&state, &all_pin_statuses).await?;
+        let pin_polls_map = batch_status_polls(&state, &pin_enrich_ids, viewer_id).await?;
+        let pin_cards_map = batch_status_cards(&state, &pin_enrich_ids).await?;
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
@@ -313,11 +315,15 @@ pub async fn get_account_statuses(
             api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
             api_status.mentions = mentions;
             api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
+            api_status.poll = pin_polls_map.get(&s.id).cloned();
+            api_status.card = pin_cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api_status.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
                 rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
+                rb.poll = pin_polls_map.get(&rid).cloned();
+                rb.card = pin_cards_map.get(&rid).cloned();
             }
             api_status.pinned = Some(true);
             result.push(api_status);
@@ -440,6 +446,8 @@ pub async fn get_account_statuses(
         .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
         .collect();
     let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
+    let polls_map = batch_status_polls(&state, &enrich_ids, viewer_id).await?;
+    let cards_map = batch_status_cards(&state, &enrich_ids).await?;
 
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
@@ -456,11 +464,15 @@ pub async fn get_account_statuses(
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+        api.poll = polls_map.get(&s.id).cloned();
+        api.card = cards_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
             rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+            rb.poll = polls_map.get(&rid).cloned();
+            rb.card = cards_map.get(&rid).cloned();
         }
         result.push(api);
     }
