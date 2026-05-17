@@ -1720,8 +1720,8 @@ pub async fn fetch_reblog_data(
 }
 
 async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids: &[i64]) -> AppResult<Vec<Relationship>> {
-    struct FollowRow { target_account_id: i64, state: String, show_reblogs: bool, notify: bool, languages: Option<Vec<String>> }
-    struct MuteRow { target_account_id: i64, hide_notifications: bool, expires_at: Option<chrono::DateTime<chrono::Utc>> }
+    struct FollowRow { state: String, show_reblogs: bool, notify: bool, languages: Option<Vec<String>> }
+    struct MuteRow { hide_notifications: bool, expires_at: Option<chrono::DateTime<chrono::Utc>> }
 
     let follows_out = sqlx::query!(
         "SELECT target_account_id, state, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
@@ -1730,7 +1730,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
     .fetch_all(&state.db)
     .await?;
     let follows_out_map: std::collections::HashMap<i64, _> = follows_out.into_iter()
-        .map(|r| (r.target_account_id, FollowRow { target_account_id: r.target_account_id, state: r.state, show_reblogs: r.show_reblogs, notify: r.notify, languages: Some(r.languages) }))
+        .map(|r| (r.target_account_id, FollowRow { state: r.state, show_reblogs: r.show_reblogs, notify: r.notify, languages: Some(r.languages) }))
         .collect();
 
     let follows_in = sqlx::query!(
@@ -1767,7 +1767,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
     .fetch_all(&state.db)
     .await?;
     let mutes_map: std::collections::HashMap<i64, MuteRow> = mutes.into_iter()
-        .map(|r| (r.target_account_id, MuteRow { target_account_id: r.target_account_id, hide_notifications: r.hide_notifications, expires_at: r.expires_at }))
+        .map(|r| (r.target_account_id, MuteRow { hide_notifications: r.hide_notifications, expires_at: r.expires_at }))
         .collect();
 
     let target_domains: std::collections::HashMap<i64, Option<String>> = sqlx::query!(
