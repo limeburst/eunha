@@ -294,6 +294,10 @@ pub async fn get_account_statuses(
         pin_enrich_ids.extend_from_slice(&pin_reblog_ids);
         let pin_tags_map = batch_status_tags(&state, &pin_enrich_ids).await?;
         let pin_mentions_map = batch_status_mentions(&state, &pin_enrich_ids).await?;
+        let all_pin_statuses: Vec<crate::db::models::Status> = pinned_statuses.iter().cloned()
+            .chain(pin_reblog_map.values().map(|(rs, _, _)| rs.clone()))
+            .collect();
+        let pin_emojis_map = batch_status_emojis(&state, &all_pin_statuses).await?;
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
@@ -308,10 +312,12 @@ pub async fn get_account_statuses(
             let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
             api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
             api_status.mentions = mentions;
+            api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
             if let Some(ref mut rb) = api_status.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
                 rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
+                rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
             }
             api_status.pinned = Some(true);
             result.push(api_status);
@@ -430,6 +436,10 @@ pub async fn get_account_statuses(
     enrich_ids.extend_from_slice(&reblog_ids);
     let tags_map = batch_status_tags(&state, &enrich_ids).await?;
     let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+    let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses.iter().cloned()
+        .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+        .collect();
+    let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
 
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
@@ -445,10 +455,12 @@ pub async fn get_account_statuses(
         let mut api = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
+        api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
+            rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
         }
         result.push(api);
     }
@@ -2499,6 +2511,86 @@ pub async fn batch_status_mentions(
             username: r.username,
         });
     }
+    Ok(map)
+}
+
+pub async fn batch_status_emojis(
+    state: &AppState,
+    statuses: &[crate::db::models::Status],
+) -> AppResult<std::collections::HashMap<i64, Vec<super::types::CustomEmoji>>> {
+    if statuses.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    fn extract_shortcodes(text: &str) -> Vec<String> {
+        let mut codes = Vec::new();
+        let mut rest = text;
+        while let Some(start) = rest.find(':') {
+            rest = &rest[start + 1..];
+            if let Some(end) = rest.find(':') {
+                let code = &rest[..end];
+                if !code.is_empty() && code.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    codes.push(code.to_string());
+                }
+                rest = &rest[end + 1..];
+            } else {
+                break;
+            }
+        }
+        codes
+    }
+
+    // Group statuses by instance_id; collect all shortcodes per status
+    let mut per_instance: std::collections::HashMap<uuid::Uuid, Vec<(i64, Vec<String>)>> = std::collections::HashMap::new();
+    for s in statuses {
+        let combined = format!("{} {}", s.spoiler_text, s.text);
+        let codes = extract_shortcodes(&combined);
+        if !codes.is_empty() {
+            per_instance.entry(s.instance_id).or_default().push((s.id, codes));
+        }
+    }
+
+    let mut map: std::collections::HashMap<i64, Vec<super::types::CustomEmoji>> = std::collections::HashMap::new();
+
+    for (instance_id, id_codes) in per_instance {
+        let all_codes: Vec<String> = id_codes.iter()
+            .flat_map(|(_, codes)| codes.iter().cloned())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let rows = sqlx::query!(
+            r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+               FROM custom_emojis
+               WHERE instance_id = $1 AND shortcode = ANY($2) AND NOT disabled"#,
+            instance_id,
+            &all_codes,
+        )
+        .fetch_all(&state.db)
+        .await?;
+
+        let emoji_by_code: std::collections::HashMap<String, super::types::CustomEmoji> = rows
+            .into_iter()
+            .map(|r| (r.shortcode.clone(), super::types::CustomEmoji {
+                shortcode: r.shortcode,
+                url: r.image_url.clone(),
+                static_url: r.static_image_url.unwrap_or(r.image_url),
+                visible_in_picker: r.visible_in_picker,
+                category: None,
+            }))
+            .collect();
+
+        for (status_id, codes) in id_codes {
+            let unique_codes: std::collections::HashSet<&String> = codes.iter().collect();
+            let emojis: Vec<super::types::CustomEmoji> = unique_codes.iter()
+                .filter_map(|c| emoji_by_code.get(*c).cloned())
+                .collect();
+            if !emojis.is_empty() {
+                map.insert(status_id, emojis);
+            }
+        }
+    }
+
     Ok(map)
 }
 

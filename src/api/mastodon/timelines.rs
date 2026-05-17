@@ -14,7 +14,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_reblog_data, batch_status_media, batch_status_mentions, batch_status_tags},
+    accounts::{batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_tags},
     convert::status_from_db,
     types::{PaginationParams, Status},
 };
@@ -947,6 +947,10 @@ async fn build_status_list(
     enrich_ids.extend_from_slice(&reblog_ids);
     let tags_map = batch_status_tags(state, &enrich_ids).await?;
     let mentions_map = batch_status_mentions(state, &enrich_ids).await?;
+    let all_statuses_for_emoji: Vec<DbStatus> = statuses.iter().cloned()
+        .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+        .collect();
+    let emojis_map = batch_status_emojis(state, &all_statuses_for_emoji).await?;
 
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
@@ -963,10 +967,12 @@ async fn build_status_list(
         let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
+        api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
+            rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
         }
         result.push(api);
     }
