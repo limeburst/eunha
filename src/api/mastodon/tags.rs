@@ -98,7 +98,7 @@ pub async fn list_followed_tags(
     let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
-        r#"SELECT t.id, t.name
+        r#"SELECT tf.id AS follow_id, t.id, t.name
            FROM tag_follows tf
            JOIN tags t ON t.id = tf.tag_id
            WHERE tf.account_id = $1
@@ -116,6 +116,10 @@ pub async fn list_followed_tags(
     .fetch_all(&state.db)
     .await?;
 
+    // Use tag_follow id (bigint) as the pagination cursor, not the tag UUID.
+    let first_follow_id = rows.first().map(|r| r.follow_id.to_string());
+    let last_follow_id = rows.last().map(|r| r.follow_id.to_string());
+
     let result: Vec<Tag> = rows
         .into_iter()
         .map(|r| Tag {
@@ -128,9 +132,9 @@ pub async fn list_followed_tags(
         })
         .collect();
 
-    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+    let link = first_follow_id.zip(last_follow_id).map(|(newest_fid, oldest_fid)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest_fid, &oldest_fid)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {

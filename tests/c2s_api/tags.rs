@@ -186,3 +186,34 @@ async fn test_unfeature_tag_not_found() {
     ).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+/// GET /api/v1/followed_tags pagination link header uses a parseable integer cursor,
+/// not the tag UUID which would silently break max_id/since_id filtering.
+#[tokio::test]
+async fn test_followed_tags_pagination_link_header_is_parseable() {
+    let ctx = TestContext::new("ftag-link").await;
+
+    for tag in &["link_tag_a", "link_tag_b", "link_tag_c"] {
+        ctx.api.post_status(&ctx.alice_token, &format!("post #{tag}"), "public").await;
+        ctx.api.post_json(
+            &format!("/api/v1/tags/{tag}/follow"),
+            Some(&ctx.alice_token),
+            &json!({}),
+        ).await;
+    }
+
+    let resp = ctx.api.get("/api/v1/followed_tags?limit=1", Some(&ctx.alice_token)).await;
+    let link_header = resp.headers().get("link").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    assert!(link_header.is_some(), "link header should be present");
+
+    // Extract max_id value from link header: <...?max_id=VALUE>; rel="next"
+    let link = link_header.unwrap();
+    let max_id_val = link.split("max_id=")
+        .nth(1)
+        .and_then(|s| s.split(|c| c == '>' || c == '&').next())
+        .unwrap_or("");
+    assert!(
+        max_id_val.parse::<i64>().is_ok(),
+        "link header max_id must be a parseable integer, got: {max_id_val:?}"
+    );
+}
