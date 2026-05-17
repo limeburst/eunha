@@ -910,6 +910,7 @@ pub async fn update_credentials(
     let mut source_sensitive: Option<bool> = None;
     let mut source_language: Option<Option<String>> = None;
     let mut source_hide_collections: Option<bool> = None;
+    let mut indexable: Option<bool> = None;
     // fields_attributes[N][name] / fields_attributes[N][value]
     let mut fields_map: std::collections::BTreeMap<u32, (String, String)> = std::collections::BTreeMap::new();
     let mut fields_submitted = false;
@@ -968,6 +969,10 @@ pub async fn update_credentials(
             "source[hide_collections]" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 source_hide_collections = Some(v == "true" || v == "1");
+            }
+            "indexable" | "source[indexable]" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                indexable = Some(v == "true" || v == "1");
             }
             "avatar" => {
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
@@ -1044,6 +1049,10 @@ pub async fn update_credentials(
     }
     if let Some(d) = discoverable {
         sqlx::query!("UPDATE accounts SET discoverable = $1 WHERE id = $2", d, auth.account_id)
+            .execute(&state.db).await?;
+    }
+    if let Some(ix) = indexable {
+        sqlx::query!("UPDATE accounts SET indexable = $1 WHERE id = $2", ix, auth.account_id)
             .execute(&state.db).await?;
     }
     if let Some(ref url) = avatar_url {
