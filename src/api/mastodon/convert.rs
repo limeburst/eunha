@@ -30,7 +30,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         group: false,
         discoverable: a.discoverable,
         indexable: a.indexable,
-        hide_collections: None,
+        hide_collections: Some(a.hide_collections),
         show_featured: None,
         show_media: None,
         show_media_replies: None,
