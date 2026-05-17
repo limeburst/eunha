@@ -381,8 +381,9 @@ pub async fn get_notifications_v2(
             .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
             .collect();
         let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
-        let polls_map = batch_status_polls(&state, &enrich_ids, None).await?;
+        let polls_map = batch_status_polls(&state, &enrich_ids, Some(auth.account_id)).await?;
         let cards_map = batch_status_cards(&state, &enrich_ids).await?;
+        let viewer_ctxs = super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
 
         let mut map = std::collections::HashMap::new();
         for s in &statuses {
@@ -394,7 +395,8 @@ pub async fn get_notifications_v2(
                 .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
                 .cloned()
                 .unwrap_or_default();
-            let mut api = status_from_db(s, account, media, reblog, None, &mentions, &rb_mentions);
+            let ctx = viewer_ctxs.get(&s.id).cloned();
+            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
