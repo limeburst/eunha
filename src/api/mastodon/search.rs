@@ -80,6 +80,7 @@ pub async fn search(
         }
     }
 
+    let offset = q.offset.unwrap_or(0).max(0);
     let accounts = if search_type.is_none() || search_type == Some("accounts") {
         let following_filter = q.following.unwrap_or(false);
         if following_filter {
@@ -92,8 +93,8 @@ pub async fn search(
                      AND a.suspended_at IS NULL
                      AND f.account_id = $4
                      AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
-                   ORDER BY a.followers_count DESC LIMIT $3"#,
-                instance.id, pattern, limit, vid
+                   ORDER BY a.followers_count DESC LIMIT $3 OFFSET $5"#,
+                instance.id, pattern, limit, vid, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -107,8 +108,8 @@ pub async fn search(
                    WHERE instance_id = $1
                      AND suspended_at IS NULL
                      AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
-                   ORDER BY followers_count DESC LIMIT $3"#,
-                instance.id, pattern, limit
+                   ORDER BY followers_count DESC LIMIT $3 OFFSET $4"#,
+                instance.id, pattern, limit, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -143,8 +144,8 @@ pub async fn search(
                  ))
                  AND to_tsvector('simple', coalesce(s.text, ''))
                      @@ websearch_to_tsquery('simple', $2)
-               ORDER BY s.id DESC LIMIT $3"#,
-            instance.id, fts_query, limit, filter_account_id, viewer_id
+               ORDER BY s.id DESC LIMIT $3 OFFSET $6"#,
+            instance.id, fts_query, limit, filter_account_id, viewer_id, offset
         )
         .fetch_all(&state.db)
         .await?;
@@ -195,8 +196,8 @@ pub async fn search(
 
     let hashtags = if search_type.is_none() || search_type == Some("hashtags") {
         sqlx::query!(
-            "SELECT id, name FROM tags WHERE lower(name) LIKE $1 ORDER BY name LIMIT $2",
-            pattern, limit
+            "SELECT id, name FROM tags WHERE lower(name) LIKE $1 ORDER BY name LIMIT $2 OFFSET $3",
+            pattern, limit, offset
         )
         .fetch_all(&state.db)
         .await?
