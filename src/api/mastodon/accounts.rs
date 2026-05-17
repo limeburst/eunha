@@ -184,7 +184,19 @@ pub async fn get_account(
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, id).await?;
-    Ok(Json(account_from_db(&account)))
+    let mut api_account = account_from_db(&account);
+    if let Some(ref moved_uri) = account.moved_to_uri {
+        if let Ok(Some(moved)) = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE uri = $1 LIMIT 1",
+            moved_uri,
+        )
+        .fetch_optional(&state.db)
+        .await {
+            api_account.moved = Some(Box::new(account_from_db(&moved)));
+        }
+    }
+    Ok(Json(api_account))
 }
 
 // ── GET /api/v1/accounts/:id/statuses ─────────────────────────────────────

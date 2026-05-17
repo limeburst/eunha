@@ -250,6 +250,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Media — 25 MB limit matching Mastodon's default
         .route("/api/v1/media", post(media::upload_media))
         .route("/api/v2/media", post(media::upload_media))
+        .route("/api/v2/media/{id}", get(media::get_media).put(media::update_media))
         .route("/api/v1/accounts/update_credentials", patch(accounts::update_credentials))
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(
