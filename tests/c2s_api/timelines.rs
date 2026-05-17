@@ -224,6 +224,41 @@ async fn test_tag_timeline() {
     );
 }
 
+/// Tag timeline hides statuses from muted accounts (authenticated viewer).
+#[tokio::test]
+async fn test_tag_timeline_hides_muted_accounts() {
+    let ctx = TestContext::new("tag-tl-muted").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "mute-me post #mutedtag77", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Status visible before mute.
+    let before: Vec<Value> = ctx.api.get(
+        "/api/v1/timelines/tag/mutedtag77",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        before.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "bob's tagged status should appear in tag timeline before mute",
+    );
+
+    // Alice mutes Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let after: Vec<Value> = ctx.api.get(
+        "/api/v1/timelines/tag/mutedtag77",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        !after.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "muted account's statuses should be hidden from tag timeline",
+    );
+}
+
 /// Tag timeline any[] returns statuses that contain the primary tag AND at least one of the any tags.
 #[tokio::test]
 async fn test_tag_timeline_any_filter() {
