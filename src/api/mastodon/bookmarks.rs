@@ -11,7 +11,8 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{build_status, fetch_reblog_data, fetch_status_media},
+    accounts::{batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_tags, build_status},
+    convert::status_from_db,
     types::PaginationParams,
 };
 
@@ -30,9 +31,10 @@ pub async fn get_bookmarks(
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let status_ids: Vec<i64> = if min_id.is_some() {
-        sqlx::query_scalar!(
-            r#"SELECT s.id FROM statuses s
+    let statuses: Vec<crate::db::models::Status> = if min_id.is_some() {
+        sqlx::query_as!(
+            crate::db::models::Status,
+            r#"SELECT s.* FROM statuses s
                JOIN bookmarks b ON b.status_id = s.id
                WHERE b.account_id = $1
                  AND s.deleted_at IS NULL
@@ -43,8 +45,9 @@ pub async fn get_bookmarks(
         .fetch_all(&state.db)
         .await?
     } else {
-        sqlx::query_scalar!(
-            r#"SELECT s.id FROM statuses s
+        sqlx::query_as!(
+            crate::db::models::Status,
+            r#"SELECT s.* FROM statuses s
                JOIN bookmarks b ON b.status_id = s.id
                WHERE b.account_id = $1
                  AND s.deleted_at IS NULL
@@ -57,54 +60,68 @@ pub async fn get_bookmarks(
         .await?
     };
 
-    let mut result = Vec::with_capacity(status_ids.len());
-    for sid in &status_ids {
-        let status = sqlx::query_as!(
-            crate::db::models::Status,
-            "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
-            sid
-        )
-        .fetch_optional(&state.db)
-        .await?;
+    if statuses.is_empty() {
+        return Ok((HeaderMap::new(), Json(vec![])));
+    }
 
-        let Some(s) = status else { continue };
+    let all_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+    let media_map = batch_status_media(&state, &all_ids).await?;
+    let reblog_map = batch_reblog_data(&state, &statuses).await?;
+    let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+    let mut enrich_ids = all_ids.clone();
+    enrich_ids.extend_from_slice(&reblog_ids);
+    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+    let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses.iter().cloned()
+        .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+        .collect();
+    let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
+    let ctxs = super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
 
-        let account = sqlx::query_as!(
+    let accounts: Vec<crate::db::models::Account> = {
+        let account_ids: Vec<i64> = statuses.iter().map(|s| s.account_id)
+            .collect::<std::collections::HashSet<_>>().into_iter().collect();
+        sqlx::query_as!(
             crate::db::models::Account,
-            "SELECT * FROM accounts WHERE id = $1",
-            s.account_id
+            "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+            &account_ids,
         )
-        .fetch_one(&state.db)
-        .await?;
-
-        let media = fetch_status_media(&state, s.id).await?;
-
-        let favourited = sqlx::query!(
-            "SELECT 1 as e FROM favourites WHERE account_id = $1 AND status_id = $2",
-            auth.account_id, s.id
-        )
-        .fetch_optional(&state.db)
+        .fetch_all(&state.db)
         .await?
-        .is_some();
+    };
+    let account_map: std::collections::HashMap<i64, crate::db::models::Account> =
+        accounts.into_iter().map(|a| (a.id, a)).collect();
 
-        let reblogged = sqlx::query!(
-            "SELECT 1 as e FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
-            auth.account_id, s.id
-        )
-        .fetch_optional(&state.db)
-        .await?
-        .is_some();
-
-        let reblog = fetch_reblog_data(&state, &s).await?;
-        let ctx = super::convert::StatusViewerContext {
+    let mut result = Vec::with_capacity(statuses.len());
+    for s in &statuses {
+        let Some(account) = account_map.get(&s.account_id) else { continue };
+        let media = media_map.get(&s.id).cloned().unwrap_or_default();
+        let reblog = reblog_map.get(&s.id).cloned();
+        let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        let rb_mentions = reblog.as_ref()
+            .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+            .cloned()
+            .unwrap_or_default();
+        let mut ctx = ctxs.get(&s.id).cloned().unwrap_or(super::convert::StatusViewerContext {
             account_id: auth.account_id,
-            favourited,
-            reblogged,
+            favourited: false,
+            reblogged: false,
             muted: false,
             bookmarked: true,
             pinned: false,
-        };
-        result.push(build_status(&state, &s, &account, media, reblog, Some(ctx)).await?);
+        });
+        ctx.bookmarked = true;
+        let mut api = status_from_db(s, account, media, reblog, Some(ctx), &mentions, &rb_mentions);
+        api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+        api.mentions = mentions;
+        api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+        if let Some(ref mut rb) = api.reblog {
+            let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = rb_mentions;
+            rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+        }
+        result.push(api);
     }
 
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
