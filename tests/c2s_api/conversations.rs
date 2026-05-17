@@ -213,3 +213,47 @@ async fn test_conversations_visible_to_sender() {
         .await.json().await.unwrap();
     assert!(!convs.is_empty(), "sender should also see the conversation");
 }
+
+/// Conversations are ordered by id DESC so the pagination cursor is consistent with ordering.
+#[tokio::test]
+async fn test_conversations_ordered_by_id_desc() {
+    let ctx = TestContext::new("conv-order").await;
+
+    // Create two separate conversations by creating and deleting between each.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "@bob conv order first", "visibility": "direct"}),
+    ).await;
+
+    let convs_first: Vec<Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    let c1_id = convs_first[0]["id"].as_str().unwrap().to_string();
+    ctx.api.delete(&format!("/api/v1/conversations/{c1_id}"), &ctx.bob_token).await;
+
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "@bob conv order second", "visibility": "direct"}),
+    ).await;
+
+    let convs: Vec<Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+
+    // c2 is newer (higher id) and should appear first.
+    let c2_id = convs[0]["id"].as_str().unwrap().to_string();
+    assert!(
+        c2_id.parse::<i64>().unwrap() > c1_id.parse::<i64>().unwrap(),
+        "newer conversation (higher id) should appear first"
+    );
+
+    // Adding c1 back by paginating: max_id=c2_id should not include c2.
+    let paged: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/conversations?max_id={c2_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert!(
+        !paged.iter().any(|c| c["id"].as_str() == Some(c2_id.as_str())),
+        "max_id=c2 should exclude c2 itself",
+    );
+}

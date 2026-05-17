@@ -66,7 +66,7 @@ pub async fn get_conversations(
                WHERE cp.account_id = $1
                  AND ($2::bigint IS NULL OR c.id < $2)
                  AND ($4::bigint IS NULL OR c.id > $4)
-               ORDER BY c.updated_at DESC
+               ORDER BY c.id DESC
                LIMIT $3"#,
             auth.account_id,
             max_id,
