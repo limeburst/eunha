@@ -1,5 +1,7 @@
 use axum::{
     extract::{Extension, Query, State},
+    http::{header, HeaderMap, Uri},
+    response::IntoResponse,
     Json,
 };
 
@@ -18,8 +20,10 @@ use super::{
 pub async fn get_bookmarks(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
-) -> AppResult<Json<Vec<Status>>> {
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:bookmarks")?;
     let limit = q.limit_clamped(20, 40);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -103,5 +107,15 @@ pub async fn get_bookmarks(
         result.push(build_status(&state, &s, &account, media, reblog, Some(ctx)).await?);
     }
 
-    Ok(Json(result))
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
