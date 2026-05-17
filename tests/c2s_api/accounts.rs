@@ -2139,3 +2139,74 @@ async fn test_followers_following_hides_blocked_accounts() {
     assert!(!following.iter().any(|a| a["id"].as_str() == Some(charlie_id.as_str())),
         "blocked account should not appear in following list");
 }
+
+/// Followers list is ordered by account id DESC, matching the pagination cursor.
+#[tokio::test]
+async fn test_followers_ordered_by_account_id_desc() {
+    let ctx = TestContext::new("followers-order").await;
+
+    let (charlie_uuid, charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie-forder", "charlie-forder@test.invalid").await;
+    let charlie_id = charlie_uuid.to_string();
+
+    // Alice and Bob both follow Charlie; Alice has a lower account ID than Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{charlie_id}/follow"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{charlie_id}/follow"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    // Charlie accepts both (accounts are unlocked in tests).
+
+    let followers: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{charlie_id}/followers"),
+        Some(&charlie_token),
+    ).await.json().await.unwrap();
+
+    let ids: Vec<i64> = followers.iter()
+        .filter_map(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()))
+        .collect();
+    assert!(ids.len() >= 2, "both alice and bob should be in followers");
+
+    let sorted_desc: Vec<i64> = { let mut s = ids.clone(); s.sort_unstable_by(|a, b| b.cmp(a)); s };
+    assert_eq!(ids, sorted_desc, "followers should be ordered by account id DESC");
+}
+
+/// Following list is ordered by account id DESC, matching the pagination cursor.
+#[tokio::test]
+async fn test_following_ordered_by_account_id_desc() {
+    let ctx = TestContext::new("following-order").await;
+
+    let (charlie_uuid, charlie_token) =
+        super::helpers::seed_user(&ctx.db, &ctx.domain, "charlie-fgorder", "charlie-fgorder@test.invalid").await;
+    let charlie_id = charlie_uuid.to_string();
+
+    // Charlie follows both Alice and Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.alice_id),
+        Some(&charlie_token),
+        &json!({}),
+    ).await;
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/follow", ctx.bob_id),
+        Some(&charlie_token),
+        &json!({}),
+    ).await;
+
+    let following: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{charlie_id}/following"),
+        Some(&charlie_token),
+    ).await.json().await.unwrap();
+
+    let ids: Vec<i64> = following.iter()
+        .filter_map(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()))
+        .collect();
+    assert!(ids.len() >= 2, "both alice and bob should be in following list");
+
+    let sorted_desc: Vec<i64> = { let mut s = ids.clone(); s.sort_unstable_by(|a, b| b.cmp(a)); s };
+    assert_eq!(ids, sorted_desc, "following should be ordered by account id DESC");
+}

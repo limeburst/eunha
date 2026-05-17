@@ -722,7 +722,7 @@ pub async fn get_account_followers(
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                     OR (b.account_id = a.id AND b.target_account_id = $4)
              ))
-           ORDER BY f.created_at DESC, a.id DESC LIMIT $5"#,
+           ORDER BY a.id DESC LIMIT $5"#,
         id, max_id, since_id, viewer_id, limit, min_id
     )
     .fetch_all(&state.db)
@@ -780,7 +780,7 @@ pub async fn get_account_following(
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                     OR (b.account_id = a.id AND b.target_account_id = $4)
              ))
-           ORDER BY f.created_at DESC, a.id DESC LIMIT $5"#,
+           ORDER BY a.id DESC LIMIT $5"#,
         id, max_id, since_id, viewer_id, limit, min_id
     )
     .fetch_all(&state.db)
@@ -1425,7 +1425,7 @@ pub async fn get_follow_requests(
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
              AND ($5::bigint IS NULL OR a.id > $5)
-           ORDER BY f.created_at DESC, a.id DESC LIMIT $4"#,
+           ORDER BY a.id DESC LIMIT $4"#,
         auth.account_id, max_id, since_id, limit, min_id
     )
     .fetch_all(&state.db)
