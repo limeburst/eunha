@@ -1604,7 +1604,7 @@ pub async fn favourited_by(
                  AND ($3::bigint IS NULL OR a.id < $3)
                  AND ($4::bigint IS NULL OR a.id > $4)
                  AND ($5::bigint IS NULL OR a.id > $5)
-               ORDER BY f.id DESC LIMIT $6"#,
+               ORDER BY a.id DESC LIMIT $6"#,
             id, vid, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
@@ -1618,7 +1618,7 @@ pub async fn favourited_by(
                  AND ($2::bigint IS NULL OR a.id < $2)
                  AND ($3::bigint IS NULL OR a.id > $3)
                  AND ($4::bigint IS NULL OR a.id > $4)
-               ORDER BY f.id DESC LIMIT $5"#,
+               ORDER BY a.id DESC LIMIT $5"#,
             id, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
@@ -1674,7 +1674,7 @@ pub async fn reblogged_by(
                  AND ($3::bigint IS NULL OR a.id < $3)
                  AND ($4::bigint IS NULL OR a.id > $4)
                  AND ($5::bigint IS NULL OR a.id > $5)
-               ORDER BY s.id DESC LIMIT $6"#,
+               ORDER BY a.id DESC LIMIT $6"#,
             id, vid, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
@@ -1688,7 +1688,7 @@ pub async fn reblogged_by(
                  AND ($2::bigint IS NULL OR a.id < $2)
                  AND ($3::bigint IS NULL OR a.id > $3)
                  AND ($4::bigint IS NULL OR a.id > $4)
-               ORDER BY s.id DESC LIMIT $5"#,
+               ORDER BY a.id DESC LIMIT $5"#,
             id, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)

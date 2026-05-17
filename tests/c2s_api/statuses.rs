@@ -2912,3 +2912,62 @@ async fn test_delete_original_cascades_to_reblogs() {
         "reblog should be 410 after original is deleted (cascade)",
     );
 }
+
+/// favourited_by pagination is consistent: ORDER BY matches the cursor column (a.id).
+#[tokio::test]
+async fn test_favourited_by_ordering_consistent_with_pagination() {
+    let ctx = TestContext::new("fav-by-order").await;
+
+    // Alice and Bob both favourite Charlie's status, but they have different account IDs.
+    let status = ctx.api.post_status(&ctx.alice_token, "fav by order test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(&format!("/api/v1/statuses/{sid}/favourite"), Some(&ctx.alice_token), &json!({})).await;
+    ctx.api.post_json(&format!("/api/v1/statuses/{sid}/favourite"), Some(&ctx.bob_token), &json!({})).await;
+
+    let all: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses/{sid}/favourited_by"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(all.len() >= 2, "both alice and bob should appear");
+
+    let ids: Vec<i64> = all.iter()
+        .filter_map(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()))
+        .collect();
+    let sorted_desc: Vec<i64> = {
+        let mut s = ids.clone();
+        s.sort_unstable_by(|a, b| b.cmp(a));
+        s
+    };
+    assert_eq!(ids, sorted_desc, "favourited_by should be ordered by account id DESC");
+}
+
+/// reblogged_by pagination is consistent: ORDER BY matches the cursor column (a.id).
+#[tokio::test]
+async fn test_reblogged_by_ordering_consistent_with_pagination() {
+    let ctx = TestContext::new("rb-by-order").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "rb by order test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(&format!("/api/v1/statuses/{sid}/reblog"), Some(&ctx.alice_token), &json!({})).await;
+    ctx.api.post_json(&format!("/api/v1/statuses/{sid}/reblog"), Some(&ctx.bob_token), &json!({})).await;
+
+    let all: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/statuses/{sid}/reblogged_by"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(all.len() >= 2, "both alice and bob should appear");
+
+    let ids: Vec<i64> = all.iter()
+        .filter_map(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()))
+        .collect();
+    let sorted_desc: Vec<i64> = {
+        let mut s = ids.clone();
+        s.sort_unstable_by(|a, b| b.cmp(a));
+        s
+    };
+    assert_eq!(ids, sorted_desc, "reblogged_by should be ordered by account id DESC");
+}
