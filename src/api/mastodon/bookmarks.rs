@@ -12,7 +12,7 @@ use crate::{
 };
 use super::{
     accounts::{build_status, fetch_reblog_data, fetch_status_media},
-    types::{PaginationParams, Status},
+    types::PaginationParams,
 };
 
 // ── GET /api/v1/bookmarks ─────────────────────────────────────────────────

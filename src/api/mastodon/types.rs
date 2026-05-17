@@ -747,6 +747,7 @@ pub struct NotificationPagination {
     pub limit: Option<i64>,
     pub max_id: Option<String>,
     pub since_id: Option<String>,
+    pub min_id: Option<String>,
 }
 
 // ── Suggestion v2 ───────────────────────────────────────────────────────────

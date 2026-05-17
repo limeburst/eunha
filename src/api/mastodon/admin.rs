@@ -1,6 +1,7 @@
 use axum::{
     extract::{Extension, Multipart, Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode, Uri},
+    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -156,7 +157,9 @@ pub async fn list_admin_accounts(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<AdminAccountsParams>,
-) -> AppResult<Json<Vec<AdminAccount>>> {
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
     require_admin(&state, auth.account_id).await?;
 
     let instance_id = sqlx::query_scalar!(
@@ -203,7 +206,18 @@ pub async fn list_admin_accounts(
     for a in &accounts {
         result.push(build_admin_account(&state, a).await?);
     }
-    Ok(Json(result))
+
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── GET /api/v1/admin/accounts/:id ───────────────────────────────────────
@@ -450,13 +464,18 @@ struct AdminReportRow {
 pub struct AdminReportsParams {
     pub resolved: Option<bool>,
     pub limit: Option<i64>,
+    pub max_id: Option<String>,
+    pub min_id: Option<String>,
+    pub since_id: Option<String>,
 }
 
 pub async fn list_admin_reports(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<AdminReportsParams>,
-) -> AppResult<Json<Vec<AdminReport>>> {
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
     require_admin(&state, auth.account_id).await?;
 
     let instance_id = sqlx::query_scalar!(
@@ -468,6 +487,9 @@ pub async fn list_admin_reports(
 
     let limit = params.limit.unwrap_or(20).min(40).max(1);
     let resolved = params.resolved.unwrap_or(false);
+    let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = params.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
         r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
@@ -477,9 +499,12 @@ pub async fn list_admin_reports(
            JOIN accounts a ON a.id = r.account_id
            WHERE a.instance_id = $1
              AND ($2 = (r.action_taken_at IS NOT NULL))
+             AND ($4::bigint IS NULL OR r.id < $4)
+             AND ($5::bigint IS NULL OR r.id > $5)
+             AND ($6::bigint IS NULL OR r.id > $6)
            ORDER BY r.created_at DESC
            LIMIT $3"#,
-        instance_id, resolved, limit,
+        instance_id, resolved, limit, max_id, since_id, min_id,
     )
     .fetch_all(&state.db)
     .await?;
@@ -500,7 +525,18 @@ pub async fn list_admin_reports(
         };
         result.push(build_admin_report(&state, &row).await?);
     }
-    Ok(Json(result))
+
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── GET /api/v1/admin/reports/:id ────────────────────────────────────────

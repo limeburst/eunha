@@ -433,9 +433,15 @@ pub async fn get_notification_requests(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(pagination): Query<NotificationPagination>,
-) -> AppResult<Json<Vec<NotificationRequest>>> {
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:notifications")?;
     let limit = pagination.limit.unwrap_or(40).min(80).max(1) as i64;
+    let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
     let rows = sqlx::query!(
         r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
                   a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
@@ -448,14 +454,17 @@ pub async fn get_notification_requests(
            FROM notification_requests nr
            JOIN accounts a ON a.id = nr.from_account_id
            WHERE nr.account_id = $1 AND NOT nr.dismissed
+             AND ($3::bigint IS NULL OR nr.id < $3)
+             AND ($4::bigint IS NULL OR nr.id > $4)
+             AND ($5::bigint IS NULL OR nr.id > $5)
            ORDER BY nr.updated_at DESC
            LIMIT $2"#,
-        auth.account_id, limit,
+        auth.account_id, limit, max_id, since_id, min_id,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let result = rows.into_iter().map(|r| {
+    let result: Vec<NotificationRequest> = rows.into_iter().map(|r| {
         let acc = crate::db::models::Account {
             id: r.from_account_id,
             instance_id: r.instance_id,
@@ -502,7 +511,17 @@ pub async fn get_notification_requests(
         }
     }).collect();
 
-    Ok(Json(result))
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── POST /api/v1/notifications/requests/:id/accept ───────────────────────
