@@ -246,6 +246,24 @@ async fn test_reblog_private_returns_403() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+/// Author can reblog their own private status (returns 200, not 403).
+#[tokio::test]
+async fn test_reblog_own_private_status_allowed() {
+    let ctx = TestContext::new("reblog-own-prv").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice own private rb", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK, "owner should be able to reblog their own private status");
+    let reblog: Value = resp.json().await.unwrap();
+    assert_eq!(reblog["reblog"]["id"].as_str(), Some(id), "reblog should wrap the original");
+}
+
 /// Reblogging a direct status by a non-recipient → 404 (status not visible).
 #[tokio::test]
 async fn test_reblog_direct_returns_404() {
@@ -264,6 +282,22 @@ async fn test_reblog_direct_returns_404() {
         .await;
     // Direct messages are hidden from non-recipients, so the server returns 404.
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Author cannot reblog their own direct message (direct messages are never rebloggable).
+#[tokio::test]
+async fn test_reblog_own_direct_returns_403() {
+    let ctx = TestContext::new("reblog-own-dir").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "alice own direct", "direct").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "direct messages should never be rebloggable, even by the author");
 }
 
 // ── authentication requirements ──────────────────────────────────────────────

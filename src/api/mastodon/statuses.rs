@@ -1054,7 +1054,10 @@ pub async fn reblog_status(
     };
     // visibility check: 404 if not visible, 403 if visible but not rebloggable
     check_status_visible(&state, &original, auth.account_id).await?;
-    if original.visibility == "private" || original.visibility == "direct" {
+    // direct messages are never rebloggable; private statuses only by their author
+    if original.visibility == "direct"
+        || (original.visibility == "private" && original.account_id != auth.account_id)
+    {
         return Err(AppError::Forbidden);
     }
 
