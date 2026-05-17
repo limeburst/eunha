@@ -1887,10 +1887,10 @@ async fn test_follow_blocked_by_target_is_silently_rejected() {
     );
 }
 
-/// GET /api/v1/accounts/:id for a suspended account returns 410 Gone.
+/// GET /api/v1/accounts/:id for a suspended account returns 200 with suspended=true.
 #[tokio::test]
-async fn test_get_suspended_account_returns_410() {
-    let ctx = TestContext::new("acct-suspended-410").await;
+async fn test_get_suspended_account_returns_suspended() {
+    let ctx = TestContext::new("acct-suspended-200").await;
 
     // Make alice admin
     let alice_uuid: i64 = ctx.alice_id.parse().unwrap();
@@ -1907,11 +1907,9 @@ async fn test_get_suspended_account_returns_410() {
     ).await;
 
     let resp = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None).await;
-    assert_eq!(
-        resp.status(),
-        StatusCode::GONE,
-        "suspended account should return 410 Gone",
-    );
+    assert_eq!(resp.status(), StatusCode::OK, "suspended account should return 200");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["suspended"], true, "suspended account should have suspended=true");
 }
 
 /// Unlocking a locked account auto-approves pending follow requests.
