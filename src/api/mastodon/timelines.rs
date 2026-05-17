@@ -722,6 +722,11 @@ pub async fn tag_timeline(
                      WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $8)
                  ))
+                 AND ($8::bigint IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM mutes mu
+                     WHERE mu.account_id = $8 AND mu.target_account_id = s.account_id
+                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
+                 ))
                ORDER BY s.id ASC
                LIMIT $4"#
         );
@@ -748,6 +753,11 @@ pub async fn tag_timeline(
                      SELECT 1 FROM blocks b
                      WHERE (b.account_id = $9 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $9)
+                 ))
+                 AND ($9::bigint IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM mutes mu
+                     WHERE mu.account_id = $9 AND mu.target_account_id = s.account_id
+                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))
                ORDER BY s.id DESC
                LIMIT $8"#
