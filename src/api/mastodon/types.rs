@@ -101,6 +101,7 @@ pub struct Status {
     pub edited_at: Option<String>,
     pub content: String,
     pub reblog: Option<Box<Status>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub application: Option<Application>,
     pub account: Account,
     pub media_attachments: Vec<MediaAttachment>,

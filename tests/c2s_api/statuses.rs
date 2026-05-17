@@ -2875,6 +2875,27 @@ async fn test_post_status_includes_application_field() {
     );
 }
 
+/// The application field must never serialize as null — it should be either
+/// a proper object (when an application_id is stored) or absent entirely.
+#[tokio::test]
+async fn test_status_application_field_never_null() {
+    let ctx = TestContext::new("status-app-never-null").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "app field null test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    // Check from author's perspective
+    let s: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let app_val = &s["application"];
+    assert!(
+        app_val.is_object() || app_val.is_null() && !s.as_object().unwrap().contains_key("application"),
+        "application must be an object or absent, never null; got: {:?}", app_val
+    );
+    // Since test tokens have an application, it should actually be present
+    assert!(app_val.is_object(), "expected application object since token has app_id, got: {:?}", app_val);
+}
+
 /// Deleting the original status cascade-deletes its reblogs.
 ///
 /// Mastodon: when an original post is removed the server also removes all boosts
