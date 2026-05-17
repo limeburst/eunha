@@ -994,7 +994,9 @@ pub async fn update_credentials(
             .execute(&state.db).await?;
     }
     if let Some(ref n) = note {
-        let note_html = format!("<p>{}</p>", ammonia::clean_text(n));
+        let domain = instance.domain.as_str();
+        let note_html = super::formatting::render_content(n, domain, &std::collections::HashMap::new());
+        let note_html = if note_html.is_empty() { String::new() } else { note_html };
         sqlx::query!("UPDATE accounts SET note = $1, note_text = $2 WHERE id = $3", note_html, n, auth.account_id)
             .execute(&state.db).await?;
     }
