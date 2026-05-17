@@ -1277,6 +1277,7 @@ pub async fn get_blocks(
     let limit = q.limit_clamped(40, 80);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let accounts = sqlx::query_as!(
         Account,
         r#"SELECT a.* FROM accounts a
@@ -1284,8 +1285,9 @@ pub async fn get_blocks(
            WHERE b.account_id = $1
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($5::bigint IS NULL OR a.id > $5)
            ORDER BY b.created_at DESC, a.id DESC LIMIT $4"#,
-        auth.account_id, max_id, since_id, limit,
+        auth.account_id, max_id, since_id, limit, min_id,
     )
     .fetch_all(&state.db)
     .await?;
@@ -1316,6 +1318,7 @@ pub async fn get_mutes(
     let limit = q.limit_clamped(40, 80);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let accounts = sqlx::query_as!(
         Account,
         r#"SELECT a.* FROM accounts a
@@ -1324,8 +1327,9 @@ pub async fn get_mutes(
              AND (m.expires_at IS NULL OR m.expires_at > now())
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($5::bigint IS NULL OR a.id > $5)
            ORDER BY m.created_at DESC, a.id DESC LIMIT $4"#,
-        auth.account_id, max_id, since_id, limit,
+        auth.account_id, max_id, since_id, limit, min_id,
     )
     .fetch_all(&state.db)
     .await?;
@@ -1384,6 +1388,7 @@ pub async fn get_follow_requests(
     let limit = q.limit_clamped(40, 80);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let accounts = sqlx::query_as!(
         Account,
         r#"SELECT a.* FROM accounts a
@@ -1391,8 +1396,9 @@ pub async fn get_follow_requests(
            WHERE f.target_account_id = $1 AND f.state = 'pending'
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($5::bigint IS NULL OR a.id > $5)
            ORDER BY f.created_at DESC, a.id DESC LIMIT $4"#,
-        auth.account_id, max_id, since_id, limit
+        auth.account_id, max_id, since_id, limit, min_id
     )
     .fetch_all(&state.db)
     .await?;
