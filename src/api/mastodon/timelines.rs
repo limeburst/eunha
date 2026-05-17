@@ -619,6 +619,11 @@ async fn list_timeline_from_db(
                  AND (s.text != ''
                       OR s.reblog_of_id IS NOT NULL
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes mu
+                     WHERE mu.account_id = $5 AND mu.target_account_id = s.account_id
+                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
+                 )
                  {reply_filter}
                ORDER BY s.id ASC
                LIMIT $3"#
@@ -643,6 +648,11 @@ async fn list_timeline_from_db(
                  AND (s.text != ''
                       OR s.reblog_of_id IS NOT NULL
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes mu
+                     WHERE mu.account_id = $5 AND mu.target_account_id = s.account_id
+                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
+                 )
                  {reply_filter}
                ORDER BY s.id DESC
                LIMIT $4"#

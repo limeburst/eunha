@@ -1225,3 +1225,107 @@ async fn test_db_and_redis_list_timelines_agree_replies_policy_followed() {
     );
     let _ = (stranger_id, eve_id, stranger_post_id);
 }
+
+// ── List timeline mute filtering ──────────────────────────────────────────────
+
+/// List timeline (DB cold-start path) hides statuses from muted accounts.
+#[tokio::test]
+async fn test_list_timeline_hides_muted_accounts() {
+    let ctx = TestContext::new("list-tl-muted").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Mute Test List"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id]}),
+    ).await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "bob list mute post", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Visible before mute (cold-start DB path).
+    let before = list_timeline(&ctx, list_id).await;
+    assert!(
+        before.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "bob's status should appear in list timeline before mute",
+    );
+
+    // Alice mutes Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    // Cold-start DB path: status should be hidden.
+    let after = list_timeline(&ctx, list_id).await;
+    assert!(
+        !after.iter().any(|s| s["id"].as_str() == Some(status_id)),
+        "muted account's status should be hidden from list timeline (DB path)",
+    );
+}
+
+/// DB cold-start and Redis paths agree when a list member is muted.
+#[tokio::test]
+async fn test_db_and_redis_list_timelines_agree_with_muted_member() {
+    let ctx = TestContext::new("list-parity-mute").await;
+    let (carol_id, carol_token) =
+        seed_user(&ctx.db, &ctx.domain, "carol-list-mute", "carol-list-mute@test.invalid").await;
+    let carol_id = carol_id.to_string();
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{carol_id}/follow"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    let list: Value = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &json!({"title": "Parity Mute List"}),
+    ).await.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+    ctx.api.post_json(
+        &format!("/api/v1/lists/{list_id}/accounts"),
+        Some(&ctx.alice_token),
+        &json!({"account_ids": [ctx.bob_id, carol_id]}),
+    ).await;
+
+    // Alice mutes Carol.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{carol_id}/mute"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    ctx.api.post_status(&ctx.bob_token, "bob list parity mute", "public").await;
+    ctx.api.post_status(&carol_token, "carol list parity muted", "public").await;
+
+    // Cold-start DB path.
+    let db_tl = list_timeline(&ctx, list_id).await;
+    let db_ids = extract_ids(&db_tl);
+
+    // Redis path (feed populated from DB).
+    let redis_tl = list_timeline(&ctx, list_id).await;
+    let redis_ids = extract_ids(&redis_tl);
+
+    assert_eq!(
+        db_ids, redis_ids,
+        "DB and Redis list timelines must agree when a muted member is present",
+    );
+    // Carol's status must be absent from both paths.
+    assert!(
+        db_ids.iter().all(|id| {
+            db_tl.iter().find(|s| s["id"].as_str() == Some(id.as_str()))
+                .map(|s| s["account"]["id"].as_str() != Some(carol_id.as_str()))
+                .unwrap_or(true)
+        }),
+        "muted carol's status should be absent from list timeline",
+    );
+}
