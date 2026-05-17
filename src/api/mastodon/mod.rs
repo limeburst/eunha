@@ -164,7 +164,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/emails/check_confirmation", get(signup::check_email_confirmation))
         // Admin API
         .route("/api/v1/admin/accounts", get(admin::list_admin_accounts))
-        .route("/api/v1/admin/accounts/{id}", get(admin::get_admin_account))
+        .route("/api/v1/admin/accounts/{id}", get(admin::get_admin_account).delete(admin::delete_admin_account))
         .route("/api/v1/admin/accounts/{id}/approve", post(admin::approve_account))
         .route("/api/v1/admin/accounts/{id}/reject", post(admin::reject_account))
         .route("/api/v1/admin/accounts/{id}/enable", post(admin::enable_account))
@@ -196,6 +196,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/admin/ip_blocks/{id}", get(admin::get_ip_block).put(admin::update_ip_block).delete(admin::delete_ip_block))
         .route("/api/v1/admin/email_domain_blocks", get(admin::list_email_domain_blocks).post(admin::create_email_domain_block))
         .route("/api/v1/admin/email_domain_blocks/{id}", get(admin::get_email_domain_block).delete(admin::delete_email_domain_block))
+        .route("/api/v1/admin/trends/tags", get(admin::admin_trending_tags))
+        .route("/api/v1/admin/trends/statuses", get(admin::admin_trending_statuses))
+        .route("/api/v1/admin/trends/links", get(admin::admin_trending_links))
         // Account move and aliases
         .route("/api/v1/accounts/move", post(accounts::move_account))
         .route("/api/v1/profile/avatar", delete(accounts::delete_profile_avatar))

@@ -1724,6 +1724,68 @@ pub async fn account_action(
     Ok(StatusCode::OK)
 }
 
+// ── DELETE /api/v1/admin/accounts/:id ────────────────────────────────────
+
+pub async fn delete_admin_account(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    require_admin(&state, auth.account_id).await?;
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query!(
+        "UPDATE statuses SET deleted_at = now() WHERE account_id = $1 AND deleted_at IS NULL",
+        id,
+    ).execute(&mut *tx).await?;
+    sqlx::query!(
+        "UPDATE oauth_access_tokens SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL",
+        id,
+    ).execute(&mut *tx).await?;
+    sqlx::query!(
+        "UPDATE accounts SET suspended_at = now() WHERE id = $1",
+        id,
+    ).execute(&mut *tx).await?;
+    sqlx::query!(
+        "DELETE FROM users WHERE account_id = $1",
+        id,
+    ).execute(&mut *tx).await?;
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}
+
+// ── GET /api/v1/admin/trends/* ────────────────────────────────────────────
+
+pub async fn admin_trending_tags(
+    state: State<AppState>,
+    instance: axum::extract::Extension<crate::middleware::ResolvedInstance>,
+    query: axum::extract::Query<super::trends::TrendParams>,
+    auth: axum::extract::Extension<AuthenticatedUser>,
+) -> AppResult<axum::Json<Vec<super::types::Tag>>> {
+    require_admin(&state, auth.account_id).await?;
+    super::trends::trending_tags(state, instance, query).await
+}
+
+pub async fn admin_trending_statuses(
+    state: State<AppState>,
+    instance: axum::extract::Extension<crate::middleware::ResolvedInstance>,
+    query: axum::extract::Query<super::trends::TrendParams>,
+    auth: axum::extract::Extension<AuthenticatedUser>,
+) -> AppResult<axum::Json<Vec<super::types::Status>>> {
+    require_admin(&state, auth.account_id).await?;
+    super::trends::trending_statuses(state, instance, query, Some(axum::extract::Extension(crate::middleware::AuthenticatedUser { account_id: auth.account_id, token_id: auth.token_id, scopes: auth.scopes.clone(), application_id: auth.application_id }))).await
+}
+
+pub async fn admin_trending_links(
+    state: State<AppState>,
+    query: axum::extract::Query<super::trends::TrendParams>,
+    auth: axum::extract::Extension<AuthenticatedUser>,
+) -> AppResult<axum::Json<Vec<super::types::PreviewCard>>> {
+    require_admin(&state, auth.account_id).await?;
+    super::trends::trending_links(state, query).await
+}
+
 fn md5_bytes(s: &str) -> [u8; 16] {
     // Simple deterministic digest (not security-sensitive — Mastodon uses it for obfuscation display)
     let mut h: u128 = 0x9e3779b97f4a7c15;
