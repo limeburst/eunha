@@ -700,7 +700,7 @@ pub async fn accept_notification_request(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
     sqlx::query!(
-        "UPDATE notification_requests SET dismissed = false WHERE id = $1 AND account_id = $2",
+        "UPDATE notification_requests SET dismissed = true WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
     )
     .execute(&state.db)
@@ -733,7 +733,7 @@ pub async fn accept_all_notification_requests(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
     sqlx::query!(
-        "UPDATE notification_requests SET dismissed = false WHERE account_id = $1",
+        "UPDATE notification_requests SET dismissed = true WHERE account_id = $1",
         auth.account_id,
     )
     .execute(&state.db)
