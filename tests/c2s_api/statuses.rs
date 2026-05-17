@@ -3046,3 +3046,26 @@ async fn test_status_viewer_fields_present_when_unauthenticated() {
     assert_eq!(s["bookmarked"].as_bool(), Some(false), "bookmarked should be false not absent");
     assert!(s["filtered"].as_array().is_some(), "filtered should be an array, not absent");
 }
+
+/// Status mentions field should be populated when the status text contains @-mentions.
+#[tokio::test]
+async fn test_status_mentions_populated() {
+    let ctx = TestContext::new("status-mentions").await;
+
+    // Alice mentions bob by username (local mention)
+    let text = format!("@bob hello");
+    let status = ctx.api.post_status(&ctx.alice_token, &text, "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    let s: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let mentions = s["mentions"].as_array().expect("mentions should be an array");
+    assert_eq!(mentions.len(), 1, "should have one mention, got: {:?}", mentions);
+
+    let mention = &mentions[0];
+    assert_eq!(mention["username"].as_str(), Some("bob"), "mention username should be bob");
+    assert!(mention["id"].as_str().is_some(), "mention id should be present");
+    assert!(mention["acct"].as_str().is_some(), "mention acct should be present");
+    assert!(mention["url"].as_str().is_some(), "mention url should be present");
+}

@@ -172,7 +172,7 @@ pub fn status_from_db_with_app(
             .map(media_from_db)
             .filter(|m| m.url.is_some() || m.remote_url.as_deref().map_or(false, |u| !u.is_empty()))
             .collect(),
-        mentions: vec![],
+        mentions: mentions.to_vec(),
         tags: vec![],
         emojis: vec![],
         card: None,
