@@ -53,7 +53,7 @@ pub async fn get_bookmarks(
                  AND s.deleted_at IS NULL
                  AND ($2::bigint IS NULL OR s.id < $2)
                  AND ($3::bigint IS NULL OR s.id > $3)
-               ORDER BY b.created_at DESC LIMIT $4"#,
+               ORDER BY s.id DESC LIMIT $4"#,
             auth.account_id, max_id, since_id, limit
         )
         .fetch_all(&state.db)

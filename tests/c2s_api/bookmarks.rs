@@ -247,3 +247,45 @@ async fn test_bookmarks_min_id_pagination() {
         "s3 should appear after min_id=s1",
     );
 }
+
+/// Bookmarks are ordered by status ID descending, so max_id pagination is
+/// consistent even when old statuses are bookmarked after newer ones.
+#[tokio::test]
+async fn test_bookmarks_pagination_consistent_with_ordering() {
+    let ctx = TestContext::new("bmarks-order-pag").await;
+
+    // s1 has a lower ID (older status), s2 has a higher ID (newer status).
+    let s1 = ctx.api.post_status(&ctx.alice_token, "bmarks order older", "public").await;
+    let s2 = ctx.api.post_status(&ctx.alice_token, "bmarks order newer", "public").await;
+    let s1_id = s1["id"].as_str().unwrap().to_string();
+    let s2_id = s2["id"].as_str().unwrap().to_string();
+
+    // Bookmark s2 (newer) first, then s1 (older). With b.created_at ordering, s1 would
+    // appear first in the list, breaking pagination by status ID.
+    ctx.api.post_json(&format!("/api/v1/statuses/{s2_id}/bookmark"), Some(&ctx.bob_token), &serde_json::json!({})).await;
+    ctx.api.post_json(&format!("/api/v1/statuses/{s1_id}/bookmark"), Some(&ctx.bob_token), &serde_json::json!({})).await;
+
+    // Default list should have s2 first (higher ID), s1 second.
+    let all: Vec<Value> = ctx.api.get("/api/v1/bookmarks", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    let all_ids: Vec<&str> = all.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(all_ids.contains(&s2_id.as_str()), "s2 should be in bookmarks");
+    assert!(all_ids.contains(&s1_id.as_str()), "s1 should be in bookmarks");
+    let s2_pos = all_ids.iter().position(|&id| id == s2_id.as_str()).unwrap();
+    let s1_pos = all_ids.iter().position(|&id| id == s1_id.as_str()).unwrap();
+    assert!(s2_pos < s1_pos, "newer status (s2) should appear before older status (s1)");
+
+    // Paginating with max_id=s2 should return s1 (lower ID).
+    let paged: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/bookmarks?max_id={s2_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert!(
+        paged.iter().any(|s| s["id"].as_str() == Some(s1_id.as_str())),
+        "s1 should appear when paginating with max_id=s2",
+    );
+    assert!(
+        !paged.iter().any(|s| s["id"].as_str() == Some(s2_id.as_str())),
+        "s2 itself should not appear in max_id=s2 results",
+    );
+}
