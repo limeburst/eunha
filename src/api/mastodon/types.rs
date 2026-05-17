@@ -676,8 +676,8 @@ pub struct Report {
     pub comment: String,
     pub forwarded: bool,
     pub created_at: String,
-    pub status_ids: Option<Vec<String>>,
-    pub rule_ids: Option<Vec<String>>,
+    pub status_ids: Vec<String>,
+    pub rule_ids: Vec<String>,
     pub collection_ids: Vec<String>,
     pub target_account: Account,
 }

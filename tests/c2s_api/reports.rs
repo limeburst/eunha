@@ -107,6 +107,34 @@ async fn test_file_report_requires_auth() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// Report response always includes status_ids and rule_ids as arrays (never null).
+#[tokio::test]
+async fn test_report_status_ids_and_rule_ids_are_arrays() {
+    let ctx = TestContext::new("report-arrays").await;
+
+    let status = ctx.api.post_status(&ctx.bob_token, "array field test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    // Report with a status
+    let with_status: Value = ctx.api.post_json(
+        "/api/v1/reports",
+        Some(&ctx.alice_token),
+        &json!({"account_id": ctx.bob_id, "status_ids": [sid]}),
+    ).await.json().await.unwrap();
+    assert!(with_status["status_ids"].as_array().is_some(), "status_ids should be array");
+    assert!(with_status["rule_ids"].as_array().is_some(), "rule_ids should be array");
+    assert_eq!(with_status["status_ids"].as_array().unwrap().len(), 1);
+
+    // Report without statuses
+    let without_status: Value = ctx.api.post_json(
+        "/api/v1/reports",
+        Some(&ctx.alice_token),
+        &json!({"account_id": ctx.bob_id}),
+    ).await.json().await.unwrap();
+    assert!(without_status["status_ids"].as_array().is_some(), "status_ids should be empty array not null");
+    assert_eq!(without_status["status_ids"].as_array().unwrap().len(), 0);
+}
+
 /// POST /api/v1/reports for an unknown account_id returns 404.
 #[tokio::test]
 async fn test_file_report_unknown_account() {

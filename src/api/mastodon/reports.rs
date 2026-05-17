@@ -97,8 +97,8 @@ pub async fn file_report(
         comment,
         forwarded,
         created_at: super::convert::mastodon_date(report.created_at),
-        status_ids: if status_id_strings.is_empty() { None } else { Some(status_id_strings) },
-        rule_ids: None,
+        status_ids: status_id_strings,
+        rule_ids: vec![],
         collection_ids: vec![],
         target_account: account_from_db(&target_account),
     }))
