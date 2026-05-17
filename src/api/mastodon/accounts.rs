@@ -5,7 +5,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::{
     db::models::Account,
@@ -666,58 +665,55 @@ pub struct FollowersQuery {
 pub async fn get_account_followers(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<FollowersQuery>,
     viewer: Option<Extension<AuthenticatedUser>>,
-) -> AppResult<Json<Vec<ApiAccount>>> {
+) -> AppResult<impl IntoResponse> {
     let target = fetch_account(&state, id).await?;
     if target.suspended_at.is_some() {
-        return Ok(Json(vec![]));
+        return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
     if target.hide_collections && viewer_id != Some(id) {
-        return Ok(Json(vec![]));
+        return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
 
     let limit = q.pagination.limit_clamped(40, 80);
-    let max_id_str = q.pagination.max_id.as_deref();
+    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let accounts = if let Some(cursor) = max_id_str.and_then(|s| s.parse::<Uuid>().ok()) {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN follows f ON f.account_id = a.id
-               WHERE f.target_account_id = $1 AND f.state = 'accepted'
-                 AND f.id < $2
-                 AND ($4::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $4 AND b.target_account_id = a.id)
-                        OR (b.account_id = a.id AND b.target_account_id = $4)
-                 ))
-               ORDER BY f.id DESC LIMIT $3"#,
-            id, cursor, limit, viewer_id
-        )
-        .fetch_all(&state.db)
-        .await?
-    } else {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN follows f ON f.account_id = a.id
-               WHERE f.target_account_id = $1 AND f.state = 'accepted'
-                 AND ($3::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $3 AND b.target_account_id = a.id)
-                        OR (b.account_id = a.id AND b.target_account_id = $3)
-                 ))
-               ORDER BY f.id DESC LIMIT $2"#,
-            id, limit, viewer_id
-        )
-        .fetch_all(&state.db)
-        .await?
-    };
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN follows f ON f.account_id = a.id
+           WHERE f.target_account_id = $1 AND f.state = 'accepted'
+             AND ($2::bigint IS NULL OR a.id < $2)
+             AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($4::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM blocks b
+                 WHERE (b.account_id = $4 AND b.target_account_id = a.id)
+                    OR (b.account_id = a.id AND b.target_account_id = $4)
+             ))
+           ORDER BY f.created_at DESC, a.id DESC LIMIT $5"#,
+        id, max_id, since_id, viewer_id, limit
+    )
+    .fetch_all(&state.db)
+    .await?;
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(api_accounts)))
 }
 
 // ── GET /api/v1/accounts/:id/following ────────────────────────────────────
@@ -725,58 +721,55 @@ pub async fn get_account_followers(
 pub async fn get_account_following(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    uri: Uri,
+    req_headers: HeaderMap,
     Query(q): Query<FollowersQuery>,
     viewer: Option<Extension<AuthenticatedUser>>,
-) -> AppResult<Json<Vec<ApiAccount>>> {
+) -> AppResult<impl IntoResponse> {
     let target = fetch_account(&state, id).await?;
     if target.suspended_at.is_some() {
-        return Ok(Json(vec![]));
+        return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
     if target.hide_collections && viewer_id != Some(id) {
-        return Ok(Json(vec![]));
+        return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
 
     let limit = q.pagination.limit_clamped(40, 80);
-    let max_id_str = q.pagination.max_id.as_deref();
+    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let accounts = if let Some(cursor) = max_id_str.and_then(|s| s.parse::<Uuid>().ok()) {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN follows f ON f.target_account_id = a.id
-               WHERE f.account_id = $1 AND f.state = 'accepted'
-                 AND f.id < $2
-                 AND ($4::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $4 AND b.target_account_id = a.id)
-                        OR (b.account_id = a.id AND b.target_account_id = $4)
-                 ))
-               ORDER BY f.id DESC LIMIT $3"#,
-            id, cursor, limit, viewer_id
-        )
-        .fetch_all(&state.db)
-        .await?
-    } else {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN follows f ON f.target_account_id = a.id
-               WHERE f.account_id = $1 AND f.state = 'accepted'
-                 AND ($3::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $3 AND b.target_account_id = a.id)
-                        OR (b.account_id = a.id AND b.target_account_id = $3)
-                 ))
-               ORDER BY f.id DESC LIMIT $2"#,
-            id, limit, viewer_id
-        )
-        .fetch_all(&state.db)
-        .await?
-    };
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN follows f ON f.target_account_id = a.id
+           WHERE f.account_id = $1 AND f.state = 'accepted'
+             AND ($2::bigint IS NULL OR a.id < $2)
+             AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($4::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM blocks b
+                 WHERE (b.account_id = $4 AND b.target_account_id = a.id)
+                    OR (b.account_id = a.id AND b.target_account_id = $4)
+             ))
+           ORDER BY f.created_at DESC, a.id DESC LIMIT $5"#,
+        id, max_id, since_id, viewer_id, limit
+    )
+    .fetch_all(&state.db)
+    .await?;
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(api_accounts)))
 }
 
 // ── GET /api/v1/accounts/search ───────────────────────────────────────────
