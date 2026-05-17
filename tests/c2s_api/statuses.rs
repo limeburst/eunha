@@ -2971,3 +2971,34 @@ async fn test_reblogged_by_ordering_consistent_with_pagination() {
     };
     assert_eq!(ids, sorted_desc, "reblogged_by should be ordered by account id DESC");
 }
+
+/// GET /api/v1/statuses/:id returns `text` (source) only for the author, null for others.
+#[tokio::test]
+async fn test_get_status_text_field_for_author_and_others() {
+    let ctx = TestContext::new("status-text-field").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "source text test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    // Author sees source text.
+    let as_author: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(
+        as_author["text"].as_str(),
+        Some("source text test"),
+        "author should see the source text",
+    );
+
+    // Another user gets null text.
+    let as_other: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(
+        as_other["text"].is_null(),
+        "non-author should get null text, got: {:?}", as_other["text"]
+    );
+
+    // Unauthenticated also gets null.
+    let as_anon: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), None)
+        .await.json().await.unwrap();
+    assert!(as_anon["text"].is_null(), "unauthenticated should get null text");
+}

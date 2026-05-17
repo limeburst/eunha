@@ -828,7 +828,11 @@ pub async fn get_status(
         None
     };
 
-    Ok(Json(super::accounts::build_status_with_app(&state, &status, &account, media, reblog, viewer_ctx, application).await?))
+    let mut s = super::accounts::build_status_with_app(&state, &status, &account, media, reblog, viewer_ctx, application).await?;
+    if viewer_id == Some(status.account_id) {
+        s.text = Some(status.text.clone());
+    }
+    Ok(Json(s))
 }
 
 // ── DELETE /api/v1/statuses/:id ────────────────────────────────────────────
