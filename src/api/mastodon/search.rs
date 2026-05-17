@@ -81,9 +81,85 @@ pub async fn search(
     }
 
     let offset = q.offset.unwrap_or(0).max(0);
+
+    // Detect @user@domain or user@domain handle patterns for exact acct lookup
+    let handle_parts: Option<(String, Option<String>)> = {
+        let trimmed = q.q.trim().trim_start_matches('@');
+        if trimmed.contains('@') {
+            let mut parts = trimmed.splitn(2, '@');
+            let user = parts.next().unwrap_or("").to_lowercase();
+            let dom = parts.next().map(|d| d.to_lowercase());
+            if !user.is_empty() { Some((user, dom)) } else { None }
+        } else {
+            None
+        }
+    };
+
     let accounts = if search_type.is_none() || search_type == Some("accounts") {
         let following_filter = q.following.unwrap_or(false);
-        if following_filter {
+
+        // If query is a handle (user@domain), do an exact acct lookup first
+        if let Some((ref uname, ref domain)) = handle_parts {
+            let exact: Vec<crate::db::models::Account> = if let Some(dom) = domain {
+                sqlx::query_as!(
+                    crate::db::models::Account,
+                    r#"SELECT * FROM accounts
+                       WHERE instance_id = $1 AND suspended_at IS NULL
+                         AND lower(username) = $2 AND lower(domain) = $3
+                       LIMIT $4"#,
+                    instance.id, uname, dom, limit
+                )
+                .fetch_all(&state.db)
+                .await?
+            } else {
+                sqlx::query_as!(
+                    crate::db::models::Account,
+                    r#"SELECT * FROM accounts
+                       WHERE instance_id = $1 AND suspended_at IS NULL
+                         AND lower(username) = $2 AND domain IS NULL
+                       LIMIT $3"#,
+                    instance.id, uname, limit
+                )
+                .fetch_all(&state.db)
+                .await?
+            };
+            if !exact.is_empty() {
+                exact.iter().map(account_from_db).collect()
+            } else if following_filter {
+                let vid = viewer_id.ok_or(crate::error::AppError::Unauthorized)?;
+                sqlx::query_as!(
+                    crate::db::models::Account,
+                    r#"SELECT a.* FROM accounts a
+                       JOIN follows f ON f.target_account_id = a.id AND f.state = 'accepted'
+                       WHERE a.instance_id = $1
+                         AND a.suspended_at IS NULL
+                         AND f.account_id = $4
+                         AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
+                       ORDER BY a.followers_count DESC LIMIT $3 OFFSET $5"#,
+                    instance.id, pattern, limit, vid, offset
+                )
+                .fetch_all(&state.db)
+                .await?
+                .iter()
+                .map(account_from_db)
+                .collect()
+            } else {
+                sqlx::query_as!(
+                    crate::db::models::Account,
+                    r#"SELECT * FROM accounts
+                       WHERE instance_id = $1
+                         AND suspended_at IS NULL
+                         AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
+                       ORDER BY followers_count DESC LIMIT $3 OFFSET $4"#,
+                    instance.id, pattern, limit, offset
+                )
+                .fetch_all(&state.db)
+                .await?
+                .iter()
+                .map(account_from_db)
+                .collect()
+            }
+        } else if following_filter {
             let vid = viewer_id.ok_or(crate::error::AppError::Unauthorized)?;
             sqlx::query_as!(
                 crate::db::models::Account,
