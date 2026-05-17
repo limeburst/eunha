@@ -10,8 +10,8 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{build_status, fetch_reblog_data, fetch_status_media},
-    convert::account_from_db,
+    accounts::{batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_tags, build_status, fetch_reblog_data, fetch_status_media},
+    convert::{account_from_db, status_from_db},
     types::{SearchResults, Status, Tag},
 };
 
@@ -150,44 +150,57 @@ pub async fn search(
         .fetch_all(&state.db)
         .await?;
 
+        let all_ids: Vec<i64> = rows.iter().map(|s| s.id).collect();
+        let media_map = batch_status_media(&state, &all_ids).await?;
+        let reblog_map = batch_reblog_data(&state, &rows).await?;
+        let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+        let mut enrich_ids = all_ids.clone();
+        enrich_ids.extend_from_slice(&reblog_ids);
+        let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+        let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+        let all_statuses_for_emoji: Vec<crate::db::models::Status> = rows.iter().cloned()
+            .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+            .collect();
+        let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
+        let ctxs = if let Some(vid) = viewer_id {
+            super::statuses::batch_viewer_contexts(&state, vid, &all_ids).await?
+        } else {
+            std::collections::HashMap::new()
+        };
+        let account_ids: Vec<i64> = rows.iter().map(|s| s.account_id)
+            .collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let accounts: Vec<crate::db::models::Account> = sqlx::query_as!(
+            crate::db::models::Account,
+            "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+            &account_ids,
+        )
+        .fetch_all(&state.db)
+        .await?;
+        let account_map: std::collections::HashMap<i64, crate::db::models::Account> =
+            accounts.into_iter().map(|a| (a.id, a)).collect();
+
         let mut result: Vec<Status> = Vec::with_capacity(rows.len());
         for s in &rows {
-            let account = sqlx::query_as!(
-                crate::db::models::Account,
-                "SELECT * FROM accounts WHERE id = $1",
-                s.account_id
-            )
-            .fetch_one(&state.db)
-            .await?;
-            let media = fetch_status_media(&state, s.id).await?;
-            let reblog = fetch_reblog_data(&state, s).await?;
-            let ctx = if let Some(vid) = viewer_id {
-                let favourited = sqlx::query!(
-                    "SELECT 1 as e FROM favourites WHERE account_id = $1 AND status_id = $2",
-                    vid, s.id
-                )
-                .fetch_optional(&state.db)
-                .await?
-                .is_some();
-                let reblogged = sqlx::query!(
-                    "SELECT 1 as e FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
-                    vid, s.id
-                )
-                .fetch_optional(&state.db)
-                .await?
-                .is_some();
-                let bookmarked = sqlx::query!(
-                    "SELECT 1 as e FROM bookmarks WHERE account_id = $1 AND status_id = $2",
-                    vid, s.id
-                )
-                .fetch_optional(&state.db)
-                .await?
-                .is_some();
-                Some(super::convert::StatusViewerContext { account_id: vid, favourited, reblogged, muted: false, bookmarked, pinned: false })
-            } else {
-                None
-            };
-            result.push(build_status(&state, s, &account, media, reblog, ctx).await?);
+            let Some(account) = account_map.get(&s.account_id) else { continue };
+            let media = media_map.get(&s.id).cloned().unwrap_or_default();
+            let reblog = reblog_map.get(&s.id).cloned();
+            let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+            let rb_mentions = reblog.as_ref()
+                .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+                .cloned()
+                .unwrap_or_default();
+            let ctx = ctxs.get(&s.id).cloned();
+            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+            api.mentions = mentions;
+            api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+            if let Some(ref mut rb) = api.reblog {
+                let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+                rb.mentions = rb_mentions;
+                rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+            }
+            result.push(api);
         }
         result
     } else {
