@@ -642,6 +642,80 @@ pub async fn get_notification_requests(
     .fetch_all(&state.db)
     .await?;
 
+    // Batch-fetch and enrich all last statuses up front
+    let last_status_ids: Vec<i64> = rows.iter()
+        .filter_map(|r| r.last_status_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut last_status_map: std::collections::HashMap<i64, super::types::Status> =
+        std::collections::HashMap::new();
+
+    if !last_status_ids.is_empty() {
+        let ls_statuses: Vec<crate::db::models::Status> = sqlx::query_as!(
+            crate::db::models::Status,
+            "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
+            &last_status_ids,
+        )
+        .fetch_all(&state.db)
+        .await?;
+
+        let ls_media_map = batch_status_media(&state, &last_status_ids).await?;
+        let ls_reblog_map = batch_reblog_data(&state, &ls_statuses).await?;
+        let ls_reblog_ids: Vec<i64> = ls_reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+        let mut ls_enrich_ids = last_status_ids.clone();
+        ls_enrich_ids.extend_from_slice(&ls_reblog_ids);
+        let ls_tags_map = batch_status_tags(&state, &ls_enrich_ids).await?;
+        let ls_mentions_map = batch_status_mentions(&state, &ls_enrich_ids).await?;
+        let ls_all_for_emoji: Vec<crate::db::models::Status> = ls_statuses.iter().cloned()
+            .chain(ls_reblog_map.values().map(|(rs, _, _)| rs.clone()))
+            .collect();
+        let ls_emojis_map = batch_status_emojis(&state, &ls_all_for_emoji).await?;
+        let ls_polls_map = batch_status_polls(&state, &ls_enrich_ids, Some(auth.account_id)).await?;
+        let ls_cards_map = batch_status_cards(&state, &ls_enrich_ids).await?;
+
+        let ls_account_ids: Vec<i64> = ls_statuses.iter().map(|s| s.account_id)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let ls_accounts: Vec<Account> = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+            &ls_account_ids,
+        )
+        .fetch_all(&state.db)
+        .await?;
+        let ls_account_map: std::collections::HashMap<i64, Account> =
+            ls_accounts.into_iter().map(|a| (a.id, a)).collect();
+
+        for s in &ls_statuses {
+            let Some(account) = ls_account_map.get(&s.account_id) else { continue };
+            let media = ls_media_map.get(&s.id).cloned().unwrap_or_default();
+            let reblog = ls_reblog_map.get(&s.id).cloned();
+            let mentions = ls_mentions_map.get(&s.id).cloned().unwrap_or_default();
+            let rb_mentions = reblog.as_ref()
+                .and_then(|(rs, _, _)| ls_mentions_map.get(&rs.id))
+                .cloned()
+                .unwrap_or_default();
+            let mut api = status_from_db(s, account, media, reblog, None, &mentions, &rb_mentions);
+            api.tags = ls_tags_map.get(&s.id).cloned().unwrap_or_default();
+            api.mentions = mentions;
+            api.emojis = ls_emojis_map.get(&s.id).cloned().unwrap_or_default();
+            api.poll = ls_polls_map.get(&s.id).cloned();
+            api.card = ls_cards_map.get(&s.id).cloned();
+            if let Some(ref mut rb) = api.reblog {
+                let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.tags = ls_tags_map.get(&rid).cloned().unwrap_or_default();
+                rb.mentions = rb_mentions;
+                rb.emojis = ls_emojis_map.get(&rid).cloned().unwrap_or_default();
+                rb.poll = ls_polls_map.get(&rid).cloned();
+                rb.card = ls_cards_map.get(&rid).cloned();
+            }
+            last_status_map.insert(s.id, api);
+        }
+    }
+
     let mut result: Vec<NotificationRequest> = Vec::with_capacity(rows.len());
     for r in rows {
         let acc = crate::db::models::Account {
@@ -680,7 +754,7 @@ pub async fn get_notification_requests(
             created_at: r.account_created_at,
             updated_at: r.account_updated_at,
         };
-        let last_status = fetch_last_status(&state, r.last_status_id).await;
+        let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
         result.push(NotificationRequest {
             id: r.id.to_string(),
             created_at: r.created_at.to_rfc3339(),
