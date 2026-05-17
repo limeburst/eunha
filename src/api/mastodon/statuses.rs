@@ -1,6 +1,7 @@
 use axum::{
-    extract::{Extension, FromRequest, Multipart, Path, RawQuery, State},
-    http::header,
+    extract::{Extension, FromRequest, Multipart, Path, Query, RawQuery, State},
+    http::{header, HeaderMap, Uri},
+    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
@@ -20,7 +21,7 @@ use super::{
     accounts::{build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch},
     convert::account_from_db,
     formatting::{HASHTAG_RE, MENTION_RE, render_content},
-    types::{Status, StatusContext, StatusEdit, StatusSource},
+    types::{PaginationParams, Status, StatusContext, StatusEdit, StatusSource},
 };
 use super::scheduled_statuses::ScheduledStatusResponse;
 
@@ -1436,8 +1437,11 @@ pub async fn unmute_status(
 pub async fn favourited_by(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(pagination): Query<PaginationParams>,
+    uri: Uri,
+    req_headers: HeaderMap,
     auth: Option<Extension<AuthenticatedUser>>,
-) -> AppResult<Json<Vec<super::types::Account>>> {
+) -> AppResult<impl IntoResponse> {
     let (status, _) = fetch_status_with_account(&state, id).await?;
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     if let Some(vid) = viewer_id {
@@ -1445,6 +1449,11 @@ pub async fn favourited_by(
     } else if status.visibility == "private" || status.visibility == "direct" {
         return Err(AppError::NotFound);
     }
+
+    let limit = pagination.limit_clamped(40, 80);
+    let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let accounts = if let Some(vid) = viewer_id {
         sqlx::query_as!(
@@ -1455,8 +1464,11 @@ pub async fn favourited_by(
                  AND NOT EXISTS (
                      SELECT 1 FROM blocks WHERE account_id = $2 AND target_account_id = a.id
                  )
-               ORDER BY f.id DESC LIMIT 80"#,
-            id, vid,
+                 AND ($3::bigint IS NULL OR a.id < $3)
+                 AND ($4::bigint IS NULL OR a.id > $4)
+                 AND ($5::bigint IS NULL OR a.id > $5)
+               ORDER BY f.id DESC LIMIT $6"#,
+            id, vid, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
         .await?
@@ -1466,14 +1478,28 @@ pub async fn favourited_by(
             r#"SELECT a.* FROM accounts a
                JOIN favourites f ON f.account_id = a.id
                WHERE f.status_id = $1
-               ORDER BY f.id DESC LIMIT 80"#,
-            id,
+                 AND ($2::bigint IS NULL OR a.id < $2)
+                 AND ($3::bigint IS NULL OR a.id > $3)
+                 AND ($4::bigint IS NULL OR a.id > $4)
+               ORDER BY f.id DESC LIMIT $5"#,
+            id, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
         .await?
     };
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let result: Vec<super::types::Account> = accounts.iter().map(account_from_db).collect();
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── GET /api/v1/statuses/:id/reblogged_by ─────────────────────────────────
@@ -1481,8 +1507,11 @@ pub async fn favourited_by(
 pub async fn reblogged_by(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(pagination): Query<PaginationParams>,
+    uri: Uri,
+    req_headers: HeaderMap,
     auth: Option<Extension<AuthenticatedUser>>,
-) -> AppResult<Json<Vec<super::types::Account>>> {
+) -> AppResult<impl IntoResponse> {
     let (status, _) = fetch_status_with_account(&state, id).await?;
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     if let Some(vid) = viewer_id {
@@ -1490,6 +1519,11 @@ pub async fn reblogged_by(
     } else if status.visibility == "private" || status.visibility == "direct" {
         return Err(AppError::NotFound);
     }
+
+    let limit = pagination.limit_clamped(40, 80);
+    let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let accounts = if let Some(vid) = viewer_id {
         sqlx::query_as!(
@@ -1500,8 +1534,11 @@ pub async fn reblogged_by(
                  AND NOT EXISTS (
                      SELECT 1 FROM blocks WHERE account_id = $2 AND target_account_id = a.id
                  )
-               ORDER BY s.id DESC LIMIT 80"#,
-            id, vid,
+                 AND ($3::bigint IS NULL OR a.id < $3)
+                 AND ($4::bigint IS NULL OR a.id > $4)
+                 AND ($5::bigint IS NULL OR a.id > $5)
+               ORDER BY s.id DESC LIMIT $6"#,
+            id, vid, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
         .await?
@@ -1511,14 +1548,28 @@ pub async fn reblogged_by(
             r#"SELECT a.* FROM accounts a
                JOIN statuses s ON s.account_id = a.id
                WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
-               ORDER BY s.id DESC LIMIT 80"#,
-            id,
+                 AND ($2::bigint IS NULL OR a.id < $2)
+                 AND ($3::bigint IS NULL OR a.id > $3)
+                 AND ($4::bigint IS NULL OR a.id > $4)
+               ORDER BY s.id DESC LIMIT $5"#,
+            id, max_id, since_id, min_id, limit,
         )
         .fetch_all(&state.db)
         .await?
     };
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let result: Vec<super::types::Account> = accounts.iter().map(account_from_db).collect();
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── PUT /api/v1/statuses/:id ──────────────────────────────────────────────
