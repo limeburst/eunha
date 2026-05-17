@@ -224,7 +224,7 @@ pub async fn get_account_statuses(
 ) -> AppResult<impl IntoResponse> {
     let account = fetch_account(&state, id).await?;
     if account.suspended_at.is_some() {
-        return Err(AppError::Gone("Account is suspended".into()));
+        return Ok((HeaderMap::new(), Json(Vec::<super::types::Status>::new())));
     }
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
@@ -671,7 +671,7 @@ pub async fn get_account_followers(
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let target = fetch_account(&state, id).await?;
     if target.suspended_at.is_some() {
-        return Err(AppError::Gone("Account is suspended".into()));
+        return Ok(Json(vec![]));
     }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
@@ -730,7 +730,7 @@ pub async fn get_account_following(
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let target = fetch_account(&state, id).await?;
     if target.suspended_at.is_some() {
-        return Err(AppError::Gone("Account is suspended".into()));
+        return Ok(Json(vec![]));
     }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
