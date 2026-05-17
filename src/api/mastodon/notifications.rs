@@ -1,5 +1,7 @@
 use axum::{
     extract::{Extension, Path, Query, RawQuery, State},
+    http::{header, HeaderMap, Uri},
+    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
@@ -25,8 +27,10 @@ pub async fn get_notifications(
     State(state): State<AppState>,
     Query(pagination): Query<PaginationParams>,
     RawQuery(qs): RawQuery,
+    uri: Uri,
+    req_headers: HeaderMap,
     Extension(auth): Extension<AuthenticatedUser>,
-) -> AppResult<Json<Vec<Notification>>> {
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:notifications")?;
     let limit = pagination.limit_clamped(40, 80);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -94,7 +98,18 @@ pub async fn get_notifications(
     for n in &notifications {
         result.push(build_notification(&state, n).await?);
     }
-    Ok(Json(result))
+
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── GET /api/v1/notifications/:id ─────────────────────────────────────────
