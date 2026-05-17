@@ -507,10 +507,10 @@ pub async fn get_relationships(
         .filter_map(|(_, v)| v.parse::<i64>().ok())
         .collect();
 
-    let mut results = Vec::with_capacity(ids.len());
-    for target_id in &ids {
-        results.push(build_relationship(&state, auth.account_id, *target_id).await?);
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
     }
+    let results = batch_build_relationships(&state, auth.account_id, &ids).await?;
     Ok(Json(results))
 }
 
@@ -1717,6 +1717,128 @@ pub async fn fetch_reblog_data(
     .await?;
     let reblog_media = fetch_status_media(state, reblog.id).await?;
     Ok(Some((reblog, reblog_account, reblog_media)))
+}
+
+async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids: &[i64]) -> AppResult<Vec<Relationship>> {
+    struct FollowRow { target_account_id: i64, state: String, show_reblogs: bool, notify: bool, languages: Option<Vec<String>> }
+    struct MuteRow { target_account_id: i64, hide_notifications: bool, expires_at: Option<chrono::DateTime<chrono::Utc>> }
+
+    let follows_out = sqlx::query!(
+        "SELECT target_account_id, state, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let follows_out_map: std::collections::HashMap<i64, _> = follows_out.into_iter()
+        .map(|r| (r.target_account_id, FollowRow { target_account_id: r.target_account_id, state: r.state, show_reblogs: r.show_reblogs, notify: r.notify, languages: Some(r.languages) }))
+        .collect();
+
+    let follows_in = sqlx::query!(
+        "SELECT account_id, state FROM follows WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let followed_by_set: std::collections::HashSet<i64> = follows_in.iter().filter(|r| r.state == "accepted").map(|r| r.account_id).collect();
+    let requested_by_set: std::collections::HashSet<i64> = follows_in.iter().filter(|r| r.state == "pending").map(|r| r.account_id).collect();
+
+    let blocks_out: std::collections::HashSet<i64> = sqlx::query_scalar!(
+        "SELECT target_account_id FROM blocks WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let blocks_in: std::collections::HashSet<i64> = sqlx::query_scalar!(
+        "SELECT account_id FROM blocks WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let mutes = sqlx::query!(
+        "SELECT target_account_id, hide_notifications, expires_at FROM mutes WHERE account_id = $1 AND target_account_id = ANY($2::bigint[]) AND (expires_at IS NULL OR expires_at > now())",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let mutes_map: std::collections::HashMap<i64, MuteRow> = mutes.into_iter()
+        .map(|r| (r.target_account_id, MuteRow { target_account_id: r.target_account_id, hide_notifications: r.hide_notifications, expires_at: r.expires_at }))
+        .collect();
+
+    let target_domains: std::collections::HashMap<i64, Option<String>> = sqlx::query!(
+        "SELECT id, domain FROM accounts WHERE id = ANY($1::bigint[])",
+        target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.domain))
+    .collect();
+
+    let domains_to_check: Vec<String> = target_domains.values().filter_map(|d| d.clone()).collect();
+    let domain_blocked_set: std::collections::HashSet<String> = if domains_to_check.is_empty() {
+        Default::default()
+    } else {
+        sqlx::query_scalar!(
+            "SELECT domain FROM user_domain_blocks WHERE account_id = $1 AND domain = ANY($2)",
+            source_id, &domains_to_check,
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect()
+    };
+
+    let notes: std::collections::HashMap<i64, String> = sqlx::query!(
+        "SELECT target_account_id, comment FROM account_notes WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| (r.target_account_id, r.comment))
+    .collect();
+
+    let endorsed_set: std::collections::HashSet<i64> = sqlx::query_scalar!(
+        "SELECT target_account_id FROM account_pins WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    let mut results = Vec::with_capacity(target_ids.len());
+    for &target_id in target_ids {
+        let follow = follows_out_map.get(&target_id);
+        let mute = mutes_map.get(&target_id);
+        let domain = target_domains.get(&target_id).and_then(|d| d.clone());
+        let domain_blocking = domain.map_or(false, |d| domain_blocked_set.contains(&d));
+        results.push(Relationship {
+            id: target_id.to_string(),
+            following: follow.map_or(false, |f| f.state == "accepted"),
+            showing_reblogs: follow.map_or(true, |f| f.show_reblogs),
+            notifying: follow.map_or(false, |f| f.notify),
+            languages: follow.and_then(|f| f.languages.clone()),
+            followed_by: followed_by_set.contains(&target_id),
+            blocking: blocks_out.contains(&target_id),
+            blocked_by: blocks_in.contains(&target_id),
+            muting: mute.is_some(),
+            muting_notifications: mute.map_or(false, |m| m.hide_notifications),
+            muting_expires_at: mute.and_then(|m| m.expires_at).map(|t| t.to_rfc3339()),
+            requested: follow.map_or(false, |f| f.state == "pending"),
+            requested_by: requested_by_set.contains(&target_id),
+            domain_blocking,
+            endorsed: endorsed_set.contains(&target_id),
+            note: notes.get(&target_id).cloned().unwrap_or_default(),
+        });
+    }
+    Ok(results)
 }
 
 async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) -> AppResult<Relationship> {
