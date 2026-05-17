@@ -18,8 +18,11 @@ use crate::{
     streaming::Event,
 };
 use super::{
-    accounts::{build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch},
-    convert::account_from_db,
+    accounts::{
+        batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions,
+        batch_status_tags, build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch,
+    },
+    convert::{account_from_db, status_from_db},
     formatting::{HASHTAG_RE, MENTION_RE, render_content},
     types::{PaginationParams, Status, StatusContext, StatusEdit, StatusSource},
 };
@@ -1187,53 +1190,87 @@ pub async fn get_status_context(
         (Default::default(), Default::default())
     };
 
-    let mut ancestors = Vec::with_capacity(anc_owned.len());
-    for s in &anc_owned {
-        if anc_filters.get(&s.id).map_or(false, |(hide, _)| *hide) {
-            continue;
-        }
-        let acct = fetch_account(&state, s.account_id).await?;
-        let media = fetch_status_media(&state, s.id).await?;
-        let reblog = fetch_reblog_data(&state, s).await?;
-        let ctx = if let Some(vid) = viewer_id {
-            Some(build_viewer_context(&state, vid, s.id).await?)
-        } else {
-            None
-        };
-        let mut status = build_status(&state, s, &acct, media, reblog, ctx).await?;
-        if let Some((_, ref fj)) = anc_filters.get(&s.id) {
-            if let Some(arr) = fj.as_array() {
-                if !arr.is_empty() {
-                    status.filtered = Some(arr.clone());
-                }
+    // Build ancestors and descendants using batch fetches instead of N+1 queries.
+    let build_batch = |statuses: Vec<DbStatus>, filters: HashMap<i64, (bool, serde_json::Value)>| {
+        let state = state.clone();
+        let viewer_id = viewer_id;
+        async move {
+            if statuses.is_empty() {
+                return Ok::<Vec<Status>, crate::error::AppError>(vec![]);
             }
-        }
-        ancestors.push(status);
-    }
+            let visible: Vec<DbStatus> = statuses.into_iter()
+                .filter(|s| !filters.get(&s.id).map_or(false, |(hide, _)| *hide))
+                .collect();
+            if visible.is_empty() {
+                return Ok(vec![]);
+            }
 
-    let mut descendants = Vec::with_capacity(desc_owned.len());
-    for s in &desc_owned {
-        if desc_filters.get(&s.id).map_or(false, |(hide, _)| *hide) {
-            continue;
-        }
-        let acct = fetch_account(&state, s.account_id).await?;
-        let media = fetch_status_media(&state, s.id).await?;
-        let reblog = fetch_reblog_data(&state, s).await?;
-        let ctx = if let Some(vid) = viewer_id {
-            Some(build_viewer_context(&state, vid, s.id).await?)
-        } else {
-            None
-        };
-        let mut status = build_status(&state, s, &acct, media, reblog, ctx).await?;
-        if let Some((_, ref fj)) = desc_filters.get(&s.id) {
-            if let Some(arr) = fj.as_array() {
-                if !arr.is_empty() {
-                    status.filtered = Some(arr.clone());
+            let account_ids: Vec<i64> = visible.iter().map(|s| s.account_id)
+                .collect::<std::collections::HashSet<_>>().into_iter().collect();
+            let accounts_vec: Vec<Account> = sqlx::query_as!(
+                Account,
+                "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+                &account_ids,
+            )
+            .fetch_all(&state.db)
+            .await?;
+            let account_map: HashMap<i64, Account> =
+                accounts_vec.into_iter().map(|a| (a.id, a)).collect();
+
+            let all_ids: Vec<i64> = visible.iter().map(|s| s.id).collect();
+            let media_map = batch_status_media(&state, &all_ids).await?;
+            let reblog_map = batch_reblog_data(&state, &visible).await?;
+            let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+            let mut enrich_ids = all_ids.clone();
+            enrich_ids.extend_from_slice(&reblog_ids);
+            let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+            let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+            let all_statuses_for_emoji: Vec<DbStatus> = visible.iter().cloned()
+                .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+                .collect();
+            let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
+            let viewer_ctxs = if let Some(vid) = viewer_id {
+                batch_viewer_contexts(&state, vid, &all_ids).await?
+            } else {
+                HashMap::new()
+            };
+
+            let mut result = Vec::with_capacity(visible.len());
+            for s in &visible {
+                let Some(account) = account_map.get(&s.account_id) else { continue };
+                let media = media_map.get(&s.id).cloned().unwrap_or_default();
+                let reblog = reblog_map.get(&s.id).cloned();
+                let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+                let rb_mentions = reblog.as_ref()
+                    .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+                    .cloned()
+                    .unwrap_or_default();
+                let ctx = viewer_ctxs.get(&s.id).cloned();
+                let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+                api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+                api.mentions = mentions;
+                api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+                if let Some(ref mut rb) = api.reblog {
+                    let rid: i64 = rb.id.parse().unwrap_or(0);
+                    rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+                    rb.mentions = rb_mentions;
+                    rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
                 }
+                if let Some((_, ref fj)) = filters.get(&s.id) {
+                    if let Some(arr) = fj.as_array() {
+                        if !arr.is_empty() {
+                            api.filtered = Some(arr.clone());
+                        }
+                    }
+                }
+                result.push(api);
             }
+            Ok(result)
         }
-        descendants.push(status);
-    }
+    };
+
+    let ancestors = build_batch(anc_owned, anc_filters).await?;
+    let descendants = build_batch(desc_owned, desc_filters).await?;
 
     Ok(Json(StatusContext { ancestors, descendants }))
 }

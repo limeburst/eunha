@@ -11,7 +11,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_tags, build_status},
+    accounts::{batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_tags},
     convert::status_from_db,
     types::PaginationParams,
 };

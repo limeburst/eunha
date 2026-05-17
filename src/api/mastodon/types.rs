@@ -82,7 +82,7 @@ pub struct Field {
 
 // ── Status ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Status {
     pub id: String,
     pub created_at: String,
@@ -143,7 +143,7 @@ pub struct StatusTag {
     pub url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Application {
     pub name: String,
     pub website: Option<String>,
@@ -158,7 +158,7 @@ pub struct QuoteApproval {
 
 // ── Media ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MediaAttachment {
     pub id: String,
     #[serde(rename = "type")]
@@ -375,7 +375,7 @@ pub struct CustomEmoji {
 
 // ── Poll ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Poll {
     pub id: String,
     pub expires_at: Option<String>,
@@ -391,7 +391,7 @@ pub struct Poll {
     pub own_votes: Option<Vec<i32>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PollOption {
     pub title: String,
     pub votes_count: Option<i64>,
@@ -399,7 +399,7 @@ pub struct PollOption {
 
 // ── Preview Card ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PreviewCard {
     pub url: String,
     pub title: String,
@@ -422,7 +422,7 @@ pub struct PreviewCard {
     pub authors: Vec<PreviewCardAuthor>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PreviewCardAuthor {
     pub name: String,
     pub url: String,
