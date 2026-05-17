@@ -173,6 +173,43 @@ async fn test_search_excludes_blocked_accounts() {
     );
 }
 
+/// Search does not return statuses from muted accounts.
+#[tokio::test]
+async fn test_search_excludes_muted_accounts() {
+    let ctx = TestContext::new("search-mute").await;
+
+    ctx.api.post_status(&ctx.bob_token, "mutesearchterm55 hello", "public").await;
+
+    // Verify it appears before the mute.
+    let before: Value = ctx.api.get(
+        "/api/v2/search?q=mutesearchterm55&type=statuses",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        before["statuses"].as_array().unwrap().iter().any(|s| {
+            s["account"]["id"].as_str() == Some(ctx.bob_id.as_str())
+        }),
+        "bob's status should appear in search before mute",
+    );
+
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/mute", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let after: Value = ctx.api.get(
+        "/api/v2/search?q=mutesearchterm55&type=statuses",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        after["statuses"].as_array().unwrap().iter().all(|s| {
+            s["account"]["id"].as_str() != Some(ctx.bob_id.as_str())
+        }),
+        "muted account's statuses should not appear in search results",
+    );
+}
+
 /// GET /api/v2/search?account_id= filters statuses to the specified account.
 #[tokio::test]
 async fn test_search_account_id_filter() {

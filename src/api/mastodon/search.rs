@@ -218,6 +218,11 @@ pub async fn search(
                      WHERE (b.account_id = $5 AND b.target_account_id = s.account_id)
                         OR (b.account_id = s.account_id AND b.target_account_id = $5)
                  ))
+                 AND ($5::bigint IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM mutes mu
+                     WHERE mu.account_id = $5 AND mu.target_account_id = s.account_id
+                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
+                 ))
                  AND to_tsvector('simple', coalesce(s.text, ''))
                      @@ websearch_to_tsquery('simple', $2)
                ORDER BY s.id DESC LIMIT $3 OFFSET $6"#,
