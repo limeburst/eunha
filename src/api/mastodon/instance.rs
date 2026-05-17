@@ -77,6 +77,7 @@ pub async fn get_instance_v1(
 ) -> AppResult<Json<InstanceV1>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
     let (user_count, status_count, domain_count) = fetch_stats(&state, instance.id).await;
+    let contact_account = fetch_contact_account(&state, instance.id).await;
 
     let base_url = format!("https://{}", instance.domain);
     Ok(Json(InstanceV1 {
@@ -126,7 +127,7 @@ pub async fn get_instance_v1(
                 "max_expiration": 2629746,
             },
         }),
-        contact_account: None,
+        contact_account,
         rules: instance.rules.as_array()
             .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
                 id: (i + 1).to_string(),
@@ -159,6 +160,7 @@ pub async fn get_instance_v2(
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
     let base_url = format!("https://{}", instance.domain);
     let (_, _, _) = fetch_stats(&state, instance.id).await;
+    let contact_account = fetch_contact_account(&state, instance.id).await;
     let active_month = sqlx::query_scalar!(
         r#"SELECT COUNT(DISTINCT s.account_id)
            FROM statuses s
@@ -278,7 +280,7 @@ pub async fn get_instance_v2(
         },
         contact: InstanceContact {
             email: instance.contact_email.clone().unwrap_or_default(),
-            account: None,
+            account: contact_account,
         },
         rules: instance.rules.as_array()
             .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
@@ -381,4 +383,21 @@ async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i6
     .unwrap_or(0);
 
     (user_count, status_count, domain_count)
+}
+
+async fn fetch_contact_account(state: &AppState, instance_id: uuid::Uuid) -> Option<super::types::Account> {
+    let account = sqlx::query_as!(
+        crate::db::models::Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN users u ON u.account_id = a.id
+           WHERE a.instance_id = $1 AND u.role = 'admin'
+           ORDER BY a.created_at ASC
+           LIMIT 1"#,
+        instance_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+    Some(super::convert::account_from_db(&account))
 }
