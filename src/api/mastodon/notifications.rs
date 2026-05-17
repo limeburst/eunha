@@ -464,7 +464,8 @@ pub async fn get_notification_requests(
     .fetch_all(&state.db)
     .await?;
 
-    let result: Vec<NotificationRequest> = rows.into_iter().map(|r| {
+    let mut result: Vec<NotificationRequest> = Vec::with_capacity(rows.len());
+    for r in rows {
         let acc = crate::db::models::Account {
             id: r.from_account_id,
             instance_id: r.instance_id,
@@ -501,15 +502,16 @@ pub async fn get_notification_requests(
             created_at: r.account_created_at,
             updated_at: r.account_updated_at,
         };
-        NotificationRequest {
+        let last_status = fetch_last_status(&state, r.last_status_id).await;
+        result.push(NotificationRequest {
             id: r.id.to_string(),
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.created_at.to_rfc3339(),
             notifications_count: r.notifications_count.to_string(),
-            last_status: None,
+            last_status,
             account: super::convert::account_from_db(&acc),
-        }
-    }).collect();
+        });
+    }
 
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
@@ -652,17 +654,42 @@ pub async fn get_notification_request(
         created_at: r.account_created_at,
         updated_at: r.account_updated_at,
     };
+    let last_status = fetch_last_status(&state, r.last_status_id).await;
     Ok(Json(NotificationRequest {
         id: r.id.to_string(),
         created_at: r.created_at.to_rfc3339(),
         updated_at: r.created_at.to_rfc3339(),
         notifications_count: r.notifications_count.to_string(),
-        last_status: None,
+        last_status,
         account: super::convert::account_from_db(&acc),
     }))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+async fn fetch_last_status(
+    state: &AppState,
+    last_status_id: Option<i64>,
+) -> Option<super::types::Status> {
+    let status_id = last_status_id?;
+    let s = sqlx::query_as!(
+        crate::db::models::Status,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        status_id,
+    )
+    .fetch_optional(&state.db)
+    .await.ok()??;
+    let account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        s.account_id,
+    )
+    .fetch_one(&state.db)
+    .await.ok()?;
+    let media = fetch_status_media(state, s.id).await.ok()?;
+    let reblog = fetch_reblog_data(state, &s).await.ok()?;
+    build_status(state, &s, &account, media, reblog, None).await.ok()
+}
 
 /// Parse `types[]=x`, `types=x`, `exclude_types[]=x`, `exclude_types=x`, and
 /// `account_id=x` from the raw query string.  Mastodon clients use bracket
