@@ -75,16 +75,58 @@ pub async fn get_filters_v2(
 ) -> AppResult<Json<Vec<Filter>>> {
     auth.require_scope("read:filters")?;
     let filters = sqlx::query!(
-        "SELECT id FROM custom_filters WHERE account_id = $1 ORDER BY id",
+        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE account_id = $1 ORDER BY id",
         auth.account_id,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let mut result = Vec::with_capacity(filters.len());
-    for f in &filters {
-        result.push(fetch_filter(&state, f.id, auth.account_id).await?);
+    if filters.is_empty() {
+        return Ok(Json(vec![]));
     }
+
+    let filter_ids: Vec<i64> = filters.iter().map(|f| f.id).collect();
+
+    let all_keywords = sqlx::query!(
+        "SELECT custom_filter_id, id, keyword, whole_word FROM custom_filter_keywords WHERE custom_filter_id = ANY($1::bigint[]) ORDER BY id",
+        &filter_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let all_statuses = sqlx::query!(
+        "SELECT custom_filter_id, id, status_id FROM custom_filter_statuses WHERE custom_filter_id = ANY($1::bigint[]) ORDER BY id",
+        &filter_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut keywords_map: std::collections::HashMap<i64, Vec<FilterKeyword>> = std::collections::HashMap::new();
+    for k in all_keywords {
+        keywords_map.entry(k.custom_filter_id).or_default().push(FilterKeyword {
+            id: k.id.to_string(),
+            keyword: k.keyword,
+            whole_word: k.whole_word,
+        });
+    }
+
+    let mut statuses_map: std::collections::HashMap<i64, Vec<serde_json::Value>> = std::collections::HashMap::new();
+    for r in all_statuses {
+        statuses_map.entry(r.custom_filter_id).or_default().push(
+            serde_json::json!({ "id": r.id.to_string(), "status_id": r.status_id.to_string() })
+        );
+    }
+
+    let result = filters.into_iter().map(|f| Filter {
+        id: f.id.to_string(),
+        title: f.phrase,
+        context: f.context,
+        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        filter_action: f.action,
+        keywords: keywords_map.remove(&f.id).unwrap_or_default(),
+        statuses: statuses_map.remove(&f.id).unwrap_or_default(),
+    }).collect();
+
     Ok(Json(result))
 }
 
