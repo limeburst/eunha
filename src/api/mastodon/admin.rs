@@ -167,6 +167,9 @@ pub async fn list_admin_accounts(
     .await?;
 
     let limit = params.limit.unwrap_or(40).min(80).max(1);
+    let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = params.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let accounts = sqlx::query_as!(
         models::Account,
@@ -177,15 +180,21 @@ pub async fn list_admin_accounts(
              AND ($4::text IS NULL OR
                   ($4 = 'suspended' AND a.suspended_at IS NOT NULL) OR
                   ($4 = 'silenced' AND a.silenced_at IS NOT NULL) OR
+                  ($4 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
+                  ($4 = 'disabled' AND a.suspended_at IS NOT NULL) OR
                   ($4 = 'pending' AND EXISTS (
                       SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL
                   )) OR
                   ($4 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
                       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL))
              )
+             AND ($5::bigint IS NULL OR a.id < $5)
+             AND ($6::bigint IS NULL OR a.id > $6)
+             AND ($7::bigint IS NULL OR a.id > $7)
            ORDER BY a.created_at DESC
            LIMIT $2"#,
         instance_id, limit, params.username.as_deref(), params.status.as_deref(),
+        max_id, since_id, min_id,
     )
     .fetch_all(&state.db)
     .await?;
