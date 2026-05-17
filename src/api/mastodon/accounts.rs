@@ -127,9 +127,6 @@ pub async fn lookup_account(
     };
 
     if let Some(account) = found {
-        if account.suspended_at.is_some() {
-            return Err(AppError::Gone("Account is suspended".into()));
-        }
         return Ok(Json(account_from_db(&account)));
     }
 

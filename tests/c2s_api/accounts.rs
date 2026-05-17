@@ -483,9 +483,9 @@ async fn test_lookup_account_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
-/// GET /api/v1/accounts/lookup?acct= returns 410 for a suspended account.
+/// GET /api/v1/accounts/lookup?acct= returns suspended account with suspended: true.
 #[tokio::test]
-async fn test_lookup_account_suspended_returns_410() {
+async fn test_lookup_account_suspended_returns_suspended() {
     let ctx = TestContext::new("lookup-suspend").await;
 
     // Elevate alice to admin via direct DB.
@@ -503,7 +503,9 @@ async fn test_lookup_account_suspended_returns_410() {
     ).await;
 
     let resp = ctx.api.get("/api/v1/accounts/lookup?acct=bob", Some(&ctx.alice_token)).await;
-    assert_eq!(resp.status(), StatusCode::GONE);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["suspended"], true);
 }
 
 /// GET /api/v1/accounts/:id/followers returns a list after a follow.
