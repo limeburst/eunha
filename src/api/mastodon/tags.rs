@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    response::Json,
+    http::{header, HeaderMap, Uri},
+    response::{IntoResponse, Json},
     Extension,
 };
 use crate::{
@@ -77,6 +78,9 @@ pub async fn get_tag(
 #[derive(Debug, serde::Deserialize)]
 pub struct FollowedTagsParams {
     limit: Option<i64>,
+    max_id: Option<String>,
+    since_id: Option<String>,
+    min_id: Option<String>,
 }
 
 pub async fn list_followed_tags(
@@ -84,24 +88,35 @@ pub async fn list_followed_tags(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<FollowedTagsParams>,
-) -> AppResult<Json<Vec<Tag>>> {
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-    let limit = params.limit.unwrap_or(100).min(200).max(1);
+    let limit = params.limit.unwrap_or(100).min(200).max(1) as i64;
+    let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = params.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
         r#"SELECT t.id, t.name
            FROM tag_follows tf
            JOIN tags t ON t.id = tf.tag_id
            WHERE tf.account_id = $1
-           ORDER BY t.name
-           LIMIT $2"#,
+             AND ($2::bigint IS NULL OR tf.id < $2)
+             AND ($3::bigint IS NULL OR tf.id > $3)
+             AND ($4::bigint IS NULL OR tf.id > $4)
+           ORDER BY tf.id DESC
+           LIMIT $5"#,
         auth.account_id,
+        max_id,
+        since_id,
+        min_id,
         limit,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let tags = rows
+    let result: Vec<Tag> = rows
         .into_iter()
         .map(|r| Tag {
             id: r.id.to_string(),
@@ -113,7 +128,17 @@ pub async fn list_followed_tags(
         })
         .collect();
 
-    Ok(Json(tags))
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 pub async fn follow_tag(
