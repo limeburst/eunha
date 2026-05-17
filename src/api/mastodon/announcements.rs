@@ -33,22 +33,69 @@ pub async fn get_announcements(
     .fetch_all(&state.db)
     .await?;
 
+    let ann_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+
+    // Batch-fetch dismissed announcements for the viewer
+    let dismissed_set: std::collections::HashSet<i64> = if let Some(vid) = viewer_id {
+        sqlx::query_scalar!(
+            "SELECT announcement_id FROM announcement_dismissals WHERE account_id = $1 AND announcement_id = ANY($2::bigint[])",
+            vid, &ann_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Batch-fetch all reactions for all announcements
+    let all_reactions = sqlx::query!(
+        r#"SELECT ar.announcement_id, ar.name,
+                  COUNT(*) AS "count!",
+                  ce.image_url,
+                  ce.static_image_url
+           FROM announcement_reactions ar
+           LEFT JOIN custom_emojis ce ON ce.id = ar.custom_emoji_id
+           WHERE ar.announcement_id = ANY($1::bigint[])
+           GROUP BY ar.announcement_id, ar.name, ce.image_url, ce.static_image_url
+           ORDER BY ar.announcement_id, ar.name"#,
+        &ann_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    // Batch-fetch the viewer's own reactions
+    let my_reactions: std::collections::HashSet<(i64, String)> = if let Some(vid) = viewer_id {
+        sqlx::query!(
+            "SELECT announcement_id, name FROM announcement_reactions WHERE account_id = $1 AND announcement_id = ANY($2::bigint[])",
+            vid, &ann_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|r| (r.announcement_id, r.name))
+        .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Group reactions by announcement_id
+    let mut reactions_by_ann: std::collections::HashMap<i64, Vec<AnnouncementReaction>> =
+        std::collections::HashMap::new();
+    for row in all_reactions {
+        let me = my_reactions.contains(&(row.announcement_id, row.name.clone()));
+        reactions_by_ann.entry(row.announcement_id).or_default().push(AnnouncementReaction {
+            name: row.name,
+            count: row.count,
+            me,
+            url: Some(row.image_url),
+            static_url: row.static_image_url,
+        });
+    }
+
     let mut result = Vec::with_capacity(rows.len());
     for r in &rows {
-        let read = if let Some(vid) = viewer_id {
-            sqlx::query_scalar!(
-                "SELECT 1 FROM announcement_dismissals WHERE announcement_id = $1 AND account_id = $2",
-                r.id, vid,
-            )
-            .fetch_optional(&state.db)
-            .await?
-            .is_some()
-        } else {
-            false
-        };
-
-        let reactions = fetch_reactions(&state, r.id, viewer_id).await?;
-
         result.push(Announcement {
             id: r.id.to_string(),
             text: r.text.clone(),
@@ -59,8 +106,8 @@ pub async fn get_announcements(
             published_at: r.published_at.to_rfc3339(),
             starts_at: r.starts_at.map(|t| t.to_rfc3339()),
             ends_at: r.ends_at.map(|t| t.to_rfc3339()),
-            read,
-            reactions,
+            read: dismissed_set.contains(&r.id),
+            reactions: reactions_by_ann.remove(&r.id).unwrap_or_default(),
             statuses: vec![],
             tags: vec![],
             emojis: vec![],
@@ -69,52 +116,6 @@ pub async fn get_announcements(
     }
 
     Ok(Json(result))
-}
-
-async fn fetch_reactions(
-    state: &AppState,
-    announcement_id: i64,
-    viewer_id: Option<i64>,
-) -> AppResult<Vec<AnnouncementReaction>> {
-    let rows = sqlx::query!(
-        r#"SELECT ar.name,
-                  COUNT(*) AS "count!",
-                  ce.image_url,
-                  ce.static_image_url
-           FROM announcement_reactions ar
-           LEFT JOIN custom_emojis ce ON ce.id = ar.custom_emoji_id
-           WHERE ar.announcement_id = $1
-           GROUP BY ar.name, ce.image_url, ce.static_image_url
-           ORDER BY ar.name"#,
-        announcement_id,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    let mut reactions = Vec::with_capacity(rows.len());
-    for row in rows {
-        let me = if let Some(vid) = viewer_id {
-            sqlx::query_scalar!(
-                "SELECT 1 FROM announcement_reactions WHERE announcement_id = $1 AND account_id = $2 AND name = $3",
-                announcement_id, vid, row.name,
-            )
-            .fetch_optional(&state.db)
-            .await?
-            .is_some()
-        } else {
-            false
-        };
-
-        reactions.push(AnnouncementReaction {
-            name: row.name,
-            count: row.count,
-            me,
-            url: Some(row.image_url),
-            static_url: row.static_image_url,
-        });
-    }
-
-    Ok(reactions)
 }
 
 // ── POST /api/v1/announcements/:id/dismiss ────────────────────────────────

@@ -561,76 +561,163 @@ pub async fn get_statuses_batch(
         .take(100)
         .collect();
 
-    let mut result = Vec::with_capacity(ids.len());
-    for id in ids {
-        let Ok((status, account)) = fetch_status_with_account(&state, id).await else {
-            continue;
-        };
-        // Skip statuses from/to blocked accounts
-        if let Some(vid) = viewer_id {
-            if vid != status.account_id {
-                let blocked = sqlx::query_scalar!(
-                    r#"SELECT 1 FROM blocks
-                       WHERE (account_id = $1 AND target_account_id = $2)
-                          OR (account_id = $2 AND target_account_id = $1)"#,
-                    vid, status.account_id,
-                )
-                .fetch_optional(&state.db)
-                .await?
-                .is_some();
-                if blocked {
-                    continue;
-                }
-            }
-        }
-        match status.visibility.as_str() {
-            "private" => {
-                let is_author = viewer_id == Some(status.account_id);
-                let is_follower = if let Some(vid) = viewer_id {
-                    sqlx::query_scalar!(
-                        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
-                        vid, status.account_id
-                    )
-                    .fetch_optional(&state.db)
-                    .await?
-                    .is_some()
-                } else {
-                    false
-                };
-                if !is_author && !is_follower {
-                    continue;
-                }
-            }
-            "direct" => {
-                if viewer_id != Some(status.account_id) {
-                    let is_mentioned = if let Some(vid) = viewer_id {
-                        sqlx::query_scalar!(
-                            "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
-                            id, vid,
-                        )
-                        .fetch_optional(&state.db)
-                        .await?
-                        .is_some()
-                    } else {
-                        false
-                    };
-                    if !is_mentioned {
-                        continue;
-                    }
-                }
-            }
-            _ => {}
-        }
-        let media = fetch_status_media(&state, id).await?;
-        let reblog = fetch_reblog_data(&state, &status).await?;
-        let viewer_ctx = if let Some(vid) = viewer_id {
-            Some(build_viewer_context(&state, vid, id).await?)
-        } else {
-            None
-        };
-        result.push(build_status(&state, &status, &account, media, reblog, viewer_ctx).await?);
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
     }
-    Ok(Json(result))
+
+    let statuses: Vec<DbStatus> = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
+        &ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if statuses.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    // Batch block check
+    let blocked_account_ids: std::collections::HashSet<i64> = if let Some(vid) = viewer_id {
+        let other_ids: Vec<i64> = statuses.iter()
+            .filter(|s| s.account_id != vid)
+            .map(|s| s.account_id)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        if other_ids.is_empty() {
+            std::collections::HashSet::new()
+        } else {
+            sqlx::query_scalar!(
+                r#"SELECT target_account_id FROM blocks WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])
+                   UNION
+                   SELECT account_id FROM blocks WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])"#,
+                vid, &other_ids,
+            )
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .flatten()
+            .collect()
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Batch follow check for private statuses
+    let private_author_ids: Vec<i64> = statuses.iter()
+        .filter(|s| s.visibility == "private" && viewer_id != Some(s.account_id))
+        .map(|s| s.account_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let followed_ids: std::collections::HashSet<i64> = if let (Some(vid), false) = (viewer_id, private_author_ids.is_empty()) {
+        sqlx::query_scalar!(
+            "SELECT target_account_id FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[]) AND state = 'accepted'",
+            vid, &private_author_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Batch mention check for direct statuses
+    let direct_ids: Vec<i64> = statuses.iter()
+        .filter(|s| s.visibility == "direct" && viewer_id != Some(s.account_id))
+        .map(|s| s.id)
+        .collect();
+    let mentioned_status_ids: std::collections::HashSet<i64> = if let (Some(vid), false) = (viewer_id, direct_ids.is_empty()) {
+        sqlx::query_scalar!(
+            "SELECT status_id FROM mentions WHERE account_id = $1 AND status_id = ANY($2::bigint[])",
+            vid, &direct_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let visible: Vec<DbStatus> = statuses.into_iter()
+        .filter(|s| {
+            if viewer_id != Some(s.account_id) && blocked_account_ids.contains(&s.account_id) {
+                return false;
+            }
+            match s.visibility.as_str() {
+                "private" => viewer_id == Some(s.account_id) || followed_ids.contains(&s.account_id),
+                "direct" => viewer_id == Some(s.account_id) || mentioned_status_ids.contains(&s.id),
+                _ => true,
+            }
+        })
+        .collect();
+
+    if visible.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    let account_ids: Vec<i64> = visible.iter().map(|s| s.account_id)
+        .collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let accounts_vec: Vec<Account> = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+        &account_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let account_map: HashMap<i64, Account> =
+        accounts_vec.into_iter().map(|a| (a.id, a)).collect();
+
+    let all_ids: Vec<i64> = visible.iter().map(|s| s.id).collect();
+    let media_map = batch_status_media(&state, &all_ids).await?;
+    let reblog_map = batch_reblog_data(&state, &visible).await?;
+    let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+    let mut enrich_ids = all_ids.clone();
+    enrich_ids.extend_from_slice(&reblog_ids);
+    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+    let all_for_emoji: Vec<DbStatus> = visible.iter().cloned()
+        .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+        .collect();
+    let emojis_map = batch_status_emojis(&state, &all_for_emoji).await?;
+    let viewer_ctxs = if let Some(vid) = viewer_id {
+        batch_viewer_contexts(&state, vid, &all_ids).await?
+    } else {
+        HashMap::new()
+    };
+
+    // Preserve original request order
+    let id_order: HashMap<i64, usize> =
+        ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let mut indexed: Vec<(usize, Status)> = Vec::with_capacity(visible.len());
+    for s in &visible {
+        let Some(account) = account_map.get(&s.account_id) else { continue };
+        let media = media_map.get(&s.id).cloned().unwrap_or_default();
+        let reblog = reblog_map.get(&s.id).cloned();
+        let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        let rb_mentions = reblog.as_ref()
+            .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+            .cloned()
+            .unwrap_or_default();
+        let ctx = viewer_ctxs.get(&s.id).cloned();
+        let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+        api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+        api.mentions = mentions;
+        api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+        if let Some(ref mut rb) = api.reblog {
+            let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = rb_mentions;
+            rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+        }
+        let order = id_order.get(&s.id).copied().unwrap_or(usize::MAX);
+        indexed.push((order, api));
+    }
+    indexed.sort_by_key(|(i, _)| *i);
+    Ok(Json(indexed.into_iter().map(|(_, s)| s).collect()))
 }
 
 // ── GET /api/v1/statuses/:id ──────────────────────────────────────────────
