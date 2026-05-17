@@ -3003,6 +3003,31 @@ async fn test_get_status_text_field_for_author_and_others() {
     assert!(as_anon["text"].is_null(), "unauthenticated should get null text");
 }
 
+/// Local status url should be the human-readable /@username/id format, not the AP URI.
+#[tokio::test]
+async fn test_local_status_url_is_pretty_format() {
+    let ctx = TestContext::new("status-url-format").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "url format test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    let s: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let url = s["url"].as_str().expect("url should be present");
+    let uri = s["uri"].as_str().expect("uri should be present");
+
+    assert!(
+        url.contains("/@"),
+        "url should contain /@username, got: {url}"
+    );
+    assert!(
+        !url.contains("/users/"),
+        "url should not be the AP URI /users/ format, got: {url}"
+    );
+    assert_ne!(url, uri, "url and uri should differ for local statuses");
+}
+
 /// favourited/reblogged/muted/bookmarked are always present as false (not omitted) when
 /// unauthenticated. filtered is always present as an empty array, not omitted.
 #[tokio::test]

@@ -152,7 +152,13 @@ pub fn status_from_db_with_app(
         visibility: s.visibility.clone(),
         language: s.language.clone(),
         uri: s.uri.clone().unwrap_or_else(|| s.id.to_string()),
-        url: s.url.clone().or_else(|| status_url_from_uri(s.uri.as_deref()?)),
+        url: {
+            let uri_str = s.uri.as_deref();
+            s.url.as_deref()
+                .filter(|&u| uri_str.map_or(true, |uri| u != uri))
+                .map(String::from)
+                .or_else(|| status_url_from_uri(uri_str?))
+        },
         replies_count: s.replies_count,
         reblogs_count: s.reblogs_count,
         favourites_count: s.favourites_count,
