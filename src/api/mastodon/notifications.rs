@@ -788,12 +788,15 @@ pub async fn accept_notification_request(
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
-    sqlx::query!(
-        "UPDATE notification_requests SET dismissed = false WHERE id = $1 AND account_id = $2",
+    let deleted = sqlx::query!(
+        "DELETE FROM notification_requests WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
     )
     .execute(&state.db)
     .await?;
+    if deleted.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
     Ok(Json(serde_json::json!({})))
 }
 
@@ -822,7 +825,7 @@ pub async fn accept_all_notification_requests(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
     sqlx::query!(
-        "UPDATE notification_requests SET dismissed = false WHERE account_id = $1",
+        "DELETE FROM notification_requests WHERE account_id = $1 AND NOT dismissed",
         auth.account_id,
     )
     .execute(&state.db)

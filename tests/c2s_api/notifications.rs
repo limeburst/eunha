@@ -358,13 +358,13 @@ async fn test_notification_requests_empty_by_default() {
     assert!(list.is_empty(), "expected empty notification requests");
 }
 
-/// Notification requests are created when policy filters a notification, and can be dismissed.
+/// Notification requests are created when policy filters a notification.
+/// Dismissing hides it; accepting removes it permanently.
 #[tokio::test]
 async fn test_notification_request_dismiss_and_accept() {
     let ctx = TestContext::new("notif-req-dismiss").await;
 
     // Alice sets filter_not_following=true so bob's actions route to requests.
-    // Alice does not follow bob, so bob's notifications will be filtered.
     ctx.api.http
         .patch(ctx.api.url("/api/v2/notifications/policy"))
         .header("host", &ctx.api.host)
@@ -396,7 +396,7 @@ async fn test_notification_request_dismiss_and_accept() {
     let single: Value = single_resp.json().await.unwrap();
     assert_eq!(single["id"].as_str(), Some(req_id));
 
-    // Dismiss the request.
+    // Dismiss the request — it should disappear from the list.
     let dismiss_resp = ctx.api.post_json(
         &format!("/api/v1/notifications/requests/{req_id}/dismiss"),
         Some(&ctx.alice_token),
@@ -404,15 +404,35 @@ async fn test_notification_request_dismiss_and_accept() {
     ).await;
     assert_eq!(dismiss_resp.status(), StatusCode::OK);
 
-    // After dismissal the request no longer appears in the list.
     let after_dismiss: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
     assert!(
         !after_dismiss.iter().any(|r| r["id"].as_str() == Some(req_id)),
         "dismissed request still appears in list",
     );
+}
 
-    // Accept re-surfaces it (dismissed = false).
+/// Accepting a notification request removes it from the list.
+#[tokio::test]
+async fn test_notification_request_accept_removes_from_list() {
+    let ctx = TestContext::new("notif-req-accept").await;
+
+    ctx.api.http
+        .patch(ctx.api.url("/api/v2/notifications/policy"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&json!({"for_not_following": "filter"}))
+        .send()
+        .await
+        .unwrap();
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let requests: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!requests.is_empty(), "expected a notification request");
+    let req_id = requests[0]["id"].as_str().unwrap();
+
     let accept_resp = ctx.api.post_json(
         &format!("/api/v1/notifications/requests/{req_id}/accept"),
         Some(&ctx.alice_token),
@@ -420,11 +440,12 @@ async fn test_notification_request_dismiss_and_accept() {
     ).await;
     assert_eq!(accept_resp.status(), StatusCode::OK);
 
+    // Accepting removes the request from the list.
     let after_accept: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
     assert!(
-        after_accept.iter().any(|r| r["id"].as_str() == Some(req_id)),
-        "accepted request should reappear in list",
+        !after_accept.iter().any(|r| r["id"].as_str() == Some(req_id)),
+        "accepted request should be removed from list",
     );
 }
 
@@ -464,7 +485,7 @@ async fn test_notification_requests_dismiss_all() {
     assert!(after.is_empty(), "dismiss_all should remove all notification requests");
 }
 
-/// POST /api/v1/notifications/requests/accept_all accepts all notification requests.
+/// POST /api/v1/notifications/requests/accept_all removes all pending notification requests.
 #[tokio::test]
 async fn test_notification_requests_accept_all() {
     let ctx = TestContext::new("notif-req-accept-all").await;
@@ -480,24 +501,11 @@ async fn test_notification_requests_accept_all() {
 
     ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
 
-    // Dismiss the request first.
     let requests: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
     assert!(!requests.is_empty(), "expected a request before accept_all");
-    let req_id = requests[0]["id"].as_str().unwrap();
 
-    ctx.api.post_json(
-        &format!("/api/v1/notifications/requests/{req_id}/dismiss"),
-        Some(&ctx.alice_token),
-        &json!({}),
-    ).await;
-
-    // Verify it's gone.
-    let after_dismiss: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
-        .await.json().await.unwrap();
-    assert!(after_dismiss.is_empty(), "expected empty after dismiss");
-
-    // Accept all → request should reappear.
+    // Accept all → all pending requests should be gone.
     let accept_resp = ctx.api.post_json(
         "/api/v1/notifications/requests/accept_all",
         Some(&ctx.alice_token),
@@ -507,7 +515,7 @@ async fn test_notification_requests_accept_all() {
 
     let after_accept: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert!(!after_accept.is_empty(), "accept_all should re-surface dismissed requests");
+    assert!(after_accept.is_empty(), "accept_all should remove all pending notification requests");
 }
 
 /// GET /api/v2/notifications returns notification groups with accounts and statuses sideloaded.
