@@ -39,8 +39,47 @@ pub async fn search(
     let limit = q.limit.unwrap_or(20).min(40).max(1);
     let pattern = format!("%{}%", q.q.to_lowercase());
     let search_type = q.search_type.as_deref();
-
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+
+    // URL-based lookup: if the query looks like a URL, try matching by uri/url first
+    if q.q.starts_with("http://") || q.q.starts_with("https://") {
+        let url = q.q.trim();
+        // Try to find a status with this URL or URI
+        if search_type.is_none() || search_type == Some("statuses") {
+            if let Ok(Some(s)) = sqlx::query_as!(
+                crate::db::models::Status,
+                "SELECT * FROM statuses WHERE (uri = $1 OR url = $1) AND deleted_at IS NULL LIMIT 1",
+                url,
+            )
+            .fetch_optional(&state.db)
+            .await {
+                let account = sqlx::query_as!(
+                    crate::db::models::Account,
+                    "SELECT * FROM accounts WHERE id = $1",
+                    s.account_id
+                )
+                .fetch_one(&state.db)
+                .await?;
+                let media = fetch_status_media(&state, s.id).await?;
+                let reblog = fetch_reblog_data(&state, &s).await?;
+                let status = build_status(&state, &s, &account, media, reblog, None).await?;
+                return Ok(Json(SearchResults { accounts: vec![], statuses: vec![status], hashtags: vec![] }));
+            }
+        }
+        // Try to find an account with this URL or URI
+        if search_type.is_none() || search_type == Some("accounts") {
+            if let Ok(Some(a)) = sqlx::query_as!(
+                crate::db::models::Account,
+                "SELECT * FROM accounts WHERE (uri = $1 OR url = $1) AND suspended_at IS NULL LIMIT 1",
+                url,
+            )
+            .fetch_optional(&state.db)
+            .await {
+                return Ok(Json(SearchResults { accounts: vec![account_from_db(&a)], statuses: vec![], hashtags: vec![] }));
+            }
+        }
+    }
+
     let accounts = if search_type.is_none() || search_type == Some("accounts") {
         let following_filter = q.following.unwrap_or(false);
         if following_filter {
