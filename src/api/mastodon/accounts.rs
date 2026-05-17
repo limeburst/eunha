@@ -1730,7 +1730,12 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
     .fetch_all(&state.db)
     .await?;
     let follows_out_map: std::collections::HashMap<i64, _> = follows_out.into_iter()
-        .map(|r| (r.target_account_id, FollowRow { state: r.state, show_reblogs: r.show_reblogs, notify: r.notify, languages: Some(r.languages) }))
+        .map(|r| (r.target_account_id, FollowRow {
+            state: r.state,
+            show_reblogs: r.show_reblogs,
+            notify: r.notify,
+            languages: if r.languages.is_empty() { None } else { Some(r.languages) },
+        }))
         .collect();
 
     let follows_in = sqlx::query!(
@@ -1919,7 +1924,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
 
     let showing_reblogs = follow.as_ref().map_or(true, |f| f.show_reblogs);
     let notifying = follow.as_ref().map_or(false, |f| f.notify);
-    let languages = follow.as_ref().map(|f| f.languages.clone());
+    let languages = follow.as_ref().and_then(|f| if f.languages.is_empty() { None } else { Some(f.languages.clone()) });
     let muting_expires_at = muting.as_ref().and_then(|m| m.expires_at)
         .map(|t| t.to_rfc3339());
 

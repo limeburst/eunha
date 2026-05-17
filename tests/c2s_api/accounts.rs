@@ -1394,6 +1394,19 @@ async fn test_follow_defaults_showing_reblogs_true() {
     assert_eq!(rel["notifying"].as_bool(), Some(false));
 }
 
+/// Relationship languages field is null (not []) when no language filter is set.
+#[tokio::test]
+async fn test_relationship_languages_null_when_not_set() {
+    let ctx = TestContext::new("rel-languages-null").await;
+
+    let rel = ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+    assert!(
+        rel["languages"].is_null(),
+        "languages should be null when no language filter is set, got: {}",
+        rel["languages"],
+    );
+}
+
 // ── mute settings ─────────────────────────────────────────────────────────────
 
 /// Muting with notifications=false sets muting_notifications=false.
