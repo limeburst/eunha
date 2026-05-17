@@ -2053,6 +2053,26 @@ pub async fn get_endorsements(
     Ok(Json(accounts.iter().map(account_from_db).collect()))
 }
 
+// ── GET /api/v1/endorsements ──────────────────────────────────────────────
+
+pub async fn get_my_endorsements(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<ApiAccount>>> {
+    auth.require_scope("read:accounts")?;
+    let accounts = sqlx::query_as!(
+        Account,
+        r#"SELECT a.* FROM accounts a
+           JOIN account_pins ap ON ap.target_account_id = a.id
+           WHERE ap.account_id = $1
+           ORDER BY ap.created_at DESC"#,
+        auth.account_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(accounts.iter().map(account_from_db).collect()))
+}
+
 // ── GET /api/v1/accounts/:id/featured_tags ───────────────────────────────
 
 pub async fn get_account_featured_tags(

@@ -281,6 +281,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/accounts/{id}/followers", get(accounts::get_account_followers))
         .route("/api/v1/accounts/{id}/following", get(accounts::get_account_following))
         .route("/api/v1/accounts/{id}/endorsements", get(accounts::get_endorsements))
+        .route("/api/v1/endorsements", get(accounts::get_my_endorsements))
         // Statuses (public read)
         .route("/api/v1/statuses/{id}", get(statuses::get_status))
         .route("/api/v1/statuses/{id}/context", get(statuses::get_status_context))
