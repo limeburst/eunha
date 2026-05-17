@@ -1827,7 +1827,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
         results.push(Relationship {
             id: target_id.to_string(),
             following: follow.map_or(false, |f| f.state == "accepted"),
-            showing_reblogs: follow.map_or(true, |f| f.show_reblogs),
+            showing_reblogs: follow.map_or(false, |f| f.show_reblogs),
             notifying: follow.map_or(false, |f| f.notify),
             languages: follow.and_then(|f| f.languages.clone()),
             followed_by: followed_by_set.contains(&target_id),
@@ -1922,7 +1922,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
     .await?
     .unwrap_or_default();
 
-    let showing_reblogs = follow.as_ref().map_or(true, |f| f.show_reblogs);
+    let showing_reblogs = follow.as_ref().map_or(false, |f| f.show_reblogs);
     let notifying = follow.as_ref().map_or(false, |f| f.notify);
     let languages = follow.as_ref().and_then(|f| if f.languages.is_empty() { None } else { Some(f.languages.clone()) });
     let muting_expires_at = muting.as_ref().and_then(|m| m.expires_at)

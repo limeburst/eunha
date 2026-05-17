@@ -560,6 +560,25 @@ async fn test_get_relationships() {
     assert_eq!(list[0]["id"].as_str(), Some(ctx.bob_id.as_str()));
 }
 
+/// showing_reblogs is false when not following (not true).
+#[tokio::test]
+async fn test_showing_reblogs_false_when_not_following() {
+    let ctx = TestContext::new("rel-showing-reblogs-nf").await;
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/accounts/relationships?id[]={}", ctx.bob_id),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(list[0]["following"].as_bool(), Some(false));
+    assert_eq!(
+        list[0]["showing_reblogs"].as_bool(),
+        Some(false),
+        "showing_reblogs should be false when not following, not true",
+    );
+}
+
 /// Unfollowing sets following=false in the relationship.
 #[tokio::test]
 async fn test_unfollow_updates_relationship() {
