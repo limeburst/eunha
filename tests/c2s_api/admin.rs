@@ -655,3 +655,23 @@ async fn test_admin_list_accounts_pending_filter() {
     );
     let _ = alice_uuid; // suppress unused warning
 }
+
+/// Admin accounts list is ordered by id DESC so the pagination cursor is consistent.
+#[tokio::test]
+async fn test_admin_accounts_ordered_by_id_desc() {
+    let ctx = TestContext::new("admin-acct-order").await;
+    make_admin(&ctx).await;
+
+    let accounts: Vec<serde_json::Value> = ctx.api.get(
+        "/api/v1/admin/accounts",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    assert!(accounts.len() >= 2, "need at least alice and bob to verify ordering");
+
+    let ids: Vec<i64> = accounts.iter()
+        .filter_map(|a| a["id"].as_str().and_then(|s| s.parse::<i64>().ok()))
+        .collect();
+    let sorted_desc: Vec<i64> = { let mut s = ids.clone(); s.sort_unstable_by(|a, b| b.cmp(a)); s };
+    assert_eq!(ids, sorted_desc, "admin accounts should be ordered by id DESC");
+}

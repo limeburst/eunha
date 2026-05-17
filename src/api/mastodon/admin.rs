@@ -194,7 +194,7 @@ pub async fn list_admin_accounts(
              AND ($5::bigint IS NULL OR a.id < $5)
              AND ($6::bigint IS NULL OR a.id > $6)
              AND ($7::bigint IS NULL OR a.id > $7)
-           ORDER BY a.created_at DESC
+           ORDER BY a.id DESC
            LIMIT $2"#,
         instance_id, limit, params.username.as_deref(), params.status.as_deref(),
         max_id, since_id, min_id,
@@ -502,7 +502,7 @@ pub async fn list_admin_reports(
              AND ($4::bigint IS NULL OR r.id < $4)
              AND ($5::bigint IS NULL OR r.id > $5)
              AND ($6::bigint IS NULL OR r.id > $6)
-           ORDER BY r.created_at DESC
+           ORDER BY r.id DESC
            LIMIT $3"#,
         instance_id, resolved, limit, max_id, since_id, min_id,
     )
