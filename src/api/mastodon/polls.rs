@@ -157,7 +157,7 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i
 
     Ok(Poll {
         id: poll.id.to_string(),
-        expires_at: poll.expires_at.map(|e| e.to_rfc3339()),
+        expires_at: poll.expires_at.map(super::convert::mastodon_date),
         expired,
         multiple: poll.multiple,
         votes_count,

@@ -123,7 +123,7 @@ async fn build_admin_account(state: &AppState, account: &models::Account) -> App
         id: account.id.to_string(),
         username: account.username.clone(),
         domain: account.domain.clone(),
-        created_at: account.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(account.created_at),
         email,
         ip: None,
         role: role_for(&role_str),
@@ -431,12 +431,12 @@ async fn build_admin_report(
     Ok(AdminReport {
         id: report.id.to_string(),
         action_taken: report.action_taken_at.is_some(),
-        action_taken_at: report.action_taken_at.map(|t| t.to_rfc3339()),
+        action_taken_at: report.action_taken_at.map(super::convert::mastodon_date),
         category: report.category.clone(),
         comment: report.comment.clone(),
         forwarded: report.forwarded.unwrap_or(false),
-        created_at: report.created_at.to_rfc3339(),
-        updated_at: report.updated_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(report.created_at),
+        updated_at: super::convert::mastodon_date(report.updated_at),
         account: account_from_db(&account),
         target_account: account_from_db(&target),
         status_ids: report.status_ids.iter().map(|id| id.to_string()).collect(),
@@ -716,7 +716,7 @@ pub async fn get_measures(
                     "human_value": total.to_string(),
                     "previous_total": previous_total.to_string(),
                     "data": data.iter().map(|r| serde_json::json!({
-                        "date": r.day.map(|d| d.to_rfc3339()).unwrap_or_default(),
+                        "date": r.day.map(super::convert::mastodon_date).unwrap_or_default(),
                         "value": r.n.unwrap_or(0).to_string(),
                     })).collect::<Vec<_>>(),
                 })
@@ -748,7 +748,7 @@ pub async fn get_measures(
                     "human_value": total.to_string(),
                     "previous_total": previous_total.to_string(),
                     "data": data.iter().map(|r| serde_json::json!({
-                        "date": r.day.map(|d| d.to_rfc3339()).unwrap_or_default(),
+                        "date": r.day.map(super::convert::mastodon_date).unwrap_or_default(),
                         "value": r.n.unwrap_or(0).to_string(),
                     })).collect::<Vec<_>>(),
                 })
@@ -778,7 +778,7 @@ pub async fn get_measures(
                     "human_value": total.to_string(),
                     "previous_total": previous_total.to_string(),
                     "data": data.iter().map(|r| serde_json::json!({
-                        "date": r.day.map(|d| d.to_rfc3339()).unwrap_or_default(),
+                        "date": r.day.map(super::convert::mastodon_date).unwrap_or_default(),
                         "value": r.n.unwrap_or(0).to_string(),
                     })).collect::<Vec<_>>(),
                 })
@@ -998,7 +998,7 @@ pub async fn get_retention(
                 0.0
             };
             retention_data.push(serde_json::json!({
-                "date": check_period.to_rfc3339(),
+                "date": super::convert::mastodon_date(check_period),
                 "rate": rate,
                 "value": active_count,
             }));
@@ -1007,7 +1007,7 @@ pub async fn get_retention(
         }
 
         data.push(serde_json::json!({
-            "period": period.to_rfc3339(),
+            "period": super::convert::mastodon_date(*period),
             "frequency": frequency,
             "cohort_size": cohort_size,
             "data": retention_data,
@@ -1254,7 +1254,7 @@ pub async fn list_domain_blocks(
         id: r.id.to_string(),
         digest: hex::encode(md5_bytes(&r.domain)),
         domain: r.domain,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
         severity: r.severity,
         reject_media: r.reject_media,
         reject_reports: r.reject_reports,
@@ -1303,7 +1303,7 @@ pub async fn create_domain_block(
         id: row.id.to_string(),
         digest: hex::encode(md5_bytes(&row.domain)),
         domain: row.domain,
-        created_at: row.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(row.created_at),
         severity: row.severity,
         reject_media: row.reject_media,
         reject_reports: row.reject_reports,
@@ -1342,7 +1342,7 @@ pub async fn list_domain_allows(
     Ok(Json(rows.into_iter().map(|r| AdminDomainAllow {
         id: r.id.to_string(),
         domain: r.domain,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
     }).collect()))
 }
 
@@ -1370,7 +1370,7 @@ pub async fn create_domain_allow(
     Ok(Json(AdminDomainAllow {
         id: row.id.to_string(),
         domain: row.domain,
-        created_at: row.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(row.created_at),
     }))
 }
 
@@ -1425,8 +1425,8 @@ pub async fn list_ip_blocks(
         ip: r.ip,
         severity: r.severity,
         comment: r.comment,
-        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
-        created_at: r.created_at.to_rfc3339(),
+        expires_at: r.expires_at.map(super::convert::mastodon_date),
+        created_at: super::convert::mastodon_date(r.created_at),
     }).collect()))
 }
 
@@ -1448,8 +1448,8 @@ pub async fn get_ip_block(
         ip: r.ip,
         severity: r.severity,
         comment: r.comment,
-        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
-        created_at: r.created_at.to_rfc3339(),
+        expires_at: r.expires_at.map(super::convert::mastodon_date),
+        created_at: super::convert::mastodon_date(r.created_at),
     }))
 }
 
@@ -1476,8 +1476,8 @@ pub async fn create_ip_block(
         ip: r.ip,
         severity: r.severity,
         comment: r.comment,
-        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
-        created_at: r.created_at.to_rfc3339(),
+        expires_at: r.expires_at.map(super::convert::mastodon_date),
+        created_at: super::convert::mastodon_date(r.created_at),
     }))
 }
 
@@ -1505,8 +1505,8 @@ pub async fn update_ip_block(
         ip: r.ip,
         severity: r.severity,
         comment: r.comment,
-        expires_at: r.expires_at.map(|t| t.to_rfc3339()),
-        created_at: r.created_at.to_rfc3339(),
+        expires_at: r.expires_at.map(super::convert::mastodon_date),
+        created_at: super::convert::mastodon_date(r.created_at),
     }))
 }
 
@@ -1557,7 +1557,7 @@ pub async fn list_email_domain_blocks(
     Ok(Json(rows.into_iter().map(|r| AdminEmailDomainBlock {
         id: r.id.to_string(),
         domain: r.domain,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
         history: vec![],
     }).collect()))
 }
@@ -1578,7 +1578,7 @@ pub async fn get_email_domain_block(
     Ok(Json(AdminEmailDomainBlock {
         id: r.id.to_string(),
         domain: r.domain,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
         history: vec![],
     }))
 }
@@ -1600,7 +1600,7 @@ pub async fn create_email_domain_block(
     Ok(Json(AdminEmailDomainBlock {
         id: r.id.to_string(),
         domain: r.domain,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
         history: vec![],
     }))
 }

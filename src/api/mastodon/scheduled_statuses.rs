@@ -35,7 +35,7 @@ pub async fn list_scheduled_statuses(
         .into_iter()
         .map(|r| ScheduledStatus {
             id: r.id.to_string(),
-            scheduled_at: r.scheduled_at.map(|t| t.to_rfc3339()),
+            scheduled_at: r.scheduled_at.map(super::convert::mastodon_date),
             params: r.params.unwrap_or(serde_json::Value::Null),
             media_attachments: vec![],
         })
@@ -61,7 +61,7 @@ pub async fn get_scheduled_status(
 
     Ok(Json(ScheduledStatus {
         id: row.id.to_string(),
-        scheduled_at: row.scheduled_at.map(|t| t.to_rfc3339()),
+        scheduled_at: row.scheduled_at.map(super::convert::mastodon_date),
         params: row.params.unwrap_or(serde_json::Value::Null),
         media_attachments: vec![],
     }))
@@ -100,7 +100,7 @@ pub async fn update_scheduled_status(
 
     Ok(Json(ScheduledStatus {
         id: row.id.to_string(),
-        scheduled_at: row.scheduled_at.map(|t| t.to_rfc3339()),
+        scheduled_at: row.scheduled_at.map(super::convert::mastodon_date),
         params: row.params.unwrap_or(serde_json::Value::Null),
         media_attachments: vec![],
     }))

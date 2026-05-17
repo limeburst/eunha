@@ -50,7 +50,7 @@ async fn fetch_filter(
         id: f.id.to_string(),
         title: f.phrase.clone(),
         context: f.context.clone(),
-        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: f.expires_at.map(super::convert::mastodon_date),
         filter_action: f.action.clone(),
         keywords: keywords
             .into_iter()
@@ -121,7 +121,7 @@ pub async fn get_filters_v2(
         id: f.id.to_string(),
         title: f.phrase,
         context: f.context,
-        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: f.expires_at.map(super::convert::mastodon_date),
         filter_action: f.action,
         keywords: keywords_map.remove(&f.id).unwrap_or_default(),
         statuses: statuses_map.remove(&f.id).unwrap_or_default(),
@@ -627,7 +627,7 @@ pub async fn get_filters_v1(
             phrase: f.phrase,
             context: f.context,
             whole_word: f.whole_word,
-            expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+            expires_at: f.expires_at.map(super::convert::mastodon_date),
             irreversible: f.action == "hide",
         })
         .collect();
@@ -663,7 +663,7 @@ pub async fn get_filter_v1(
         phrase: f.phrase,
         context: f.context,
         whole_word: f.whole_word,
-        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: f.expires_at.map(super::convert::mastodon_date),
         irreversible: f.action == "hide",
     }))
 }
@@ -723,7 +723,7 @@ pub async fn create_filter_v1(
         phrase: f.phrase,
         context: f.context,
         whole_word,
-        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: f.expires_at.map(super::convert::mastodon_date),
         irreversible: f.action == "hide",
     })))
 }
@@ -777,7 +777,7 @@ pub async fn update_filter_v1(
         phrase: f.phrase,
         context: f.context,
         whole_word,
-        expires_at: f.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: f.expires_at.map(super::convert::mastodon_date),
         irreversible: f.action == "hide",
     }))
 }

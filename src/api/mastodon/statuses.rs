@@ -139,7 +139,7 @@ pub async fn post_status(
         .await?;
         let resp = ScheduledStatusResponse {
             id: row.id.to_string(),
-            scheduled_at: row.scheduled_at.map(|t| t.to_rfc3339()),
+            scheduled_at: row.scheduled_at.map(super::convert::mastodon_date),
             params,
             media_attachments: vec![],
         };
@@ -1916,7 +1916,7 @@ pub async fn get_status_history(
         content: e.content.clone(),
         spoiler_text: e.spoiler_text.clone(),
         sensitive: e.sensitive,
-        created_at: e.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(e.created_at),
         account: api_account.clone(),
         media_attachments: vec![],
         emojis: vec![],
@@ -1928,7 +1928,7 @@ pub async fn get_status_history(
         content: current_content,
         spoiler_text: status.spoiler_text.clone(),
         sensitive: status.sensitive,
-        created_at: status.edited_at.unwrap_or(status.created_at).to_rfc3339(),
+        created_at: super::convert::mastodon_date(status.edited_at.unwrap_or(status.created_at)),
         account: api_account,
         media_attachments: vec![],
         emojis: vec![],

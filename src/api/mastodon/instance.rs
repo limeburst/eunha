@@ -53,7 +53,7 @@ pub async fn get_privacy_policy(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<ExtendedDescription>> {
     Ok(Json(ExtendedDescription {
-        updated_at: instance.updated_at.to_rfc3339(),
+        updated_at: super::convert::mastodon_date(instance.updated_at),
         content: instance.privacy_policy.clone(),
     }))
 }
@@ -64,7 +64,7 @@ pub async fn get_extended_description(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<ExtendedDescription>> {
     Ok(Json(ExtendedDescription {
-        updated_at: instance.updated_at.to_rfc3339(),
+        updated_at: super::convert::mastodon_date(instance.updated_at),
         content: instance.description.clone(),
     }))
 }

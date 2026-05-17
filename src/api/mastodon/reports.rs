@@ -96,7 +96,7 @@ pub async fn file_report(
         category,
         comment,
         forwarded,
-        created_at: report.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(report.created_at),
         status_ids: if status_id_strings.is_empty() { None } else { Some(status_id_strings) },
         rule_ids: None,
         collection_ids: vec![],

@@ -47,7 +47,7 @@ pub async fn get_markers(
             result.insert(timeline.clone(), MarkerInfo {
                 last_read_id: r.last_read_id,
                 version: r.version,
-                updated_at: r.updated_at.to_rfc3339(),
+                updated_at: super::convert::mastodon_date(r.updated_at),
             });
         }
     }
@@ -108,7 +108,7 @@ pub async fn set_markers(
         result.insert(timeline.to_string(), MarkerInfo {
             last_read_id: row.last_read_id,
             version: row.version,
-            updated_at: row.updated_at.to_rfc3339(),
+            updated_at: super::convert::mastodon_date(row.updated_at),
         });
     }
 

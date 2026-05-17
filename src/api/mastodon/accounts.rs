@@ -1666,7 +1666,7 @@ pub async fn fetch_status_poll(
 
     Ok(Some(super::types::Poll {
         id: row.id.to_string(),
-        expires_at: row.expires_at.map(|t| t.to_rfc3339()),
+        expires_at: row.expires_at.map(super::convert::mastodon_date),
         expired,
         multiple: row.multiple,
         votes_count: row.votes_count,
@@ -1835,7 +1835,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
             blocked_by: blocks_in.contains(&target_id),
             muting: mute.is_some(),
             muting_notifications: mute.map_or(false, |m| m.hide_notifications),
-            muting_expires_at: mute.and_then(|m| m.expires_at).map(|t| t.to_rfc3339()),
+            muting_expires_at: mute.and_then(|m| m.expires_at).map(super::convert::mastodon_date),
             requested: follow.map_or(false, |f| f.state == "pending"),
             requested_by: requested_by_set.contains(&target_id),
             domain_blocking,
@@ -1926,7 +1926,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
     let notifying = follow.as_ref().map_or(false, |f| f.notify);
     let languages = follow.as_ref().and_then(|f| if f.languages.is_empty() { None } else { Some(f.languages.clone()) });
     let muting_expires_at = muting.as_ref().and_then(|m| m.expires_at)
-        .map(|t| t.to_rfc3339());
+        .map(super::convert::mastodon_date);
 
     Ok(Relationship {
         id: target_id.to_string(),
@@ -2114,7 +2114,7 @@ pub async fn list_aliases(
         id: r.id.to_string(),
         account_id: r.account_id.to_string(),
         uri: r.uri,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
     }).collect()))
 }
 
@@ -2140,7 +2140,7 @@ pub async fn create_alias(
         id: r.id.to_string(),
         account_id: r.account_id.to_string(),
         uri: r.uri,
-        created_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
     }))
 }
 
@@ -2801,7 +2801,7 @@ pub async fn batch_status_polls(
         };
         result.insert(row.status_id, super::types::Poll {
             id: row.id.to_string(),
-            expires_at: row.expires_at.map(|t| t.to_rfc3339()),
+            expires_at: row.expires_at.map(super::convert::mastodon_date),
             expired,
             multiple: row.multiple,
             votes_count: row.votes_count,

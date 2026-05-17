@@ -6,6 +6,13 @@ use super::types;
 const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
 const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
 
+/// Format a timestamp in the Mastodon-standard format: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+/// Mastodon always uses the `Z` suffix and millisecond precision; `to_rfc3339()` produces
+/// `+00:00` suffix and microsecond precision, which can confuse some clients.
+pub fn mastodon_date(t: chrono::DateTime<chrono::Utc>) -> String {
+    t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
 fn status_url_from_uri(uri: &str) -> Option<String> {
     let (base, rest) = uri.split_once("/users/")?;
     let (username, id) = rest.split_once("/statuses/")?;

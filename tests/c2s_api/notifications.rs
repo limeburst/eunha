@@ -915,3 +915,25 @@ async fn test_notification_request_has_updated_at() {
     assert!(req["updated_at"].as_str().is_some(), "notification request must have updated_at");
     assert!(req["created_at"].as_str().is_some(), "notification request must have created_at");
 }
+
+/// Timestamps in notification responses must use the Mastodon-standard Z suffix, not +00:00.
+#[tokio::test]
+async fn test_notification_timestamps_use_z_suffix() {
+    let ctx = TestContext::new("notif-ts-format").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let notifs: Vec<Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!notifs.is_empty(), "expected at least one notification");
+
+    let created_at = notifs[0]["created_at"].as_str().expect("notification must have created_at");
+    assert!(
+        created_at.ends_with('Z'),
+        "notification created_at should use Z suffix, got: {created_at}"
+    );
+    assert!(
+        !created_at.contains('+'),
+        "notification created_at should not use +00:00 offset, got: {created_at}"
+    );
+}

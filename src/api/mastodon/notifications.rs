@@ -202,7 +202,7 @@ pub async fn get_notifications(
         result.push(Notification {
             id: n.id.to_string(),
             notification_type: n.notification_type.clone(),
-            created_at: n.created_at.to_rfc3339(),
+            created_at: super::convert::mastodon_date(n.created_at),
             group_key: format!("ungrouped-{}", n.id),
             account: account_from_db(account),
             status,
@@ -445,7 +445,7 @@ pub async fn get_notifications_v2(
             most_recent_notification_id: id_str.clone(),
             page_max_id: id_str.clone(),
             page_min_id: id_str.clone(),
-            latest_page_notification_at: n.created_at.to_rfc3339(),
+            latest_page_notification_at: super::convert::mastodon_date(n.created_at),
             sample_account_ids: vec![n.from_account_id.to_string()],
             status_id,
         });
@@ -759,8 +759,8 @@ pub async fn get_notification_requests(
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
         result.push(NotificationRequest {
             id: r.id.to_string(),
-            created_at: r.created_at.to_rfc3339(),
-            updated_at: r.updated_at.to_rfc3339(),
+            created_at: super::convert::mastodon_date(r.created_at),
+            updated_at: super::convert::mastodon_date(r.updated_at),
             notifications_count: r.notifications_count.to_string(),
             last_status,
             account: super::convert::account_from_db(&acc),
@@ -914,8 +914,8 @@ pub async fn get_notification_request(
     let last_status = fetch_last_status(&state, r.last_status_id).await;
     Ok(Json(NotificationRequest {
         id: r.id.to_string(),
-        created_at: r.created_at.to_rfc3339(),
-        updated_at: r.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(r.created_at),
+        updated_at: super::convert::mastodon_date(r.created_at),
         notifications_count: r.notifications_count.to_string(),
         last_status,
         account: super::convert::account_from_db(&acc),
@@ -1013,7 +1013,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
     Ok(Notification {
         id: n.id.to_string(),
         notification_type: n.notification_type.clone(),
-        created_at: n.created_at.to_rfc3339(),
+        created_at: super::convert::mastodon_date(n.created_at),
         group_key: format!("ungrouped-{}", n.id),
         account: account_from_db(&from_account),
         status,
