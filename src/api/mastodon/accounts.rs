@@ -2787,7 +2787,7 @@ pub async fn batch_status_polls(
         let (voted, own_votes) = if viewer_id.is_some() {
             let votes = votes_by_poll.get(&row.id).cloned().unwrap_or_default();
             if votes.is_empty() {
-                (Some(false), Some(vec![]))
+                (Some(false), None)
             } else {
                 (Some(true), Some(votes))
             }

@@ -1557,6 +1557,32 @@ async fn test_vote_poll() {
     assert_eq!(poll["own_votes"].as_array().unwrap(), &[json!(1)]);
 }
 
+/// A viewer who has NOT voted sees own_votes: null (not an empty array).
+#[tokio::test]
+async fn test_poll_own_votes_null_when_not_voted() {
+    let ctx = TestContext::new("poll-own-votes-null").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "Null votes poll",
+            "visibility": "public",
+            "poll": {"options": ["X", "Y"], "expires_in": 86400}
+        }),
+    ).await.json().await.unwrap();
+    let poll_id = status["poll"]["id"].as_str().unwrap();
+
+    // Bob fetches the poll without having voted.
+    let poll: Value = ctx.api.get(
+        &format!("/api/v1/polls/{poll_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    assert_eq!(poll["voted"].as_bool(), Some(false), "voted should be false before voting");
+    assert!(poll["own_votes"].is_null(), "own_votes should be null when viewer has not voted");
+}
+
 /// Voting twice on the same poll returns 422.
 #[tokio::test]
 async fn test_vote_poll_twice_returns_422() {
