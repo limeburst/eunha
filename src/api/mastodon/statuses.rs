@@ -147,7 +147,7 @@ pub async fn post_status(
     }
 
     let user_defaults = sqlx::query!(
-        "SELECT default_privacy, default_sensitive FROM users WHERE account_id = $1",
+        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
         auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -157,6 +157,9 @@ pub async fn post_status(
     });
     let sensitive = form.sensitive.unwrap_or_else(|| {
         user_defaults.as_ref().map(|u| u.default_sensitive).unwrap_or(false)
+    });
+    let language = form.language.clone().or_else(|| {
+        user_defaults.as_ref().and_then(|u| u.default_language.clone())
     });
     let in_reply_to_id = form.in_reply_to_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
@@ -199,7 +202,7 @@ pub async fn post_status(
         text,
         form.spoiler_text.unwrap_or_default(),
         visibility,
-        form.language,
+        language,
         sensitive,
         in_reply_to_id,
         in_reply_to_account_id,

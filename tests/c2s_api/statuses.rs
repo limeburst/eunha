@@ -3069,3 +3069,44 @@ async fn test_status_mentions_populated() {
     assert!(mention["acct"].as_str().is_some(), "mention acct should be present");
     assert!(mention["url"].as_str().is_some(), "mention url should be present");
 }
+
+/// When a user has set a default language, posting without an explicit language
+/// should inherit the default rather than store null.
+#[tokio::test]
+async fn test_status_language_defaults_to_user_preference() {
+    let ctx = TestContext::new("status-lang-default").await;
+
+    // Set alice's default language to "ko"
+    let form = reqwest::multipart::Form::new()
+        .text("source[language]", "ko");
+    let resp = ctx.api.http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200, "update_credentials failed");
+
+    // Post without specifying language
+    let status = ctx.api.post_status(&ctx.alice_token, "언어 기본값 테스트", "public").await;
+    assert_eq!(
+        status["language"].as_str(),
+        Some("ko"),
+        "status language should inherit user default 'ko', got: {:?}", status["language"]
+    );
+
+    // Post with explicit language override
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &serde_json::json!({"status": "en test", "visibility": "public", "language": "en"}),
+    ).await;
+    let with_lang: Value = resp.json().await.unwrap();
+    assert_eq!(
+        with_lang["language"].as_str(),
+        Some("en"),
+        "explicit language 'en' should override the default"
+    );
+}
