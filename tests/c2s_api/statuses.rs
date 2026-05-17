@@ -2878,11 +2878,11 @@ async fn test_delete_original_cascades_to_reblogs() {
         .await;
     assert_eq!(del.status(), StatusCode::OK, "delete original should succeed");
 
-    // Bob's reblog should now be gone.
+    // Bob's reblog should now be gone (410 because it existed then was deleted).
     let after = ctx.api.get(&format!("/api/v1/statuses/{reblog_id}"), Some(&ctx.bob_token)).await;
     assert_eq!(
         after.status(),
-        StatusCode::NOT_FOUND,
-        "reblog should be 404 after original is deleted (cascade)",
+        StatusCode::GONE,
+        "reblog should be 410 after original is deleted (cascade)",
     );
 }
