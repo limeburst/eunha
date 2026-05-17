@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Query, State},
-    http::{header, HeaderMap},
+    http::{header, HeaderMap, Uri},
     response::IntoResponse,
     Json,
 };
@@ -19,18 +19,26 @@ pub async fn get_domain_blocks(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
+    uri: Uri,
+    req_headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:blocks")?;
     let limit = q.limit_clamped(100, 200);
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
         r#"SELECT id, domain FROM user_domain_blocks
            WHERE account_id = $1
              AND ($2::bigint IS NULL OR id < $2)
-           ORDER BY id DESC LIMIT $3"#,
+             AND ($3::bigint IS NULL OR id > $3)
+             AND ($4::bigint IS NULL OR id > $4)
+           ORDER BY id DESC LIMIT $5"#,
         auth.account_id,
         max_id,
+        since_id,
+        min_id,
         limit,
     )
     .fetch_all(&state.db)
@@ -40,10 +48,8 @@ pub async fn get_domain_blocks(
 
     let mut resp_headers = HeaderMap::new();
     if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
-        let link = format!(
-            r#"</api/v1/domain_blocks?max_id={}>; rel="next", </api/v1/domain_blocks?since_id={}>; rel="prev""#,
-            last.id, first.id
-        );
+        let extra = super::non_pagination_query(uri.query());
+        let link = super::link_header(&req_headers, uri.path(), &extra, &first.id.to_string(), &last.id.to_string());
         if let Ok(val) = link.parse() {
             resp_headers.insert(header::LINK, val);
         }
