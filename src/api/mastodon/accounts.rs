@@ -1314,7 +1314,7 @@ pub async fn get_blocks(
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
              AND ($5::bigint IS NULL OR a.id > $5)
-           ORDER BY b.created_at DESC, a.id DESC LIMIT $4"#,
+           ORDER BY a.id DESC LIMIT $4"#,
         auth.account_id, max_id, since_id, limit, min_id,
     )
     .fetch_all(&state.db)
@@ -1356,7 +1356,7 @@ pub async fn get_mutes(
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
              AND ($5::bigint IS NULL OR a.id > $5)
-           ORDER BY m.created_at DESC, a.id DESC LIMIT $4"#,
+           ORDER BY a.id DESC LIMIT $4"#,
         auth.account_id, max_id, since_id, limit, min_id,
     )
     .fetch_all(&state.db)
