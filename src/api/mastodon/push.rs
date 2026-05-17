@@ -276,5 +276,5 @@ pub async fn delete_subscription(
     .execute(&state.db)
     .await;
 
-    StatusCode::OK
+    Json(serde_json::json!({}))
 }
