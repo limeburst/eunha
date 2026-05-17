@@ -1,5 +1,7 @@
 use axum::{
     extract::{Extension, Json, Path, Query, State},
+    http::{header, HeaderMap, Uri},
+    response::IntoResponse,
 };
 use serde::Deserialize;
 
@@ -146,13 +148,16 @@ pub async fn get_list_accounts(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(pagination): Query<super::types::PaginationParams>,
-) -> AppResult<Json<Vec<Account>>> {
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
 
     let limit = pagination.limit_clamped(40, 80);
     let max_id: Option<i64> = pagination.max_id.as_deref().and_then(|s| s.parse().ok());
     let since_id: Option<i64> = pagination.since_id.as_deref().and_then(|s| s.parse().ok());
+    let min_id: Option<i64> = pagination.min_id.as_deref().and_then(|s| s.parse().ok());
 
     let accounts = sqlx::query_as!(
         models::Account,
@@ -161,17 +166,30 @@ pub async fn get_list_accounts(
            WHERE la.list_id = $1
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
+             AND ($5::bigint IS NULL OR a.id > $5)
            ORDER BY a.id DESC
            LIMIT $4"#,
         id,
         max_id,
         since_id,
         limit,
+        min_id,
     )
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    let result: Vec<Account> = accounts.iter().map(account_from_db).collect();
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
 }
 
 // ── POST /api/v1/lists/:id/accounts ──────────────────────────────────────
