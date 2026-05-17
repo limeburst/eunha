@@ -93,7 +93,7 @@ pub async fn get_instance_v1(
             domain_count,
         },
         thumbnail: instance.icon_url.clone().unwrap_or_else(|| format!("{base_url}/instance-thumbnail.png")),
-        languages: vec!["en".to_string()],
+        languages: vec!["ko".to_string(), "en".to_string()],
         registrations: instance.registrations_open,
         approval_required: instance.approval_required,
         invites_enabled: false,
@@ -190,7 +190,7 @@ pub async fn get_instance_v2(
         icon: instance.icon_url.as_ref().map(|url| {
             vec![serde_json::json!({ "src": url })]
         }).unwrap_or_default(),
-        languages: vec!["en".to_string()],
+        languages: vec!["ko".to_string(), "en".to_string()],
         configuration: InstanceConfiguration {
             urls: InstanceUrls {
                 streaming: streaming_url,

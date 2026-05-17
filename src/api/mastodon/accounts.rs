@@ -65,6 +65,25 @@ pub async fn verify_credentials(
         quote_policy: "public".into(),
     });
 
+    // Populate roles for admin/moderator accounts
+    if let Ok(Some(role)) = sqlx::query_scalar!(
+        "SELECT role FROM users WHERE account_id = $1",
+        account.id
+    )
+    .fetch_optional(&state.db)
+    .await
+    {
+        api_account.roles = match role.as_str() {
+            "admin" => vec![super::types::Role {
+                id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
+            }],
+            "moderator" => vec![super::types::Role {
+                id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
+            }],
+            _ => vec![],
+        };
+    }
+
     Ok(Json(api_account))
 }
 

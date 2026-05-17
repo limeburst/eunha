@@ -147,7 +147,7 @@ pub fn status_from_db_with_app(
         created_at: s.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
         in_reply_to_id: s.in_reply_to_id.map(|i| i.to_string()),
         in_reply_to_account_id: s.in_reply_to_account_id.map(|i| i.to_string()),
-        sensitive: s.sensitive,
+        sensitive: s.sensitive || account.sensitized_at.is_some(),
         spoiler_text: s.spoiler_text.clone(),
         visibility: s.visibility.clone(),
         language: s.language.clone(),
