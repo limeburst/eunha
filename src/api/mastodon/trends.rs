@@ -10,7 +10,8 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{build_status, fetch_reblog_data, fetch_status_media},
+    accounts::{batch_reblog_data, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_tags},
+    convert::status_from_db,
     types::{Status, Tag, TagHistory},
 };
 
@@ -28,13 +29,12 @@ pub async fn trending_tags(
     Query(params): Query<TrendParams>,
 ) -> AppResult<Json<Vec<Tag>>> {
     let limit = params.limit.unwrap_or(10).min(20).max(1);
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let offset = params.offset.unwrap_or(0).max(0);
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
 
-    // Get top trending tag IDs ordered by usage in last 7 days
-    let top_tags = sqlx::query!(
-        r#"SELECT t.id, t.name,
-                  COUNT(DISTINCT st.status_id) FILTER (WHERE s.created_at > now() - interval '1 day') AS day_uses,
-                  COUNT(DISTINCT st.status_id) AS week_uses
+    // Tags with most status uses in the last 7 days
+    let rows = sqlx::query!(
+        r#"SELECT t.id, t.name, COUNT(st.status_id) AS uses
            FROM tags t
            JOIN status_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
@@ -43,60 +43,25 @@ pub async fn trending_tags(
              AND s.visibility = 'public'
              AND s.created_at > now() - interval '7 days'
            GROUP BY t.id, t.name
-           HAVING COUNT(DISTINCT st.status_id) > 1
-           ORDER BY day_uses DESC, week_uses DESC
-           LIMIT $2"#,
-        instance.id,
-        limit,
+           ORDER BY uses DESC, t.name ASC
+           LIMIT $2 OFFSET $3"#,
+        instance.id, limit, offset,
     )
     .fetch_all(&state.db)
     .await?;
 
-    if top_tags.is_empty() {
-        return Ok(Json(vec![]));
-    }
-
-    let tag_ids: Vec<uuid::Uuid> = top_tags.iter().map(|r| r.id).collect();
-
-    // Fetch 7-day per-day breakdown for all returned tags in one query
-    let history_rows = sqlx::query!(
-        r#"SELECT st.tag_id,
-                  date_trunc('day', s.created_at)::timestamptz AS day,
-                  COUNT(DISTINCT st.status_id) AS uses,
-                  COUNT(DISTINCT s.account_id) AS accounts
-           FROM status_tags st
-           JOIN statuses s ON s.id = st.status_id
-           WHERE st.tag_id = ANY($1::uuid[])
-             AND s.created_at >= now() - interval '7 days'
-             AND s.deleted_at IS NULL
-           GROUP BY st.tag_id, date_trunc('day', s.created_at)
-           ORDER BY day DESC"#,
-        &tag_ids,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    // Build per-tag history map
-    let mut history_map: std::collections::HashMap<uuid::Uuid, Vec<TagHistory>> =
-        std::collections::HashMap::new();
-    for row in history_rows {
-        let day_ts = row.day.map(|d| d.timestamp()).unwrap_or(0).to_string();
-        history_map.entry(row.tag_id).or_default().push(TagHistory {
-            day: day_ts,
-            uses: row.uses.unwrap_or(0).to_string(),
-            accounts: row.accounts.unwrap_or(0).to_string(),
-        });
-    }
-
-    let tags = top_tags
+    let tags: Vec<Tag> = rows
         .into_iter()
-        .map(|r| Tag {
-            id: r.id.to_string(),
-            name: r.name.clone(),
-            url: format!("https://{}/tags/{}", domain, r.name),
-            history: history_map.remove(&r.id).unwrap_or_default(),
-            following: None,
-            featuring: None,
+        .map(|r| {
+            let name_lower = r.name.to_lowercase();
+            Tag {
+                id: r.id.to_string(),
+                name: r.name,
+                url: format!("https://{}/tags/{}", domain, urlencoding::encode(&name_lower)),
+                history: vec![TagHistory { day: "0".into(), uses: r.uses.unwrap_or(0).to_string(), accounts: "0".into() }],
+                following: None,
+                featuring: None,
+            }
         })
         .collect();
 
@@ -130,35 +95,62 @@ pub async fn trending_statuses(
     .fetch_all(&state.db)
     .await?;
 
+    if rows.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    let all_ids: Vec<i64> = rows.iter().map(|s| s.id).collect();
+    let media_map = batch_status_media(&state, &all_ids).await?;
+    let reblog_map = batch_reblog_data(&state, &rows).await?;
+    let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+    let mut enrich_ids = all_ids.clone();
+    enrich_ids.extend_from_slice(&reblog_ids);
+    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+    let all_statuses_for_emoji: Vec<crate::db::models::Status> = rows.iter().cloned()
+        .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+        .collect();
+    let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
+    let ctxs = if let Some(vid) = viewer_id {
+        super::statuses::batch_viewer_contexts(&state, vid, &all_ids).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let account_ids: Vec<i64> = rows.iter().map(|s| s.account_id)
+        .collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let accounts: Vec<crate::db::models::Account> = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+        &account_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let account_map: std::collections::HashMap<i64, crate::db::models::Account> =
+        accounts.into_iter().map(|a| (a.id, a)).collect();
+
     let mut result = Vec::with_capacity(rows.len());
     for s in &rows {
-        let account = sqlx::query_as!(
-            crate::db::models::Account,
-            "SELECT * FROM accounts WHERE id = $1",
-            s.account_id,
-        )
-        .fetch_one(&state.db)
-        .await?;
-        let media = fetch_status_media(&state, s.id).await?;
-        let reblog = fetch_reblog_data(&state, s).await?;
-        let ctx = if let Some(vid) = viewer_id {
-            let favourited = sqlx::query_scalar!(
-                "SELECT 1 AS e FROM favourites WHERE account_id = $1 AND status_id = $2",
-                vid, s.id
-            ).fetch_optional(&state.db).await?.is_some();
-            let reblogged = sqlx::query_scalar!(
-                "SELECT 1 AS e FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 AND deleted_at IS NULL",
-                vid, s.id
-            ).fetch_optional(&state.db).await?.is_some();
-            let bookmarked = sqlx::query_scalar!(
-                "SELECT 1 AS e FROM bookmarks WHERE account_id = $1 AND status_id = $2",
-                vid, s.id
-            ).fetch_optional(&state.db).await?.is_some();
-            Some(super::convert::StatusViewerContext { account_id: vid, favourited, reblogged, muted: false, bookmarked, pinned: false })
-        } else {
-            None
-        };
-        result.push(build_status(&state, s, &account, media, reblog, ctx).await?);
+        let Some(account) = account_map.get(&s.account_id) else { continue };
+        let media = media_map.get(&s.id).cloned().unwrap_or_default();
+        let reblog = reblog_map.get(&s.id).cloned();
+        let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+        let rb_mentions = reblog.as_ref()
+            .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
+            .cloned()
+            .unwrap_or_default();
+        let ctx = ctxs.get(&s.id).cloned();
+        let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+        api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+        api.mentions = mentions;
+        api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+        if let Some(ref mut rb) = api.reblog {
+            let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = rb_mentions;
+            rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+        }
+        result.push(api);
     }
 
     Ok(Json(result))
@@ -175,21 +167,21 @@ pub async fn trending_links(
 
     let rows = sqlx::query!(
         r#"SELECT pc.url, pc.title, pc.description, pc.card_type,
-                  pc.image_url, pc.author_name, pc.author_url,
-                  pc.provider_name, pc.provider_url, pc.html,
-                  pc.width, pc.height, pc.embed_url, pc.blurhash,
-                  COUNT(spc.status_id) AS uses
+                  pc.author_name, pc.author_url, pc.provider_name, pc.provider_url,
+                  pc.html, pc.width, pc.height, pc.image_url, pc.embed_url, pc.blurhash,
+                  COUNT(s.id) AS uses
            FROM preview_cards pc
            JOIN status_preview_cards spc ON spc.card_id = pc.id
            JOIN statuses s ON s.id = spc.status_id
            WHERE s.deleted_at IS NULL
-             AND s.created_at > now() - interval '2 days'
              AND s.visibility = 'public'
-           GROUP BY pc.id
+             AND s.created_at > now() - interval '7 days'
+           GROUP BY pc.url, pc.title, pc.description, pc.card_type,
+                    pc.author_name, pc.author_url, pc.provider_name, pc.provider_url,
+                    pc.html, pc.width, pc.height, pc.image_url, pc.embed_url, pc.blurhash
            ORDER BY uses DESC
            LIMIT $1 OFFSET $2"#,
-        limit,
-        offset,
+        limit, offset,
     )
     .fetch_all(&state.db)
     .await?;
@@ -198,7 +190,6 @@ pub async fn trending_links(
         url: r.url,
         title: r.title,
         description: r.description,
-        language: None,
         card_type: r.card_type,
         author_name: r.author_name,
         author_url: r.author_url,
@@ -207,12 +198,13 @@ pub async fn trending_links(
         html: r.html,
         width: r.width,
         height: r.height,
-        embed_url: r.embed_url,
         image: r.image_url,
-        image_description: String::new(),
+        embed_url: r.embed_url,
         blurhash: r.blurhash,
+        language: None,
         published_at: None,
         authors: vec![],
+        image_description: String::new(),
     }).collect();
 
     Ok(Json(cards))
