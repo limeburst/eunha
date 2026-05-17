@@ -111,19 +111,13 @@ pub struct Status {
     pub poll: Option<Poll>,
     pub quote: Option<Box<Status>>,
     pub quote_approval: QuoteApproval,
-    // Viewer-specific (None when not authenticated)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub favourited: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reblogged: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub muted: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bookmarked: Option<bool>,
+    pub favourited: bool,
+    pub reblogged: bool,
+    pub muted: bool,
+    pub bookmarked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filtered: Option<Vec<serde_json::Value>>,
+    pub filtered: Vec<serde_json::Value>,
     // Only present on DELETE response
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,

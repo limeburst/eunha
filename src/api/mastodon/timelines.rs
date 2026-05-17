@@ -913,7 +913,7 @@ async fn build_status_list_with_context(
         if let Some((_, ref filter_json)) = filter_results.get(&id) {
             if let Some(arr) = filter_json.as_array() {
                 if !arr.is_empty() {
-                    s.filtered = Some(arr.clone());
+                    s.filtered = arr.clone();
                 }
             }
         }

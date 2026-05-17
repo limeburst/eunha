@@ -3002,3 +3002,22 @@ async fn test_get_status_text_field_for_author_and_others() {
         .await.json().await.unwrap();
     assert!(as_anon["text"].is_null(), "unauthenticated should get null text");
 }
+
+/// favourited/reblogged/muted/bookmarked are always present as false (not omitted) when
+/// unauthenticated. filtered is always present as an empty array, not omitted.
+#[tokio::test]
+async fn test_status_viewer_fields_present_when_unauthenticated() {
+    let ctx = TestContext::new("status-viewer-fields").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "viewer field test", "public").await;
+    let sid = status["id"].as_str().unwrap();
+
+    let s: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), None)
+        .await.json().await.unwrap();
+
+    assert_eq!(s["favourited"].as_bool(), Some(false), "favourited should be false not absent");
+    assert_eq!(s["reblogged"].as_bool(), Some(false), "reblogged should be false not absent");
+    assert_eq!(s["muted"].as_bool(), Some(false), "muted should be false not absent");
+    assert_eq!(s["bookmarked"].as_bool(), Some(false), "bookmarked should be false not absent");
+    assert!(s["filtered"].as_array().is_some(), "filtered should be an array, not absent");
+}

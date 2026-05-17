@@ -1363,7 +1363,7 @@ pub async fn get_status_context(
                 if let Some((_, ref fj)) = filters.get(&s.id) {
                     if let Some(arr) = fj.as_array() {
                         if !arr.is_empty() {
-                            api.filtered = Some(arr.clone());
+                            api.filtered = arr.clone();
                         }
                     }
                 }

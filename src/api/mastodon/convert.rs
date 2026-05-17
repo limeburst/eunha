@@ -177,12 +177,12 @@ pub fn status_from_db_with_app(
             manual: vec![],
             current_user: "denied".to_string(),
         },
-        favourited: viewer_context.as_ref().map(|c| c.favourited),
-        reblogged: viewer_context.as_ref().map(|c| c.reblogged),
-        muted: viewer_context.as_ref().map(|c| c.muted),
-        bookmarked: viewer_context.as_ref().map(|c| c.bookmarked),
+        favourited: viewer_context.as_ref().map(|c| c.favourited).unwrap_or(false),
+        reblogged: viewer_context.as_ref().map(|c| c.reblogged).unwrap_or(false),
+        muted: viewer_context.as_ref().map(|c| c.muted).unwrap_or(false),
+        bookmarked: viewer_context.as_ref().map(|c| c.bookmarked).unwrap_or(false),
         pinned: viewer_context.as_ref().map(|c| c.pinned),
-        filtered: viewer_context.as_ref().map(|_| vec![]),
+        filtered: vec![],
         text: None,
     }
 }
