@@ -39,6 +39,13 @@ async fn fetch_filter(
     .fetch_all(&state.db)
     .await?;
 
+    let filter_statuses = sqlx::query!(
+        "SELECT id, status_id FROM custom_filter_statuses WHERE custom_filter_id = $1 ORDER BY id",
+        f.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
     Ok(Filter {
         id: f.id.to_string(),
         title: f.phrase.clone(),
@@ -53,7 +60,10 @@ async fn fetch_filter(
                 whole_word: k.whole_word,
             })
             .collect(),
-        statuses: vec![],
+        statuses: filter_statuses
+            .into_iter()
+            .map(|r| serde_json::json!({ "id": r.id.to_string(), "status_id": r.status_id.to_string() }))
+            .collect(),
     })
 }
 
