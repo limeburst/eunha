@@ -30,6 +30,7 @@ pub async fn verify_credentials(
     auth.require_scope("read:accounts")?;
     let account = fetch_account(&state, auth.account_id).await?;
     let mut api_account = account_from_db(&account);
+    api_account.emojis = fetch_account_emojis(&state, &account).await;
 
     let user_prefs = sqlx::query!(
         "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
@@ -185,6 +186,7 @@ pub async fn get_account(
 ) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, id).await?;
     let mut api_account = account_from_db(&account);
+    api_account.emojis = fetch_account_emojis(&state, &account).await;
     if let Some(ref moved_uri) = account.moved_to_uri {
         if let Ok(Some(moved)) = sqlx::query_as!(
             Account,
@@ -2534,6 +2536,58 @@ async fn fetch_status_emojis(
     .await
     .unwrap_or_default();
 
+    rows.into_iter().map(|r| super::types::CustomEmoji {
+        shortcode: r.shortcode,
+        url: r.image_url.clone(),
+        static_url: r.static_image_url.unwrap_or(r.image_url),
+        visible_in_picker: r.visible_in_picker,
+        category: None,
+    }).collect()
+}
+
+/// Extract `:shortcode:` patterns from account profile fields and look them up.
+pub async fn fetch_account_emojis(
+    state: &AppState,
+    a: &Account,
+) -> Vec<super::types::CustomEmoji> {
+    let mut combined = format!("{} {}", a.display_name, a.note);
+    if let Some(fields) = a.fields.as_array() {
+        for f in fields {
+            if let (Some(n), Some(v)) = (f["name"].as_str(), f["value"].as_str()) {
+                combined.push(' ');
+                combined.push_str(n);
+                combined.push(' ');
+                combined.push_str(v);
+            }
+        }
+    }
+    let mut shortcodes: Vec<String> = Vec::new();
+    let mut rest = combined.as_str();
+    while let Some(start) = rest.find(':') {
+        rest = &rest[start + 1..];
+        if let Some(end) = rest.find(':') {
+            let code = &rest[..end];
+            if !code.is_empty() && code.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                shortcodes.push(code.to_string());
+            }
+            rest = &rest[end + 1..];
+        } else {
+            break;
+        }
+    }
+    if shortcodes.is_empty() {
+        return vec![];
+    }
+    let rows = sqlx::query!(
+        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+           FROM custom_emojis
+           WHERE instance_id = $1 AND shortcode = ANY($2) AND NOT disabled"#,
+        a.instance_id,
+        &shortcodes,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
     rows.into_iter().map(|r| super::types::CustomEmoji {
         shortcode: r.shortcode,
         url: r.image_url.clone(),
