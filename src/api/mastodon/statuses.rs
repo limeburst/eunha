@@ -188,6 +188,32 @@ pub async fn post_status(
     let status_id = crate::snowflake::next_id();
     let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status_id);
 
+    // Validate media_ids before inserting the status — fail early so no cleanup is needed
+    let parsed_media_ids: Vec<i64> = if let Some(ref ids) = form.media_ids {
+        let mut parsed = Vec::with_capacity(ids.len());
+        for id_str in ids {
+            let media_id = id_str.parse::<i64>().map_err(|_| {
+                AppError::Unprocessable(format!("media_ids: invalid id '{}'", id_str))
+            })?;
+            let valid = sqlx::query_scalar!(
+                "SELECT 1 FROM media_attachments WHERE id = $1 AND account_id = $2 AND status_id IS NULL",
+                media_id, account.id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if !valid {
+                return Err(AppError::Unprocessable(format!(
+                    "media_ids: '{}' not found, already attached, or not owned by you", id_str
+                )));
+            }
+            parsed.push(media_id);
+        }
+        parsed
+    } else {
+        vec![]
+    };
+
     let is_reply = in_reply_to_id.is_some();
     let status = sqlx::query_as!(
         DbStatus,
@@ -300,19 +326,15 @@ pub async fn post_status(
         .await;
     }
 
-    // Attach media
-    if let Some(media_ids) = &form.media_ids {
-        for id_str in media_ids {
-            if let Ok(media_id) = id_str.parse::<i64>() {
-                sqlx::query!(
-                    "UPDATE media_attachments SET status_id = $1
-                     WHERE id = $2 AND account_id = $3 AND status_id IS NULL",
-                    status.id, media_id, account.id
-                )
-                .execute(&state.db)
-                .await?;
-            }
-        }
+    // Attach media (IDs already validated above)
+    for media_id in &parsed_media_ids {
+        sqlx::query!(
+            "UPDATE media_attachments SET status_id = $1
+             WHERE id = $2 AND account_id = $3 AND status_id IS NULL",
+            status.id, media_id, account.id
+        )
+        .execute(&state.db)
+        .await?;
     }
 
     // Create poll if requested (options already validated above)

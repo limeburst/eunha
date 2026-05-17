@@ -2339,6 +2339,24 @@ async fn test_post_status_empty_returns_422() {
     );
 }
 
+/// POST /api/v1/statuses with a non-existent media_id returns 422.
+#[tokio::test]
+async fn test_post_status_invalid_media_id_returns_422() {
+    let ctx = TestContext::new("status-bad-media").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "test", "media_ids": ["9999999999999999"]}),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "non-existent media_id should return 422",
+    );
+}
+
+
 /// replies_count increments when someone replies and decrements when the reply is deleted.
 #[tokio::test]
 async fn test_replies_count_increments_and_decrements() {
