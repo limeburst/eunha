@@ -786,7 +786,7 @@ pub(super) async fn compute_filter_results(
 
     // Load active filters for viewer applicable to this context
     let filters = match sqlx::query!(
-        r#"SELECT cf.id, cf.action as filter_action
+        r#"SELECT cf.id, cf.phrase as title, cf.action as filter_action
            FROM custom_filters cf
            WHERE cf.account_id = $1
              AND (cf.expires_at IS NULL OR cf.expires_at > now())
@@ -850,7 +850,7 @@ pub(super) async fn compute_filter_results(
                     should_hide = true;
                 }
                 filter_results.push(serde_json::json!({
-                    "filter": { "id": f.id.to_string(), "title": "", "context": [context], "filter_action": f.filter_action },
+                    "filter": { "id": f.id.to_string(), "title": f.title, "context": [context], "filter_action": f.filter_action },
                     "keyword_matches": matched_keywords,
                     "status_matches": serde_json::Value::Null,
                 }));
