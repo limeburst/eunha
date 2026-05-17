@@ -307,8 +307,8 @@ async fn test_delete_status_requires_auth() {
 
 /// Deleted status returns 404 on GET.
 #[tokio::test]
-async fn test_deleted_status_returns_404() {
-    let ctx = TestContext::new("del-404").await;
+async fn test_deleted_status_returns_410() {
+    let ctx = TestContext::new("del-410").await;
 
     let status = ctx.api.post_status(&ctx.alice_token, "to be deleted", "public").await;
     let id = status["id"].as_str().unwrap();
@@ -317,6 +317,14 @@ async fn test_deleted_status_returns_404() {
     assert_eq!(del_resp.status(), StatusCode::OK);
 
     let get_resp = ctx.api.get(&format!("/api/v1/statuses/{id}"), None).await;
+    assert_eq!(get_resp.status(), StatusCode::GONE);
+}
+
+/// Non-existent status returns 404 (distinct from deleted which returns 410).
+#[tokio::test]
+async fn test_nonexistent_status_returns_404() {
+    let ctx = TestContext::new("nonexist-404").await;
+    let get_resp = ctx.api.get("/api/v1/statuses/9999999999", None).await;
     assert_eq!(get_resp.status(), StatusCode::NOT_FOUND);
 }
 
