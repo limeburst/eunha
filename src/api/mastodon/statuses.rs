@@ -41,6 +41,7 @@ pub struct PollForm {
 pub struct PostStatusForm {
     pub status: Option<String>,
     pub in_reply_to_id: Option<String>,
+    pub quote_id: Option<String>,
     pub spoiler_text: Option<String>,
     pub sensitive: Option<bool>,
     pub language: Option<String>,
@@ -179,6 +180,25 @@ pub async fn post_status(
         None
     };
 
+    // Validate quote_id
+    let quote_of_id: Option<i64> = if let Some(ref qid_str) = form.quote_id {
+        let qid = qid_str.parse::<i64>().map_err(|_| AppError::Unprocessable("invalid quote_id".into()))?;
+        let quoted = sqlx::query!(
+            "SELECT id, visibility FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            qid,
+        )
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unprocessable("quote_id does not exist".into()))?;
+        // Cannot quote direct messages
+        if quoted.visibility == "direct" {
+            return Err(AppError::Unprocessable("cannot quote a direct message".into()));
+        }
+        Some(quoted.id)
+    } else {
+        None
+    };
+
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
     let resolved = resolve_mention_accounts(&state, instance.id, &mention_handles).await;
@@ -219,8 +239,8 @@ pub async fn post_status(
         DbStatus,
         r#"INSERT INTO statuses
              (id, instance_id, account_id, application_id, text, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url)
-           VALUES ($1,$2,$3,$12,$4,$5,$6,$7,$8,$9,$10,$14,$11,$13,$13)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url, quote_of_id)
+           VALUES ($1,$2,$3,$12,$4,$5,$6,$7,$8,$9,$10,$14,$11,$13,$13,$15)
            RETURNING *"#,
         status_id,
         instance.id,
@@ -236,9 +256,20 @@ pub async fn post_status(
         auth.application_id,
         uri,
         is_reply,
+        quote_of_id,
     )
     .fetch_one(&state.db)
     .await?;
+
+    // Increment quotes_count on the quoted status
+    if let Some(qid) = quote_of_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1",
+            qid,
+        )
+        .execute(&state.db)
+        .await;
+    }
 
     // Store tags and mentions
     store_status_tags(&state, status.id, account.id, &hashtags).await?;
@@ -527,6 +558,7 @@ async fn extract_post_status_form(request: axum::extract::Request) -> AppResult<
             match name.as_str() {
                 "status" => form.status = Some(text),
                 "in_reply_to_id" => form.in_reply_to_id = if text.is_empty() { None } else { Some(text) },
+                "quote_id" => form.quote_id = if text.is_empty() { None } else { Some(text) },
                 "spoiler_text" => form.spoiler_text = if text.is_empty() { None } else { Some(text) },
                 "visibility" => form.visibility = Some(text),
                 "language" => form.language = if text.is_empty() { None } else { Some(text) },
@@ -927,6 +959,16 @@ pub async fn delete_status(
         .await;
     }
 
+    // Decrement quoted status's quotes_count if this was a quote post
+    if let Some(quoted_id) = status.quote_of_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET quotes_count = GREATEST(quotes_count - 1, 0) WHERE id = $1",
+            quoted_id
+        )
+        .execute(&state.db)
+        .await;
+    }
+
     // Recalculate featured_tags counts now that this status is soft-deleted
     sqlx::query!(
         r#"UPDATE featured_tags ft
@@ -1224,8 +1266,9 @@ pub async fn get_status_context(
            SELECT id, instance_id, account_id, application_id, text, spoiler_text,
                   in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
                   visibility, language, sensitive, url, uri,
-                  replies_count, reblogs_count, favourites_count,
-                  deleted_at, edited_at, created_at, conversation_id, idempotency_key
+                  replies_count, reblogs_count, favourites_count, quotes_count,
+                  deleted_at, edited_at, created_at, conversation_id, idempotency_key,
+                  quote_of_id
            FROM reply_tree ORDER BY id ASC LIMIT $2"#
     )
     .bind(id)
@@ -2263,13 +2306,61 @@ pub(super) async fn batch_viewer_contexts(
 }
 
 // ── GET /api/v1/statuses/:id/quotes ──────────────────────────────────────
-// Stub — quote posts are not yet supported.
 
 pub async fn get_status_quotes(
-    Path(_id): Path<i64>,
-    _auth: Option<Extension<AuthenticatedUser>>,
-) -> Json<Vec<Status>> {
-    Json(vec![])
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+    req_headers: axum::http::HeaderMap,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    Query(params): Query<PaginationParams>,
+) -> AppResult<impl axum::response::IntoResponse> {
+    let viewer_id = auth.map(|Extension(u)| u.account_id);
+    let limit: i64 = params.limit_clamped(20, 40);
+    let max_id: Option<i64> = params.max_id.as_deref().and_then(|s| s.parse().ok());
+    let since_id: Option<i64> = params.since_id.as_deref().and_then(|s| s.parse().ok());
+    let min_id: Option<i64> = params.min_id.as_deref().and_then(|s| s.parse().ok());
+
+    // Verify the quoted status exists
+    let _ = sqlx::query_scalar!(
+        "SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let quotes = sqlx::query_as!(
+        DbStatus,
+        r#"SELECT s.* FROM statuses s
+           WHERE s.quote_of_id = $1
+             AND s.deleted_at IS NULL
+             AND s.visibility IN ('public', 'unlisted')
+             AND ($2::bigint IS NULL OR s.id < $2)
+             AND ($3::bigint IS NULL OR s.id > $3)
+             AND ($4::bigint IS NULL OR s.id > $4)
+           ORDER BY s.id DESC
+           LIMIT $5"#,
+        id, max_id, since_id, min_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    use super::timelines::build_status_list_with_context;
+    let result = build_status_list_with_context(&state, quotes, viewer_id, "public").await?;
+
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(raw_query.as_deref());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut headers = axum::http::HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            headers.insert(axum::http::header::LINK, val);
+        }
+    }
+    Ok((headers, Json(result)))
 }
 
 pub async fn build_viewer_context(

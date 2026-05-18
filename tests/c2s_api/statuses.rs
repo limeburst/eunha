@@ -3462,6 +3462,175 @@ async fn test_status_quotes_returns_array() {
     assert!(body.as_array().is_some(), "quotes endpoint must return an array");
 }
 
+// ── quote posts ──────────────────────────────────────────────────────────────
+
+/// Posting with quote_id embeds the quoted status in the response.
+#[tokio::test]
+async fn test_create_quote_post_embeds_quoted_status() {
+    let ctx = TestContext::new("quote-create-embed").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "original post", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "my quote", "quote_id": original_id, "visibility": "public"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    assert_eq!(body["visibility"].as_str(), Some("public"));
+    let quote = &body["quote"];
+    assert!(!quote.is_null(), "quote field should be populated");
+    assert_eq!(quote["id"].as_str(), Some(original_id));
+    assert_eq!(quote["content"].as_str().map(|s| s.contains("original post")), Some(true));
+}
+
+/// Quoting increments quotes_count on the original status.
+#[tokio::test]
+async fn test_quote_post_increments_quotes_count() {
+    let ctx = TestContext::new("quote-count").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "countable", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+    assert_eq!(original["quotes_count"].as_i64(), Some(0));
+
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "quoting!", "quote_id": original_id, "visibility": "public"}),
+    ).await;
+
+    let fetched: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(fetched["quotes_count"].as_i64(), Some(1));
+}
+
+/// GET /api/v1/statuses/:id/quotes lists quote posts of a status.
+#[tokio::test]
+async fn test_get_status_quotes_lists_quotes() {
+    let ctx = TestContext::new("quote-list").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "quotable status", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    // Post two quotes
+    let q1 = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "first quote", "quote_id": original_id, "visibility": "public"}),
+    ).await.json::<Value>().await.unwrap();
+    let _q2 = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "second quote", "quote_id": original_id, "visibility": "public"}),
+    ).await.json::<Value>().await.unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}/quotes"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let arr = body.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "should list both quotes");
+    // Each entry should have a quote field pointing back to the original
+    assert_eq!(arr[0]["quote"]["id"].as_str(), Some(original_id));
+    assert_eq!(arr[1]["quote"]["id"].as_str(), Some(original_id));
+    // q1 ID should appear in the list
+    let ids: Vec<&str> = arr.iter().map(|s| s["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&q1["id"].as_str().unwrap()));
+}
+
+/// GET /api/v1/statuses/:id/quotes on nonexistent status returns 404.
+#[tokio::test]
+async fn test_get_status_quotes_nonexistent_returns_404() {
+    let ctx = TestContext::new("quote-list-404").await;
+    let resp = ctx.api.get("/api/v1/statuses/9999999999999/quotes", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Quoting a nonexistent status returns 422.
+#[tokio::test]
+async fn test_quote_nonexistent_status_returns_422() {
+    let ctx = TestContext::new("quote-nonexistent").await;
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "quoting thin air", "quote_id": "9999999999999", "visibility": "public"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Quoting a direct message returns 422.
+#[tokio::test]
+async fn test_quote_direct_message_returns_422() {
+    let ctx = TestContext::new("quote-direct").await;
+    let dm = ctx.api.post_status(&ctx.alice_token, "secret DM", "direct").await;
+    let dm_id = dm["id"].as_str().unwrap();
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "quoting DM", "quote_id": dm_id, "visibility": "public"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Deleting a quote post decrements quotes_count.
+#[tokio::test]
+async fn test_delete_quote_decrements_count() {
+    let ctx = TestContext::new("quote-delete-count").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "to be quoted", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let quote_resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "quoting!", "quote_id": original_id, "visibility": "public"}),
+    ).await.json::<Value>().await.unwrap();
+    let quote_id = quote_resp["id"].as_str().unwrap();
+
+    // Verify count went up
+    let fetched: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(fetched["quotes_count"].as_i64(), Some(1));
+
+    // Delete the quote
+    ctx.api.delete(
+        &format!("/api/v1/statuses/{quote_id}"),
+        &ctx.bob_token,
+    ).await;
+
+    // Verify count went back down
+    let fetched2: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(fetched2["quotes_count"].as_i64(), Some(0));
+}
+
+/// The status object serializes quote_approval with automatic/manual/current_user fields.
+#[tokio::test]
+async fn test_status_has_quote_approval_field() {
+    let ctx = TestContext::new("quote-approval-field").await;
+    let status = ctx.api.post_status(&ctx.alice_token, "public post", "public").await;
+    assert!(status["quote_approval"].is_object(), "quote_approval must be an object");
+    let qa = &status["quote_approval"];
+    assert!(qa["automatic"].is_array());
+    assert!(qa["manual"].is_array());
+    assert!(qa["current_user"].is_string());
+    // Public posts allow quoting by everyone
+    let auto_arr = qa["automatic"].as_array().unwrap();
+    assert!(!auto_arr.is_empty(), "public posts should have non-empty automaticApproval");
+    assert_eq!(qa["current_user"].as_str(), Some("allow"));
+}
+
 /// POST /api/v1/statuses/:id/unreblog returns 200 even when the status author
 /// subsequently blocks the viewer (Mastodon contract: unreblog is always allowed).
 #[tokio::test]

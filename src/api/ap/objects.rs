@@ -43,6 +43,9 @@ pub async fn get_actor(
                 "featured": { "@id": "toot:featured", "@type": "@id" },
                 "discoverable": "toot:discoverable",
                 "indexable": "toot:indexable",
+                "fep": "https://w3id.org/fep/044f#",
+                "quote": { "@id": "fep:quote", "@type": "@id" },
+                "quoteUrl": { "@id": "fep:quote", "@type": "@id" },
             }
         ],
         "id": actor_url,

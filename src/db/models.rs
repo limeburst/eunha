@@ -151,6 +151,8 @@ pub struct Status {
     pub reply: bool,
     pub conversation_id: Option<i64>,
     pub idempotency_key: Option<String>,
+    pub quote_of_id: Option<i64>,
+    pub quotes_count: i64,
 }
 
 #[derive(Debug, Clone, FromRow)]

@@ -52,8 +52,10 @@ pub async fn get_outbox(
 
     let statuses = sqlx::query!(
         r#"SELECT s.id, s.text, s.spoiler_text, s.visibility, s.sensitive,
-                  s.created_at, s.uri, s.url, s.in_reply_to_id
+                  s.created_at, s.uri, s.url, s.in_reply_to_id, s.quote_of_id,
+                  q.uri AS quote_uri
            FROM statuses s
+           LEFT JOIN statuses q ON q.id = s.quote_of_id AND q.deleted_at IS NULL
            WHERE s.account_id = $1
              AND s.deleted_at IS NULL
              AND s.visibility IN ('public', 'unlisted')
@@ -103,6 +105,12 @@ pub async fn get_outbox(
     use crate::api::mastodon::formatting::render_content;
     let actor_url = format!("https://{}/users/{}", instance.domain, username);
 
+    let fep044f_context = json!({
+        "fep": "https://w3id.org/fep/044f#",
+        "quote": { "@id": "fep:quote", "@type": "@id" },
+        "quoteUrl": { "@id": "fep:quote", "@type": "@id" },
+    });
+
     let items: Vec<Value> = statuses
         .iter()
         .map(|s| {
@@ -112,8 +120,12 @@ pub async fn get_outbox(
             let empty_map = std::collections::HashMap::new();
             let mention_map = mention_maps.get(&s.id).unwrap_or(&empty_map);
             let content = render_content(&s.text, &instance.domain, mention_map);
+            let quote_uri = s.quote_uri.clone();
             json!({
-                "@context": "https://www.w3.org/ns/activitystreams",
+                "@context": [
+                    "https://www.w3.org/ns/activitystreams",
+                    fep044f_context.clone(),
+                ],
                 "id": format!("{}/activity", note_url),
                 "type": "Create",
                 "actor": actor_url,
@@ -135,6 +147,8 @@ pub async fn get_outbox(
                     "contentMap": { "und": content },
                     "attachment": [],
                     "tag": [],
+                    "quote": quote_uri,
+                    "quoteUrl": s.quote_uri.clone(),
                 }
             })
         })

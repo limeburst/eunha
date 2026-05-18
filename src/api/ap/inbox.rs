@@ -109,11 +109,113 @@ async fn handle_undo(
 }
 
 async fn handle_create(
-    _state: &AppState,
-    _instance: &crate::db::models::Instance,
-    _activity: &Value,
+    state: &AppState,
+    instance: &crate::db::models::Instance,
+    activity: &Value,
 ) -> AppResult<()> {
-    // TODO: parse Note objects, create remote statuses
+    let object = match activity.get("object") {
+        Some(o) if o.is_object() => o,
+        _ => return Ok(()),
+    };
+    let obj_type = object.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if obj_type != "Note" {
+        return Ok(());
+    }
+
+    let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
+    let note_uri = object.get("id").and_then(|i| i.as_str()).unwrap_or("");
+    if note_uri.is_empty() || actor_uri.is_empty() {
+        return Ok(());
+    }
+
+    // Resolve the author account
+    let account_id = match resolve_or_fetch_remote_account(state, actor_uri).await {
+        Ok(id) => id,
+        Err(_) => return Ok(()),
+    };
+
+    let text = object.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    let spoiler_text = object.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let sensitive = object.get("sensitive").and_then(|s| s.as_bool()).unwrap_or(false);
+    let url = object.get("url").and_then(|u| u.as_str()).map(str::to_owned);
+    let published = object.get("published").and_then(|p| p.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.with_timezone(&chrono::Utc));
+
+    // Determine visibility
+    let to = object.get("to").and_then(|v| v.as_array()).map(|a| {
+        a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
+    }).unwrap_or_default();
+    let visibility = if to.contains(&"https://www.w3.org/ns/activitystreams#Public") {
+        "public"
+    } else {
+        "unlisted"
+    };
+
+    // Resolve in_reply_to
+    let in_reply_to_uri = object.get("inReplyTo").and_then(|v| v.as_str());
+    let in_reply_to_id: Option<i64> = if let Some(uri) = in_reply_to_uri {
+        sqlx::query_scalar!("SELECT id FROM statuses WHERE uri = $1", uri)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
+    // Resolve quote_of_id from FEP-044f `quote` property or compat `quoteUrl`
+    let quote_uri = object.get("quote")
+        .and_then(|v| v.as_str())
+        .or_else(|| object.get("quoteUrl").and_then(|v| v.as_str()))
+        .or_else(|| object.get("quoteUri").and_then(|v| v.as_str()))
+        .or_else(|| object.get("_misskey_quote").and_then(|v| v.as_str()));
+    let quote_of_id: Option<i64> = if let Some(uri) = quote_uri {
+        sqlx::query_scalar!("SELECT id FROM statuses WHERE uri = $1", uri)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
+    let status_id = crate::snowflake::next_id();
+    let created_at = published.unwrap_or_else(chrono::Utc::now);
+
+    sqlx::query!(
+        r#"INSERT INTO statuses
+             (id, instance_id, account_id, text, spoiler_text, visibility, sensitive,
+              uri, url, in_reply_to_id, quote_of_id, reply, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING"#,
+        status_id,
+        instance.id,
+        account_id,
+        text,
+        spoiler_text,
+        visibility,
+        sensitive,
+        note_uri,
+        url,
+        in_reply_to_id,
+        quote_of_id,
+        in_reply_to_id.is_some(),
+        created_at,
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Increment quotes_count on locally-known quoted status
+    if let Some(qid) = quote_of_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1",
+            qid,
+        )
+        .execute(&state.db)
+        .await;
+    }
+
     Ok(())
 }
 

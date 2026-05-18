@@ -194,7 +194,7 @@ pub fn status_from_db_with_app(
         replies_count: s.replies_count,
         reblogs_count: s.reblogs_count,
         favourites_count: s.favourites_count,
-        quotes_count: 0,
+        quotes_count: s.quotes_count,
         edited_at: s.edited_at.map(|t| t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
         content,
         reblog: reblog_status,
@@ -211,9 +211,13 @@ pub fn status_from_db_with_app(
         poll: None,
         quote: None,
         quote_approval: types::QuoteApproval {
-            automatic: vec![],
+            automatic: if matches!(s.visibility.as_str(), "public" | "unlisted") {
+                vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
+            } else {
+                vec![]
+            },
             manual: vec![],
-            current_user: "denied".to_string(),
+            current_user: "allow".to_string(),
         },
         favourited,
         reblogged,
