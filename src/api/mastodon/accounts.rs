@@ -1767,19 +1767,15 @@ pub async fn batch_quote_data(
     }
 
     // Build the final map keyed by quoting status ID → QuoteInfo.
-    // Mastodon: quote field is null when DB state is not "accepted".
-    // Within accepted quotes, state may be further derived as "deleted" or "unauthorized".
+    // Show QuoteInfo for all states (accepted, pending, revoked, rejected).
+    // The effective state is derived from the DB state, with "deleted" and "unauthorized"
+    // as viewer-computed overrides per Mastodon's REST::BaseQuoteSerializer logic.
     let mut result: HashMap<i64, super::types::QuoteInfo> = HashMap::new();
     for s in statuses {
         let Some(qid) = s.quote_of_id else { continue };
         let state_str = quote_states.get(&s.id).cloned().unwrap_or_else(|| "accepted".to_string());
 
-        // Only produce a QuoteInfo when DB state is "accepted"
-        if state_str != "accepted" {
-            continue;
-        }
-
-        // Derive effective display state
+        // Derive effective display state and whether to include the quoted status body
         let (effective_state, include_status) = if deleted_ids.contains(&qid) {
             ("deleted".to_string(), false)
         } else {
@@ -1788,7 +1784,7 @@ pub async fn batch_quote_data(
             if unauthorized {
                 ("unauthorized".to_string(), false)
             } else {
-                ("accepted".to_string(), true)
+                (state_str.clone(), true)
             }
         };
 

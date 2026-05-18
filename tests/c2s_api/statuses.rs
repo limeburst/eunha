@@ -3700,7 +3700,7 @@ async fn test_unreblog_when_blocked_by_author_returns_200() {
 
 // ── quote post contract fixes ─────────────────────────────────────────────────
 
-/// Quoting a reblog unwraps to the original status (quoted_status.id is the original).
+/// Quoting a reblog is not allowed; must return 422.
 #[tokio::test]
 async fn test_quote_reblog_unwraps_to_original() {
     let ctx = TestContext::new("quote-reblog-unwrap").await;
@@ -3717,15 +3717,13 @@ async fn test_quote_reblog_unwraps_to_original() {
     ).await.json().await.unwrap();
     let reblog_id = reblog["id"].as_str().unwrap();
 
-    // Charlie quotes the reblog — should land on the original
-    let quote: Value = ctx.api.post_json(
+    // Quoting a reblog is not allowed — must return 422
+    let resp = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.alice_token),
         &json!({"status": "quoting a boost", "quoted_status_id": reblog_id, "visibility": "public"}),
-    ).await.json().await.unwrap();
-
-    let quoted_id = quote["quote"]["quoted_status"]["id"].as_str().unwrap();
-    assert_eq!(quoted_id, original_id, "quoting a boost must resolve to the original post");
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "quoting a reblog must return 422");
 }
 
 /// Quoting a post by a user who blocked you returns 422.
@@ -3774,7 +3772,7 @@ async fn test_quote_quoter_blocked_quotee_returns_422() {
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
-/// Pending quote appears as null in the quoting status response.
+/// Pending quote appears in the quoting status response with state "pending".
 #[tokio::test]
 async fn test_pending_quote_is_null_in_response() {
     let ctx = TestContext::new("quote-pending-null").await;
@@ -3805,7 +3803,8 @@ async fn test_pending_quote_is_null_in_response() {
         &json!({"status": "quoting pending post", "quoted_status_id": original_id, "visibility": "public"}),
     ).await.json().await.unwrap();
 
-    assert!(quote["quote"].is_null(), "pending quote must appear as null in the response");
+    assert!(!quote["quote"].is_null(), "pending quote must appear in the response");
+    assert_eq!(quote["quote"]["state"].as_str(), Some("pending"), "pending quote must have state 'pending'");
 }
 
 /// GET /api/v1/statuses/:id/quotes does not return pending or rejected quotes.
@@ -3845,6 +3844,71 @@ async fn test_get_quotes_only_returns_accepted() {
     ).await.json().await.unwrap();
     let arr = quotes.as_array().unwrap();
     assert_eq!(arr.len(), 0, "pending quotes must not appear in GET /quotes");
+}
+
+/// GET /api/v1/statuses/:id/quotes requires authentication.
+#[tokio::test]
+async fn test_get_quotes_requires_auth() {
+    let ctx = TestContext::new("quote-list-auth").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "a post", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}/quotes"),
+        None,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "GET /quotes must require authentication");
+}
+
+/// POST /api/v1/statuses with quote_approval_policy sets the quote_approval field correctly.
+#[tokio::test]
+async fn test_post_status_quote_approval_policy() {
+    let ctx = TestContext::new("quote-approval-policy").await;
+
+    // Default (no param) → automatic: ["public"]
+    let public_post: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "public quote policy", "visibility": "public"}),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        public_post["quote_approval"]["automatic"].as_array().unwrap(),
+        &[serde_json::json!("public")],
+        "default quote_approval_policy must be automatic:public"
+    );
+    assert_eq!(
+        public_post["quote_approval"]["current_user"].as_str(),
+        Some("automatic"),
+    );
+
+    // nobody → automatic: [], manual: []
+    let nobody_post: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "nobody quote policy", "visibility": "public", "quote_approval_policy": "nobody"}),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        nobody_post["quote_approval"]["automatic"].as_array().unwrap().len(),
+        0,
+        "nobody policy must have empty automatic array"
+    );
+    assert_eq!(
+        nobody_post["quote_approval"]["current_user"].as_str(),
+        Some("denied"),
+    );
+
+    // followers → automatic: ["followers"]
+    let followers_post: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "followers quote policy", "visibility": "public", "quote_approval_policy": "followers"}),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        followers_post["quote_approval"]["automatic"].as_array().unwrap(),
+        &[serde_json::json!("followers")],
+        "followers policy must have automatic:followers"
+    );
 }
 
 /// GET /api/v1/statuses/:id/quotes: owner of quoted post sees private quotes; others do not.
@@ -3901,8 +3965,9 @@ async fn test_revoke_quote_success() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["id"].as_str(), Some(quote_status_id));
-    // After revoke the quote field should be null (state = "revoked", not "accepted")
-    assert!(body["quote"].is_null(), "quote should be null after revoke");
+    // After revoke the quote field must be present with state "revoked"
+    assert!(!body["quote"].is_null(), "quote must be present after revoke");
+    assert_eq!(body["quote"]["state"].as_str(), Some("revoked"), "quote state must be 'revoked' after revocation");
 }
 
 /// POST revoke by wrong user (not the quoted post author) returns 403.

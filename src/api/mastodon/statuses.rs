@@ -43,6 +43,7 @@ pub struct PostStatusForm {
     pub in_reply_to_id: Option<String>,
     #[serde(alias = "quote_id")]
     pub quoted_status_id: Option<String>,
+    pub quote_approval_policy: Option<String>,
     pub spoiler_text: Option<String>,
     pub sensitive: Option<bool>,
     pub language: Option<String>,
@@ -195,49 +196,24 @@ pub async fn post_status(
         if quoted.visibility == "direct" {
             return Err(AppError::Unprocessable("cannot quote a direct message".into()));
         }
-        // Unwrap reblogs: quoting a boost quotes the original
-        let effective_id = if let Some(original_id) = quoted.reblog_of_id {
-            let original = sqlx::query!(
-                "SELECT id, account_id, visibility FROM statuses WHERE id = $1 AND deleted_at IS NULL",
-                original_id,
-            )
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_else(|| AppError::Unprocessable("quoted_status_id does not exist".into()))?;
-            if original.visibility == "direct" {
-                return Err(AppError::Unprocessable("cannot quote a direct message".into()));
-            }
-            // Block check against original author
-            let blocked = sqlx::query_scalar!(
-                r#"SELECT 1 FROM blocks
-                   WHERE (account_id = $1 AND target_account_id = $2)
-                      OR (account_id = $2 AND target_account_id = $1)
-                   LIMIT 1"#,
-                account.id, original.account_id,
-            )
-            .fetch_optional(&state.db)
-            .await?;
-            if blocked.is_some() {
-                return Err(AppError::Unprocessable("not allowed to interact with this post".into()));
-            }
-            original.id
-        } else {
-            // Block check against quoted author
-            let blocked = sqlx::query_scalar!(
-                r#"SELECT 1 FROM blocks
-                   WHERE (account_id = $1 AND target_account_id = $2)
-                      OR (account_id = $2 AND target_account_id = $1)
-                   LIMIT 1"#,
-                account.id, quoted.account_id,
-            )
-            .fetch_optional(&state.db)
-            .await?;
-            if blocked.is_some() {
-                return Err(AppError::Unprocessable("not allowed to interact with this post".into()));
-            }
-            quoted.id
-        };
-        Some(effective_id)
+        // Cannot quote a reblog; must quote the original post directly
+        if quoted.reblog_of_id.is_some() {
+            return Err(AppError::Unprocessable("cannot quote a reblog".into()));
+        }
+        // Block check against quoted author
+        let blocked = sqlx::query_scalar!(
+            r#"SELECT 1 FROM blocks
+               WHERE (account_id = $1 AND target_account_id = $2)
+                  OR (account_id = $2 AND target_account_id = $1)
+               LIMIT 1"#,
+            account.id, quoted.account_id,
+        )
+        .fetch_optional(&state.db)
+        .await?;
+        if blocked.is_some() {
+            return Err(AppError::Unprocessable("not allowed to interact with this post".into()));
+        }
+        Some(quoted.id)
     } else {
         None
     };
@@ -277,13 +253,41 @@ pub async fn post_status(
         vec![]
     };
 
+    // Build interaction_policy for the new status from the quote_approval_policy param.
+    let actor_url = format!("https://{}/users/{}", instance.domain, account.username);
+    let interaction_policy: Option<serde_json::Value> = {
+        let followers_uri = format!("{}/followers", actor_url);
+        let public_uri = "https://www.w3.org/ns/activitystreams#Public";
+        let (always, with_approval): (serde_json::Value, serde_json::Value) =
+            match form.quote_approval_policy.as_deref() {
+                Some("followers") => (
+                    serde_json::json!([followers_uri]),
+                    serde_json::json!([]),
+                ),
+                Some("nobody") => (
+                    serde_json::json!([]),
+                    serde_json::json!([]),
+                ),
+                _ => (
+                    serde_json::json!([public_uri]),
+                    serde_json::json!([]),
+                ),
+            };
+        Some(serde_json::json!({
+            "can_quote": {
+                "always": always,
+                "with_approval": with_approval,
+            }
+        }))
+    };
+
     let is_reply = in_reply_to_id.is_some();
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
              (id, instance_id, account_id, application_id, text, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url, quote_of_id)
-           VALUES ($1,$2,$3,$12,$4,$5,$6,$7,$8,$9,$10,$14,$11,$13,$13,$15)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url, quote_of_id, interaction_policy)
+           VALUES ($1,$2,$3,$12,$4,$5,$6,$7,$8,$9,$10,$14,$11,$13,$13,$15,$16)
            RETURNING *"#,
         status_id,
         instance.id,
@@ -300,6 +304,7 @@ pub async fn post_status(
         uri,
         is_reply,
         quote_of_id,
+        interaction_policy as Option<serde_json::Value>,
     )
     .fetch_one(&state.db)
     .await?;
@@ -640,6 +645,7 @@ async fn extract_post_status_form(request: axum::extract::Request) -> AppResult<
                 "status" => form.status = Some(text),
                 "in_reply_to_id" => form.in_reply_to_id = if text.is_empty() { None } else { Some(text) },
                 "quoted_status_id" | "quote_id" => form.quoted_status_id = if text.is_empty() { None } else { Some(text) },
+                "quote_approval_policy" => form.quote_approval_policy = if text.is_empty() { None } else { Some(text) },
                 "spoiler_text" => form.spoiler_text = if text.is_empty() { None } else { Some(text) },
                 "visibility" => form.visibility = Some(text),
                 "language" => form.language = if text.is_empty() { None } else { Some(text) },
@@ -2415,10 +2421,60 @@ pub(super) async fn batch_viewer_contexts(
     .into_iter()
     .collect();
 
+    let status_author_rows = sqlx::query!(
+        "SELECT id as status_id, account_id FROM statuses WHERE id = ANY($1::bigint[])",
+        status_ids,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let status_to_author: HashMap<i64, i64> = status_author_rows
+        .into_iter()
+        .map(|r| (r.status_id, r.account_id))
+        .collect();
+
+    let author_ids: Vec<i64> = status_to_author.values()
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let viewer_follows_set: HashSet<i64> = if !author_ids.is_empty() {
+        sqlx::query_scalar!(
+            "SELECT target_account_id FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[]) AND state = 'accepted'",
+            viewer_id, &author_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+    } else {
+        HashSet::new()
+    };
+
+    let author_follows_set: HashSet<i64> = if !author_ids.is_empty() {
+        sqlx::query_scalar!(
+            "SELECT account_id FROM follows WHERE account_id = ANY($1::bigint[]) AND target_account_id = $2 AND state = 'accepted'",
+            &author_ids, viewer_id,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+    } else {
+        HashSet::new()
+    };
+
     let mut result = HashMap::with_capacity(status_ids.len());
     for &id in status_ids {
+        let author_id = status_to_author.get(&id).cloned().unwrap_or(0);
         result.insert(id, StatusViewerContext {
             account_id: viewer_id,
+            follows_author: viewer_follows_set.contains(&author_id),
+            author_follows: author_follows_set.contains(&author_id),
             favourited: fav_set.contains(&id),
             reblogged: reb_set.contains(&id),
             bookmarked: book_set.contains(&id),
@@ -2434,13 +2490,14 @@ pub(super) async fn batch_viewer_contexts(
 pub async fn get_status_quotes(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    auth: Option<Extension<AuthenticatedUser>>,
+    Extension(auth): Extension<AuthenticatedUser>,
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
     req_headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<impl axum::response::IntoResponse> {
-    let viewer_id = auth.map(|Extension(u)| u.account_id);
+    auth.require_scope("read:statuses")?;
+    let viewer_id = Some(auth.account_id);
     let limit: i64 = params.limit_clamped(20, 40);
     let max_id: Option<i64> = params.max_id.as_deref().and_then(|s| s.parse().ok());
     let since_id: Option<i64> = params.since_id.as_deref().and_then(|s| s.parse().ok());
@@ -2592,8 +2649,36 @@ pub async fn build_viewer_context(
     .await?
     .is_some();
 
+    let author_id: i64 = sqlx::query_scalar!(
+        "SELECT account_id FROM statuses WHERE id = $1",
+        status_id
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0);
+
+    let follows_author = sqlx::query!(
+        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+        viewer_id, author_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
+    let author_follows = sqlx::query!(
+        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+        author_id, viewer_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
     Ok(super::convert::StatusViewerContext {
         account_id: viewer_id,
+        follows_author,
+        author_follows,
         favourited,
         reblogged,
         muted,

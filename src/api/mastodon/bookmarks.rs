@@ -136,6 +136,8 @@ pub async fn get_bookmarks(
             .unwrap_or_default();
         let mut ctx = ctxs.get(&s.id).cloned().unwrap_or(super::convert::StatusViewerContext {
             account_id: auth.account_id,
+            follows_author: false,
+            author_follows: false,
             favourited: false,
             reblogged: false,
             muted: false,

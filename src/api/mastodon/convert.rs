@@ -122,44 +122,70 @@ fn render_status_content(
     }
 }
 
+fn ap_uri_to_policy_label(uri: &str) -> &'static str {
+    match uri {
+        "https://www.w3.org/ns/activitystreams#Public" => "public",
+        u if u.ends_with("/followers") => "followers",
+        u if u.ends_with("/following") => "following",
+        _ => "unsupported_policy",
+    }
+}
+
 fn build_quote_approval(
     s: &models::Status,
     viewer: Option<&StatusViewerContext>,
 ) -> types::QuoteApproval {
     let policy = s.interaction_policy.as_ref();
-    let always = policy
+    let always_uris: Vec<String> = policy
         .and_then(|p| p.get("can_quote"))
         .and_then(|cq| cq.get("always"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
         .unwrap_or_else(|| {
-            // Default: public/unlisted allow everyone; private/direct allow none
             if matches!(s.visibility.as_str(), "public" | "unlisted") {
                 vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
             } else {
                 vec![]
             }
         });
-    let with_approval = policy
+    let with_approval_uris: Vec<String> = policy
         .and_then(|p| p.get("can_quote"))
         .and_then(|cq| cq.get("with_approval"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
         .unwrap_or_default();
 
-    let current_user = if viewer.is_none() {
-        "unknown".to_string()
-    } else if always.contains(&"https://www.w3.org/ns/activitystreams#Public".to_string()) {
-        "automatic".to_string()
-    } else if with_approval.contains(&"https://www.w3.org/ns/activitystreams#Public".to_string()) {
-        "manual".to_string()
-    } else {
-        "denied".to_string()
+    let automatic: Vec<String> = always_uris.iter().map(|u| ap_uri_to_policy_label(u).to_owned()).collect();
+    let manual: Vec<String> = with_approval_uris.iter().map(|u| ap_uri_to_policy_label(u).to_owned()).collect();
+
+    let current_user = match viewer {
+        None => "unknown".to_string(),
+        Some(ctx) => {
+            let public_uri = "https://www.w3.org/ns/activitystreams#Public";
+            // Author can always quote their own post
+            if ctx.account_id == s.account_id {
+                "automatic".to_string()
+            } else if always_uris.iter().any(|u| u == public_uri) {
+                "automatic".to_string()
+            } else if always_uris.iter().any(|u| u.ends_with("/followers")) && ctx.follows_author {
+                "automatic".to_string()
+            } else if always_uris.iter().any(|u| u.ends_with("/following")) && ctx.author_follows {
+                "automatic".to_string()
+            } else if with_approval_uris.iter().any(|u| u == public_uri) {
+                "manual".to_string()
+            } else if with_approval_uris.iter().any(|u| u.ends_with("/followers")) && ctx.follows_author {
+                "manual".to_string()
+            } else if with_approval_uris.iter().any(|u| u.ends_with("/following")) && ctx.author_follows {
+                "manual".to_string()
+            } else {
+                "denied".to_string()
+            }
+        }
     };
 
     types::QuoteApproval {
-        automatic: always,
-        manual: with_approval,
+        automatic,
+        manual,
         current_user,
     }
 }
@@ -266,6 +292,8 @@ pub fn status_from_db_with_app(
 #[derive(Clone)]
 pub struct StatusViewerContext {
     pub account_id: i64,
+    pub follows_author: bool,
+    pub author_follows: bool,
     pub favourited: bool,
     pub reblogged: bool,
     pub muted: bool,
