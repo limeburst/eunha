@@ -394,7 +394,7 @@ pub async fn seed_account_and_token(
 
     let token = Uuid::new_v4().to_string().replace("-", "");
     sqlx::query!(
-        "INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes) VALUES ($1,$2,$3,'read write follow')",
+        "INSERT INTO oauth_access_tokens (application_id, account_id, token, scopes) VALUES ($1,$2,$3,'read write follow push')",
         app_id,
         account_id,
         token,
