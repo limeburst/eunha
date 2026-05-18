@@ -345,7 +345,7 @@ pub async fn get_account_statuses(
                  AND deleted_at IS NULL
                  AND ($2::bigint IS NULL OR id > $2)
                  AND ($3::boolean IS NOT TRUE OR reblog_of_id IS NULL)
-                 AND ($4::boolean IS NOT TRUE OR in_reply_to_id IS NULL)
+                 AND ($4::boolean IS NOT TRUE OR in_reply_to_id IS NULL OR in_reply_to_account_id = $1)
                  AND (
                    visibility IN ('public', 'unlisted')
                    OR ($5::boolean = true)
@@ -388,7 +388,7 @@ pub async fn get_account_statuses(
                  AND ($2::bigint IS NULL OR id < $2)
                  AND ($3::bigint IS NULL OR id > $3)
                  AND ($4::boolean IS NOT TRUE OR reblog_of_id IS NULL)
-                 AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL)
+                 AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL OR in_reply_to_account_id = $1)
                  AND (
                    visibility IN ('public', 'unlisted')
                    OR ($6::boolean = true)

@@ -111,32 +111,37 @@ async fn test_account_statuses_shows_all_to_self() {
 
 // ── account statuses filters ───────────────────────────────────────────────────
 
-/// ?exclude_replies=true omits replies from account statuses.
+/// ?exclude_replies=true omits replies to other users from account statuses.
 #[tokio::test]
 async fn test_account_statuses_exclude_replies() {
     let ctx = TestContext::new("acct-excl-reply").await;
 
-    let parent = ctx.api.post_status(&ctx.alice_token, "parent status", "public").await;
-    let parent_id = parent["id"].as_str().unwrap();
+    // Alice's own post.
+    let own_post = ctx.api.post_status(&ctx.alice_token, "alice own post", "public").await;
+    let own_post_id = own_post["id"].as_str().unwrap();
+
+    // Alice replies to bob (a foreign reply — should be excluded).
+    let bob_post = ctx.api.post_status(&ctx.bob_token, "bob post", "public").await;
+    let bob_post_id = bob_post["id"].as_str().unwrap();
     let reply: Value = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.alice_token),
-        &json!({"status": "reply", "in_reply_to_id": parent_id, "visibility": "public"}),
+        &json!({"status": "alice reply to bob", "in_reply_to_id": bob_post_id, "visibility": "public"}),
     ).await.json().await.unwrap();
     let reply_id = reply["id"].as_str().unwrap();
 
-    let resp = ctx.api.get(
+    let statuses: Vec<Value> = ctx.api.get(
         &format!("/api/v1/accounts/{}/statuses?exclude_replies=true", ctx.alice_id),
         Some(&ctx.alice_token),
-    ).await;
-    let statuses: Vec<Value> = resp.json().await.unwrap();
+    ).await.json().await.unwrap();
+
     assert!(
         !statuses.iter().any(|s| s["id"].as_str() == Some(reply_id)),
-        "reply should be excluded from results",
+        "reply to other user should be excluded",
     );
     assert!(
-        statuses.iter().any(|s| s["id"].as_str() == Some(parent_id)),
-        "parent should still appear",
+        statuses.iter().any(|s| s["id"].as_str() == Some(own_post_id)),
+        "own post should still appear",
     );
 }
 
@@ -2228,4 +2233,54 @@ async fn test_following_ordered_by_account_id_desc() {
 
     let sorted_desc: Vec<i64> = { let mut s = ids.clone(); s.sort_unstable_by(|a, b| b.cmp(a)); s };
     assert_eq!(ids, sorted_desc, "following should be ordered by account id DESC");
+}
+
+// ── exclude_replies self-reply inclusion ─────────────────────────────────────
+
+/// exclude_replies=true keeps self-replies (replies to own posts).
+#[tokio::test]
+async fn test_account_statuses_exclude_replies_keeps_self_replies() {
+    let ctx = TestContext::new("acct-excl-selfreply").await;
+
+    // Alice posts a status and then replies to herself.
+    let parent = ctx.api.post_status(&ctx.alice_token, "alice original", "public").await;
+    let parent_id = parent["id"].as_str().unwrap();
+
+    let self_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "alice self-reply", "in_reply_to_id": parent_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let self_reply_id = self_reply["id"].as_str().unwrap();
+
+    // Bob posts a status and alice replies to bob (a foreign reply).
+    let bob_post = ctx.api.post_status(&ctx.bob_token, "bob post", "public").await;
+    let bob_post_id = bob_post["id"].as_str().unwrap();
+    let foreign_reply: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "alice reply to bob", "in_reply_to_id": bob_post_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let foreign_reply_id = foreign_reply["id"].as_str().unwrap();
+
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses?exclude_replies=true", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
+    assert!(ids.contains(&parent_id), "parent should appear");
+    assert!(ids.contains(&self_reply_id), "self-reply should be kept when exclude_replies=true");
+    assert!(!ids.contains(&foreign_reply_id), "reply-to-other should be excluded");
+}
+
+// ── GET /api/v1/preferences ──────────────────────────────────────────────────
+
+/// Preferences endpoint requires authentication.
+#[tokio::test]
+async fn test_preferences_requires_auth() {
+    let ctx = TestContext::new("prefs-unauth").await;
+
+    let resp = ctx.api.get("/api/v1/preferences", None).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
