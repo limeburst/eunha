@@ -37,6 +37,7 @@ pub async fn vote_poll(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<PollVoteForm>,
 ) -> AppResult<Json<Poll>> {
+    auth.require_scope("write:statuses")?;
     let poll = fetch_poll(&state, id).await?;
 
     let expired = poll.expires_at.map(|e| e < chrono::Utc::now()).unwrap_or(false);
