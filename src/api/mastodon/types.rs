@@ -438,6 +438,7 @@ pub struct Relationship {
     pub blocked_by: bool,
     pub muting: bool,
     pub muting_notifications: bool,
+    #[serde(rename = "mute_expires_at")]
     pub muting_expires_at: Option<String>,
     pub requested: bool,
     pub requested_by: bool,

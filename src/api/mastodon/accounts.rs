@@ -1454,41 +1454,40 @@ pub async fn authorize_follow_request(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
-    sqlx::query!(
+    let updated = sqlx::query!(
         "UPDATE follows SET state = 'accepted' WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
         requester_id, auth.account_id
     )
     .execute(&state.db)
     .await?;
 
-    sqlx::query!(
-        "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
-        auth.account_id
-    )
-    .execute(&state.db)
-    .await?;
+    if updated.rows_affected() > 0 {
+        sqlx::query!(
+            "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
+            auth.account_id
+        )
+        .execute(&state.db)
+        .await?;
 
-    sqlx::query!(
-        "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
-        requester_id
-    )
-    .execute(&state.db)
-    .await?;
+        sqlx::query!(
+            "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
+            requester_id
+        )
+        .execute(&state.db)
+        .await?;
 
-    let accepter = fetch_account(&state, auth.account_id).await?;
-    push::create_and_push(
-        &state,
-        requester_id,
-        auth.account_id,
-        "follow",
-        None,
-        format!("{} accepted your follow request", accepter.display_name),
-        accepter.acct().clone(),
-        accepter.avatar.clone().unwrap_or_default(),
-    ).await;
+        let accepter = fetch_account(&state, auth.account_id).await?;
+        push::create_and_push(
+            &state,
+            requester_id,
+            auth.account_id,
+            "follow",
+            None,
+            format!("{} accepted your follow request", accepter.display_name),
+            accepter.acct().clone(),
+            accepter.avatar.clone().unwrap_or_default(),
+        ).await;
 
-    // Backfill the requester's feed with recent statuses from the accepted account
-    {
         let mut redis = state.redis.clone();
         let db = state.db.clone();
         let iid = instance.id;

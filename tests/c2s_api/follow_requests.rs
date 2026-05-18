@@ -209,3 +209,39 @@ async fn test_follow_requests_limit_param() {
     let list: Vec<Value> = resp.json().await.unwrap();
     assert!(list.len() <= 1, "limit=1 should return at most 1 request");
 }
+
+/// Double-accepting a follow request must not inflate follower/following counts.
+#[tokio::test]
+async fn test_authorize_follow_request_idempotent_counts() {
+    let ctx = TestContext::new("freq-idem-counts").await;
+
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("locked", "true")],
+    ).await;
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    // First accept.
+    ctx.api.post_json(
+        &format!("/api/v1/follow_requests/{}/authorize", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    // Second accept (no pending row exists — must be a no-op).
+    ctx.api.post_json(
+        &format!("/api/v1/follow_requests/{}/authorize", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    let alice: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None)
+        .await.json().await.unwrap();
+    let bob: Value = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.bob_id), None)
+        .await.json().await.unwrap();
+
+    assert_eq!(alice["followers_count"].as_i64(), Some(1), "alice should have exactly 1 follower");
+    assert_eq!(bob["following_count"].as_i64(), Some(1), "bob should be following exactly 1 account");
+}
