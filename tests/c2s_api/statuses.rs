@@ -4049,3 +4049,66 @@ async fn test_quote_state_deleted_when_quoted_post_removed() {
     assert_eq!(q["state"].as_str(), Some("deleted"), "state should be 'deleted' after quoted post removed");
     assert!(q["quoted_status"].is_null(), "quoted_status should be null when deleted");
 }
+
+/// PATCH /api/v1/accounts/update_credentials with source[quote_policy] persists the setting
+/// and subsequent statuses use it as their default.
+#[tokio::test]
+async fn test_update_credentials_quote_policy() {
+    let ctx = TestContext::new("quote-policy-pref").await;
+
+    // Default is "public"
+    let creds: Value = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(creds["source"]["quote_policy"].as_str(), Some("public"));
+
+    // Set to "nobody"
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("source[quote_policy]", "nobody")],
+    ).await;
+
+    let creds: Value = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(creds["source"]["quote_policy"].as_str(), Some("nobody"), "quote_policy should be updated");
+
+    // New post without explicit quote_approval_policy should inherit the user default
+    let post: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "nobody may quote me", "visibility": "public"}),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        post["quote_approval"]["automatic"].as_array().unwrap().len(),
+        0,
+        "nobody policy: automatic must be empty"
+    );
+    assert_eq!(
+        post["quote_approval"]["current_user"].as_str(),
+        Some("denied"),
+        "nobody policy: current_user must be denied"
+    );
+}
+
+/// When a user sets source[quote_policy]=followers, new statuses use "followers" automatic approval.
+#[tokio::test]
+async fn test_default_quote_policy_followers_applied_to_new_status() {
+    let ctx = TestContext::new("quote-policy-followers-default").await;
+
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("source[quote_policy]", "followers")],
+    ).await;
+
+    let post: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "followers may quote", "visibility": "public"}),
+    ).await.json().await.unwrap();
+    assert_eq!(
+        post["quote_approval"]["automatic"].as_array().unwrap(),
+        &[serde_json::json!("followers")],
+        "followers policy: automatic must contain 'followers'"
+    );
+}

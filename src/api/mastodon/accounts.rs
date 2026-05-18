@@ -32,15 +32,15 @@ pub async fn verify_credentials(
     api_account.emojis = fetch_account_emojis(&state, &account).await;
 
     let user_prefs = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
         account.id
     )
     .fetch_optional(&state.db)
     .await?;
 
-    let (default_privacy, default_sensitive, default_language) = user_prefs.map_or(
-        ("public".to_string(), false, None),
-        |u| (u.default_privacy, u.default_sensitive, u.default_language),
+    let (default_privacy, default_sensitive, default_language, default_quote_policy) = user_prefs.map_or(
+        ("public".to_string(), false, None, "public".to_string()),
+        |u| (u.default_privacy, u.default_sensitive, u.default_language, u.default_quote_policy),
     );
 
     let follow_requests: i64 = sqlx::query_scalar!(
@@ -62,7 +62,7 @@ pub async fn verify_credentials(
         indexable: account.indexable,
         hide_collections: Some(account.hide_collections),
         attribution_domains: account.attribution_domains.clone(),
-        quote_policy: "public".into(),
+        quote_policy: default_quote_policy,
     });
 
     api_account.roles = fetch_account_roles(&state, account.id).await;
@@ -942,6 +942,7 @@ pub async fn update_credentials(
     let mut source_sensitive: Option<bool> = None;
     let mut source_language: Option<Option<String>> = None;
     let mut source_hide_collections: Option<bool> = None;
+    let mut source_quote_policy: Option<String> = None;
     let mut indexable: Option<bool> = None;
     // fields_attributes[N][name] / fields_attributes[N][value]
     let mut fields_map: std::collections::BTreeMap<u32, (String, String)> = std::collections::BTreeMap::new();
@@ -1008,6 +1009,12 @@ pub async fn update_credentials(
             "source[hide_collections]" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 source_hide_collections = Some(v == "true" || v == "1");
+            }
+            "source[quote_policy]" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                if matches!(v.as_str(), "public" | "followers" | "nobody") {
+                    source_quote_policy = Some(v);
+                }
             }
             "indexable" | "source[indexable]" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
@@ -1160,6 +1167,13 @@ pub async fn update_credentials(
         )
         .execute(&state.db).await?;
     }
+    if let Some(ref qp) = source_quote_policy {
+        sqlx::query!(
+            "UPDATE users SET default_quote_policy = $1 WHERE account_id = $2",
+            qp, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
 
     let account = fetch_account(&state, auth.account_id).await?;
     let fields = super::convert::fields_from_db(&account.fields);
@@ -1173,15 +1187,15 @@ pub async fn update_credentials(
     .unwrap_or(0);
 
     let user_prefs = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
         auth.account_id
     )
     .fetch_optional(&state.db)
     .await?;
 
-    let (default_privacy, default_sensitive, default_language) = user_prefs.map_or(
-        ("public".to_string(), false, None),
-        |u| (u.default_privacy, u.default_sensitive, u.default_language),
+    let (default_privacy, default_sensitive, default_language, default_quote_policy) = user_prefs.map_or(
+        ("public".to_string(), false, None, "public".to_string()),
+        |u| (u.default_privacy, u.default_sensitive, u.default_language, u.default_quote_policy),
     );
 
     api_account.source = Some(super::types::AccountSource {
@@ -1195,7 +1209,7 @@ pub async fn update_credentials(
         indexable: account.indexable,
         hide_collections: Some(account.hide_collections),
         attribution_domains: account.attribution_domains.clone(),
-        quote_policy: "public".into(),
+        quote_policy: default_quote_policy,
     });
     Ok(Json(api_account))
 }

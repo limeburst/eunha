@@ -150,7 +150,7 @@ pub async fn post_status(
     }
 
     let user_defaults = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
         auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -253,18 +253,25 @@ pub async fn post_status(
         vec![]
     };
 
-    // Build interaction_policy for the new status from the quote_approval_policy param.
+    // Build interaction_policy for the new status.
+    // Explicit quote_approval_policy param takes precedence; fall back to the user's
+    // stored default_quote_policy, which itself defaults to "public".
     let actor_url = format!("https://{}/users/{}", instance.domain, account.username);
+    let effective_quote_policy = form.quote_approval_policy.clone().unwrap_or_else(|| {
+        user_defaults.as_ref()
+            .map(|u| u.default_quote_policy.clone())
+            .unwrap_or_else(|| "public".to_string())
+    });
     let interaction_policy: Option<serde_json::Value> = {
         let followers_uri = format!("{}/followers", actor_url);
         let public_uri = "https://www.w3.org/ns/activitystreams#Public";
         let (always, with_approval): (serde_json::Value, serde_json::Value) =
-            match form.quote_approval_policy.as_deref() {
-                Some("followers") => (
+            match effective_quote_policy.as_str() {
+                "followers" => (
                     serde_json::json!([followers_uri]),
                     serde_json::json!([]),
                 ),
-                Some("nobody") => (
+                "nobody" => (
                     serde_json::json!([]),
                     serde_json::json!([]),
                 ),
