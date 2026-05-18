@@ -3271,3 +3271,46 @@ async fn test_status_language_defaults_to_user_preference() {
         "explicit language 'en' should override the default"
     );
 }
+
+/// GET /api/v1/statuses/:id/history on a private status returns 404 for unauthenticated users.
+#[tokio::test]
+async fn test_status_history_private_requires_auth() {
+    let ctx = TestContext::new("history-private-auth").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "private post", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Edit it so there's history to show.
+    ctx.api.put_json(
+        &format!("/api/v1/statuses/{id}"),
+        Some(&ctx.alice_token),
+        &json!({"status": "private post v2"}),
+    ).await;
+
+    // Unauthenticated viewer should get 404.
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/history"), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "private status history should be 404 for unauthenticated");
+
+    // Author can see it.
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/history"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let history: Vec<Value> = resp.json().await.unwrap();
+    assert!(history.len() >= 2, "author should see at least 2 history entries");
+}
+
+/// GET /api/v1/statuses/:id/context on a private status returns 404 for unauthenticated users.
+#[tokio::test]
+async fn test_status_context_private_requires_auth() {
+    let ctx = TestContext::new("context-private-auth").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "private root", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Unauthenticated viewer should get 404.
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/context"), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "private status context should be 404 for unauthenticated");
+
+    // Author can see it.
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/context"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}

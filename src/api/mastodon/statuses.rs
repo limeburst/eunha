@@ -1172,12 +1172,26 @@ pub async fn get_status_context(
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<StatusContext>> {
-    sqlx::query!("SELECT id FROM statuses WHERE id = $1 AND deleted_at IS NULL", id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let root = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
 
     let viewer_id = auth.map(|Extension(a)| a.account_id);
+
+    // Enforce the same visibility rules as GET /api/v1/statuses/:id
+    match viewer_id {
+        Some(vid) => check_status_visible(&state, &root, vid).await?,
+        None => {
+            if root.visibility != "public" && root.visibility != "unlisted" {
+                return Err(AppError::NotFound);
+            }
+        }
+    }
 
     // Mastodon limits: authenticated=4096 each; unauthenticated=40 ancestors, 60 descendants (depth 20).
     let (ancestor_limit, descendant_limit, depth_limit): (i64, i64, i64) =
@@ -1894,6 +1908,7 @@ pub async fn edit_status(
 pub async fn get_status_history(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<StatusEdit>>> {
     let status = sqlx::query_as!(
         DbStatus,
@@ -1903,6 +1918,16 @@ pub async fn get_status_history(
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::NotFound)?;
+
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+    match viewer_id {
+        Some(vid) => check_status_visible(&state, &status, vid).await?,
+        None => {
+            if status.visibility != "public" && status.visibility != "unlisted" {
+                return Err(AppError::NotFound);
+            }
+        }
+    }
 
     let account = sqlx::query_as!(
         Account,
