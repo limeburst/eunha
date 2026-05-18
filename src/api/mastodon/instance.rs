@@ -1,7 +1,8 @@
 use axum::{
-    extract::{Extension, State},
+    extract::{Extension, Query, State},
     Json,
 };
+use serde::Deserialize;
 use crate::{
     error::AppResult,
     middleware::ResolvedInstance,
@@ -151,6 +152,44 @@ pub async fn get_peers(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(rows.into_iter().flatten().collect()))
+}
+
+// ── GET /api/v1/peers/search ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PeersSearchParams {
+    pub q: Option<String>,
+}
+
+pub async fn search_peers(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Query(params): Query<PeersSearchParams>,
+) -> AppResult<Json<Vec<String>>> {
+    let q = params.q.as_deref().unwrap_or("").trim().to_string();
+    let pattern = format!("%{}%", q);
+    let rows = sqlx::query_scalar!(
+        "SELECT DISTINCT domain FROM accounts WHERE instance_id = $1 AND domain IS NOT NULL AND domain ILIKE $2 ORDER BY domain LIMIT 20",
+        instance.id,
+        pattern,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .flatten()
+    .collect();
+    Ok(Json(rows))
+}
+
+// ── GET /api/v1/instance/terms_of_service ────────────────────────────────
+
+pub async fn get_terms_of_service(
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+) -> AppResult<Json<ExtendedDescription>> {
+    Ok(Json(ExtendedDescription {
+        updated_at: super::convert::mastodon_date(instance.updated_at),
+        content: String::new(),
+    }))
 }
 
 pub async fn get_instance_v2(

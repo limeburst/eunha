@@ -513,6 +513,99 @@ pub async fn get_notifications_v2(
     }))
 }
 
+// ── GET /api/v2/notifications/:group_key ─────────────────────────────────
+
+pub async fn get_notification_group(
+    State(state): State<AppState>,
+    Path(group_key): Path<String>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<NotificationGroup>> {
+    auth.require_scope("read:notifications")?;
+    let notif_id: i64 = group_key
+        .strip_prefix("ungrouped-")
+        .and_then(|s| s.parse().ok())
+        .ok_or(AppError::NotFound)?;
+
+    let n: DbNotification = sqlx::query_as(
+        "SELECT * FROM notifications WHERE id = $1 AND account_id = $2",
+    )
+    .bind(notif_id)
+    .bind(auth.account_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let id_str = n.id.to_string();
+    Ok(Json(NotificationGroup {
+        group_key: format!("ungrouped-{}", id_str),
+        notifications_count: 1,
+        notification_type: n.notification_type,
+        most_recent_notification_id: id_str.clone(),
+        page_max_id: id_str.clone(),
+        page_min_id: id_str.clone(),
+        latest_page_notification_at: super::convert::mastodon_date(n.created_at),
+        sample_account_ids: vec![n.from_account_id.to_string()],
+        status_id: n.status_id.map(|s| s.to_string()),
+    }))
+}
+
+// ── POST /api/v2/notifications/:group_key/dismiss ─────────────────────────
+
+pub async fn dismiss_notification_group(
+    State(state): State<AppState>,
+    Path(group_key): Path<String>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:notifications")?;
+    let notif_id: i64 = group_key
+        .strip_prefix("ungrouped-")
+        .and_then(|s| s.parse().ok())
+        .ok_or(AppError::NotFound)?;
+
+    sqlx::query!(
+        "DELETE FROM notifications WHERE id = $1 AND account_id = $2",
+        notif_id,
+        auth.account_id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v2/notifications/:group_key/accounts ────────────────────────
+
+pub async fn get_notification_group_accounts(
+    State(state): State<AppState>,
+    Path(group_key): Path<String>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<super::types::Account>>> {
+    auth.require_scope("read:notifications")?;
+    let notif_id: i64 = group_key
+        .strip_prefix("ungrouped-")
+        .and_then(|s| s.parse().ok())
+        .ok_or(AppError::NotFound)?;
+
+    let n: DbNotification = sqlx::query_as(
+        "SELECT * FROM notifications WHERE id = $1 AND account_id = $2",
+    )
+    .bind(notif_id)
+    .bind(auth.account_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let account: Account = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        n.from_account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(vec![super::convert::account_from_db(&account)]))
+}
+
 // ── GET /api/v1/notifications/unread_count ───────────────────────────────
 
 pub async fn get_notifications_unread_count(
@@ -997,6 +1090,16 @@ pub async fn dismiss_all_notification_requests(
     .execute(&state.db)
     .await?;
     Ok(Json(serde_json::json!({})))
+}
+
+// ── GET /api/v1/notifications/requests/merged ────────────────────────────
+
+pub async fn get_notification_requests_merged(
+    State(_state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("read:notifications")?;
+    Ok(Json(serde_json::json!({ "merged": true })))
 }
 
 // ── GET /api/v1/notifications/requests/:id ───────────────────────────────

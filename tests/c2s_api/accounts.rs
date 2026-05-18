@@ -2417,6 +2417,28 @@ async fn test_directory_local_param() {
     }
 }
 
+/// GET /api/v1/donation_campaigns returns empty array (stub).
+#[tokio::test]
+async fn test_donation_campaigns_returns_array() {
+    let ctx = TestContext::new("donation-campaigns").await;
+
+    let resp = ctx.api.get("/api/v1/donation_campaigns", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let _ = body;
+}
+
+/// GET /api/v1/accounts/:id/identity_proofs returns empty array (stub).
+#[tokio::test]
+async fn test_account_identity_proofs_returns_array() {
+    let ctx = TestContext::new("identity-proofs").await;
+
+    let resp = ctx.api.get(&format!("/api/v1/accounts/{}/identity_proofs", ctx.alice_id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let _ = body;
+}
+
 /// GET /api/v1/directory?order=new returns accounts ordered by creation date descending.
 #[tokio::test]
 async fn test_directory_order_new() {

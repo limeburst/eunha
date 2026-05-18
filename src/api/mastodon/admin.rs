@@ -1831,6 +1831,180 @@ pub async fn admin_trending_links(
     super::trends::trending_links(state, query).await
 }
 
+// ── Admin Trends Approve / Reject (stubs — eunha computes trends dynamically) ──
+
+pub async fn admin_approve_trending_tag(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+pub async fn admin_reject_trending_tag(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+pub async fn admin_approve_trending_status(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+pub async fn admin_reject_trending_status(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+pub async fn admin_approve_trending_link(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+pub async fn admin_reject_trending_link(
+    Extension(auth): Extension<AuthenticatedUser>,
+    State(state): State<AppState>,
+    Path(_id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+// ── Admin Canonical Email Blocks ──────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct CanonicalEmailBlock {
+    pub id: String,
+    pub canonical_email_hash: String,
+    pub created_at: String,
+}
+
+pub async fn list_canonical_email_blocks(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<Vec<CanonicalEmailBlock>>> {
+    require_admin(&state, auth.account_id).await?;
+    let rows = sqlx::query!(
+        "SELECT id, canonical_email_hash, created_at FROM canonical_email_blocks ORDER BY id DESC LIMIT 100",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| CanonicalEmailBlock {
+        id: r.id.to_string(),
+        canonical_email_hash: r.canonical_email_hash,
+        created_at: super::convert::mastodon_date(r.created_at),
+    }).collect()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCanonicalEmailBlockForm {
+    pub email: Option<String>,
+    pub canonical_email_hash: Option<String>,
+}
+
+pub async fn create_canonical_email_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateCanonicalEmailBlockForm>,
+) -> AppResult<Json<CanonicalEmailBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let hash = if let Some(h) = form.canonical_email_hash {
+        h
+    } else if let Some(email) = form.email {
+        let normalized = email.trim().to_lowercase();
+        hex::encode(md5_bytes(&normalized))
+    } else {
+        return Err(AppError::Unprocessable("email or canonical_email_hash required".into()));
+    };
+    let row = sqlx::query!(
+        "INSERT INTO canonical_email_blocks (canonical_email_hash) VALUES ($1) ON CONFLICT (canonical_email_hash) DO UPDATE SET canonical_email_hash = EXCLUDED.canonical_email_hash RETURNING id, canonical_email_hash, created_at",
+        hash,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(CanonicalEmailBlock {
+        id: row.id.to_string(),
+        canonical_email_hash: row.canonical_email_hash,
+        created_at: super::convert::mastodon_date(row.created_at),
+    }))
+}
+
+pub async fn get_canonical_email_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<CanonicalEmailBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let row = sqlx::query!(
+        "SELECT id, canonical_email_hash, created_at FROM canonical_email_blocks WHERE id = $1",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(CanonicalEmailBlock {
+        id: row.id.to_string(),
+        canonical_email_hash: row.canonical_email_hash,
+        created_at: super::convert::mastodon_date(row.created_at),
+    }))
+}
+
+pub async fn delete_canonical_email_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    require_admin(&state, auth.account_id).await?;
+    sqlx::query!("DELETE FROM canonical_email_blocks WHERE id = $1", id)
+        .execute(&state.db)
+        .await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+pub async fn test_canonical_email_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Json(form): Json<CreateCanonicalEmailBlockForm>,
+) -> AppResult<Json<Vec<CanonicalEmailBlock>>> {
+    require_admin(&state, auth.account_id).await?;
+    let hash = if let Some(h) = form.canonical_email_hash {
+        h
+    } else if let Some(email) = form.email {
+        let normalized = email.trim().to_lowercase();
+        hex::encode(md5_bytes(&normalized))
+    } else {
+        return Err(AppError::Unprocessable("email or canonical_email_hash required".into()));
+    };
+    let rows = sqlx::query!(
+        "SELECT id, canonical_email_hash, created_at FROM canonical_email_blocks WHERE canonical_email_hash = $1",
+        hash,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows.into_iter().map(|r| CanonicalEmailBlock {
+        id: r.id.to_string(),
+        canonical_email_hash: r.canonical_email_hash,
+        created_at: super::convert::mastodon_date(r.created_at),
+    }).collect()))
+}
+
 fn md5_bytes(s: &str) -> [u8; 16] {
     // Simple deterministic digest (not security-sensitive — Mastodon uses it for obfuscation display)
     let mut h: u128 = 0x9e3779b97f4a7c15;

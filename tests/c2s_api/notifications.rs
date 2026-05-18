@@ -971,6 +971,94 @@ async fn test_notification_request_has_updated_at() {
     assert!(req["created_at"].as_str().is_some(), "notification request must have created_at");
 }
 
+/// GET /api/v1/notifications/requests/merged returns { merged: true }.
+#[tokio::test]
+async fn test_notification_requests_merged() {
+    let ctx = TestContext::new("notif-req-merged").await;
+
+    let resp = ctx.api.get("/api/v1/notifications/requests/merged", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["merged"].is_boolean(), "merged field should be boolean");
+}
+
+/// GET /api/v2/notifications/:group_key returns 404 for unknown group_key.
+#[tokio::test]
+async fn test_notification_group_not_found() {
+    let ctx = TestContext::new("notif-group-404").await;
+
+    let resp = ctx.api.get("/api/v2/notifications/ungrouped-999999999999", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// GET /api/v2/notifications/:group_key returns the group for a real notification.
+#[tokio::test]
+async fn test_notification_group_get() {
+    let ctx = TestContext::new("notif-group-get").await;
+
+    // Bob follows Alice to create a notification.
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    // Alice fetches her v2 notifications to get a group_key.
+    let resp = ctx.api.get("/api/v2/notifications", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let groups = body["notification_groups"].as_array().expect("notification_groups missing");
+    assert!(!groups.is_empty(), "expected at least one notification group");
+
+    let group_key = groups[0]["group_key"].as_str().unwrap();
+
+    // Fetch the group directly.
+    let resp2 = ctx.api.get(&format!("/api/v2/notifications/{group_key}"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+    let group: Value = resp2.json().await.unwrap();
+    assert_eq!(group["group_key"].as_str(), Some(group_key));
+    assert!(group["notifications_count"].is_number());
+}
+
+/// GET /api/v2/notifications/:group_key/accounts returns accounts for the group.
+#[tokio::test]
+async fn test_notification_group_accounts() {
+    let ctx = TestContext::new("notif-group-accounts").await;
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let resp = ctx.api.get("/api/v2/notifications", Some(&ctx.alice_token)).await;
+    let body: Value = resp.json().await.unwrap();
+    let group_key = body["notification_groups"].as_array().unwrap()[0]["group_key"].as_str().unwrap().to_string();
+
+    let resp2 = ctx.api.get(&format!("/api/v2/notifications/{group_key}/accounts"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp2.json().await.unwrap();
+    assert!(!accounts.is_empty(), "expected at least one account");
+    assert!(accounts[0]["id"].is_string());
+}
+
+/// POST /api/v2/notifications/:group_key/dismiss removes the notification.
+#[tokio::test]
+async fn test_notification_group_dismiss() {
+    let ctx = TestContext::new("notif-group-dismiss").await;
+
+    ctx.api.follow(&ctx.bob_token, &ctx.alice_id).await;
+
+    let resp = ctx.api.get("/api/v2/notifications", Some(&ctx.alice_token)).await;
+    let body: Value = resp.json().await.unwrap();
+    let group_key = body["notification_groups"].as_array().unwrap()[0]["group_key"].as_str().unwrap().to_string();
+
+    let dismiss = ctx.api.post_json(
+        &format!("/api/v2/notifications/{group_key}/dismiss"),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+    assert_eq!(dismiss.status(), StatusCode::OK);
+
+    // The notification is gone from the list now.
+    let resp3 = ctx.api.get("/api/v2/notifications", Some(&ctx.alice_token)).await;
+    let body3: Value = resp3.json().await.unwrap();
+    let remaining = body3["notification_groups"].as_array().unwrap();
+    assert!(!remaining.iter().any(|g| g["group_key"].as_str() == Some(&group_key)));
+}
+
 /// Timestamps in notification responses must use the Mastodon-standard Z suffix, not +00:00.
 #[tokio::test]
 async fn test_notification_timestamps_use_z_suffix() {

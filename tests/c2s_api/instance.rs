@@ -240,3 +240,26 @@ async fn test_instance_rules_returns_array() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body.is_array(), "instance/rules should return an array, got: {body:?}");
 }
+
+/// GET /api/v1/peers/search?q= returns matching peer domains.
+#[tokio::test]
+async fn test_peers_search_returns_array() {
+    let ctx = TestContext::new("peers-search").await;
+
+    let resp = ctx.api.get("/api/v1/peers/search?q=test", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let _ = body; // just verify it returns valid JSON array
+}
+
+/// GET /api/v1/instance/terms_of_service returns ExtendedDescription shape.
+#[tokio::test]
+async fn test_terms_of_service_returns_object() {
+    let ctx = TestContext::new("tos-stub").await;
+
+    let resp = ctx.api.get("/api/v1/instance/terms_of_service", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["updated_at"].is_string());
+    assert!(body["content"].is_string());
+}
