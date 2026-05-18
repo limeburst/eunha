@@ -75,13 +75,28 @@ async fn publish_one(
     .await?;
 
     let text = params["text"].as_str().unwrap_or("").to_string();
-    let visibility = params["visibility"].as_str().unwrap_or("public");
+    let visibility = params["visibility"].as_str().unwrap_or("public").to_string();
     let spoiler_text = params["spoiler_text"].as_str().unwrap_or("").to_string();
     let sensitive = params["sensitive"].as_bool().unwrap_or(false);
     let language = params["language"].as_str().map(str::to_string);
-    let in_reply_to_id = params["in_reply_to_id"]
+    let in_reply_to_id: Option<i64> = params["in_reply_to_id"]
         .as_str()
         .and_then(|s| s.parse::<i64>().ok());
+
+    // Resolve the parent's account for in_reply_to_account_id and replies_count
+    let in_reply_to_account_id: Option<i64> = if let Some(parent_id) = in_reply_to_id {
+        sqlx::query_scalar!(
+            "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            parent_id,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    let is_reply = in_reply_to_id.is_some();
 
     use crate::api::mastodon::statuses::{
         extract_hashtags, extract_mention_handles, resolve_mention_accounts,
@@ -102,11 +117,11 @@ async fn publish_one(
         crate::db::models::Status,
         r#"INSERT INTO statuses
              (id, instance_id, account_id, text, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, uri, url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, uri, url)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
            RETURNING *"#,
-        status_id, instance.id, account.id, text, spoiler_text, visibility,
-        language, sensitive, in_reply_to_id, uri,
+        status_id, instance.id, account.id, text, spoiler_text, &visibility,
+        language, sensitive, in_reply_to_id, in_reply_to_account_id, is_reply, uri,
     )
     .fetch_one(&state.db)
     .await?;
@@ -114,12 +129,24 @@ async fn publish_one(
     store_status_tags(state, status.id, account.id, &hashtags).await?;
     store_status_mentions(state, status.id, &resolved).await?;
 
+    // Update statuses_count and last_status_at (same as post_status)
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1",
+        "UPDATE accounts SET statuses_count = statuses_count + 1, last_status_at = GREATEST(last_status_at, $2) WHERE id = $1",
         account.id,
+        status.created_at,
     )
     .execute(&state.db)
     .await?;
+
+    // Increment parent's replies_count
+    if let Some(parent_id) = in_reply_to_id {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1",
+            parent_id,
+        )
+        .execute(&state.db)
+        .await;
+    }
 
     // Attach media ids if any
     if let Some(ids) = params["media_ids"].as_array() {
@@ -160,14 +187,14 @@ async fn publish_one(
         }
     }
 
-    // Publish to streaming
+    // Publish to streaming and fan-out to feeds
     use crate::api::mastodon::accounts::{build_status, fetch_status_media, spawn_card_fetch};
     let mut status_with_uri = status.clone();
     status_with_uri.uri = Some(uri);
     spawn_card_fetch(state, status_with_uri.id, content);
     if let Ok(media) = fetch_status_media(state, status_with_uri.id).await {
         if let Ok(api_status) = build_status(state, &status_with_uri, &account, media, None, None).await {
-            if matches!(visibility, "public" | "unlisted" | "private") {
+            if matches!(visibility.as_str(), "public" | "unlisted" | "private") {
                 if let Ok(payload) = serde_json::to_string(&api_status) {
                     let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
                     state.streaming.publish(crate::streaming::Event::NewStatus {
@@ -183,6 +210,56 @@ async fn publish_one(
                 }
             }
         }
+    }
+
+    // Fan-out to follower home feeds and list feeds
+    let tag_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
+        "SELECT tag_id FROM status_tags WHERE status_id = $1",
+        status.id,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut redis = state.redis.clone();
+    let db = state.db.clone();
+    let iid = instance.id;
+    let author_id = account.id;
+    let sid = status.id;
+    let vis = visibility.clone();
+    crate::feed::fanout_new_status(&mut redis, &db, iid, author_id, sid, &tag_ids).await;
+    crate::feed::fanout_to_lists(&mut redis, &db, iid, author_id, sid, in_reply_to_account_id, &vis).await;
+
+    // Send mention notifications (mirrors post_status)
+    let mut notified = std::collections::HashSet::new();
+    if let Some(parent_account_id) = in_reply_to_account_id {
+        crate::push::create_and_push(
+            state,
+            parent_account_id,
+            account.id,
+            "mention",
+            Some(status.id),
+            format!("{} mentioned you", account.display_name),
+            account.acct().clone(),
+            account.avatar.clone().unwrap_or_default(),
+        ).await;
+        notified.insert(parent_account_id);
+    }
+    for (_, mentioned) in &resolved {
+        if mentioned.id == account.id || notified.contains(&mentioned.id) {
+            continue;
+        }
+        crate::push::create_and_push(
+            state,
+            mentioned.id,
+            account.id,
+            "mention",
+            Some(status.id),
+            format!("{} mentioned you", account.display_name),
+            account.acct().clone(),
+            account.avatar.clone().unwrap_or_default(),
+        ).await;
+        notified.insert(mentioned.id);
     }
 
     Ok(())
