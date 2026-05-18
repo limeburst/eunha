@@ -31,34 +31,64 @@ pub async fn get_favourites(
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let statuses: Vec<crate::db::models::Status> = if min_id.is_some() {
+    // Fetch (sort_id, status_id) pairs ordered by favourite sort_id so that
+    // pagination reflects the time the favourite was created, not the status age.
+    struct FRow { sort_id: i64, status_id: i64 }
+    let frows: Vec<FRow> = if min_id.is_some() {
         sqlx::query_as!(
-            crate::db::models::Status,
-            r#"SELECT s.* FROM statuses s
-               JOIN favourites f ON f.status_id = s.id
+            FRow,
+            r#"SELECT f.sort_id, f.status_id FROM favourites f
+               JOIN statuses s ON s.id = f.status_id
                WHERE f.account_id = $1
                  AND s.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR s.id > $2)
-               ORDER BY s.id ASC LIMIT $3"#,
+                 AND ($2::bigint IS NULL OR f.sort_id > $2)
+               ORDER BY f.sort_id ASC LIMIT $3"#,
             auth.account_id, min_id, limit
         )
         .fetch_all(&state.db)
         .await?
     } else {
         sqlx::query_as!(
-            crate::db::models::Status,
-            r#"SELECT s.* FROM statuses s
-               JOIN favourites f ON f.status_id = s.id
+            FRow,
+            r#"SELECT f.sort_id, f.status_id FROM favourites f
+               JOIN statuses s ON s.id = f.status_id
                WHERE f.account_id = $1
                  AND s.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR s.id < $2)
-                 AND ($3::bigint IS NULL OR s.id > $3)
-               ORDER BY s.id DESC LIMIT $4"#,
+                 AND ($2::bigint IS NULL OR f.sort_id < $2)
+                 AND ($3::bigint IS NULL OR f.sort_id > $3)
+               ORDER BY f.sort_id DESC LIMIT $4"#,
             auth.account_id, max_id, since_id, limit
         )
         .fetch_all(&state.db)
         .await?
     };
+
+    let sort_ids: Vec<i64> = frows.iter().map(|r| r.sort_id).collect();
+    let status_id_order: Vec<i64> = frows.iter().map(|r| r.status_id).collect();
+
+    // Fetch the actual status rows, then re-sort into favourite order.
+    let mut status_map_by_id: std::collections::HashMap<i64, crate::db::models::Status> = {
+        if status_id_order.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            sqlx::query_as!(
+                crate::db::models::Status,
+                "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
+                &status_id_order,
+            )
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .map(|s| (s.id, s))
+            .collect()
+        }
+    };
+
+    // Rebuild in favourite sort order (drop any status deleted between queries).
+    let statuses: Vec<crate::db::models::Status> = status_id_order
+        .iter()
+        .filter_map(|id| status_map_by_id.remove(id))
+        .collect();
 
     if statuses.is_empty() {
         return Ok((HeaderMap::new(), Json(vec![])));
@@ -130,9 +160,13 @@ pub async fn get_favourites(
         result.push(api);
     }
 
-    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+    // Link header cursors use sort_ids (favourite creation order), not status IDs.
+    let link = sort_ids.first().zip(sort_ids.last()).map(|(newest_sort, oldest_sort)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(
+            &req_headers, uri.path(), &extra,
+            &newest_sort.to_string(), &oldest_sort.to_string(),
+        )
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
