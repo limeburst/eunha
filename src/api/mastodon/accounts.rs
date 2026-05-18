@@ -1991,6 +1991,7 @@ pub async fn get_suggestions(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
+    auth.require_scope("read:accounts")?;
     let limit = params.limit_clamped(40, 80);
 
     let accounts = sqlx::query_as!(
@@ -2024,6 +2025,7 @@ pub async fn dismiss_suggestion(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(account_id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:accounts")?;
     sqlx::query!(
         r#"INSERT INTO suggestion_dismissals (account_id, target_account_id)
            VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
@@ -2042,6 +2044,7 @@ pub async fn get_suggestions_v2(
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<SuggestionV2>>> {
+    auth.require_scope("read:accounts")?;
     let limit = params.limit_clamped(40, 80);
 
     let accounts = sqlx::query_as!(
@@ -2094,6 +2097,7 @@ pub async fn move_account(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<MoveAccountForm>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:accounts")?;
     // Verify password
     let user = sqlx::query!(
         "SELECT password_hash FROM users WHERE account_id = $1",
@@ -2133,6 +2137,7 @@ pub async fn list_aliases(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<AccountAlias>>> {
+    auth.require_scope("read:accounts")?;
     let rows = sqlx::query!(
         "SELECT id, account_id, uri, created_at FROM account_aliases WHERE account_id = $1 ORDER BY created_at",
         auth.account_id,
@@ -2157,6 +2162,7 @@ pub async fn create_alias(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateAliasForm>,
 ) -> AppResult<Json<AccountAlias>> {
+    auth.require_scope("write:accounts")?;
     let r = sqlx::query!(
         r#"INSERT INTO account_aliases (account_id, uri) VALUES ($1, $2)
            ON CONFLICT (account_id, uri) DO UPDATE SET updated_at = now()
@@ -2178,6 +2184,7 @@ pub async fn delete_alias(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:accounts")?;
     sqlx::query!(
         "DELETE FROM account_aliases WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -2200,6 +2207,7 @@ pub async fn set_account_note(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<NoteForm>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:accounts")?;
     let comment = form.comment.unwrap_or_default();
     sqlx::query!(
         r#"INSERT INTO account_notes (account_id, target_account_id, comment)
@@ -2223,6 +2231,7 @@ pub async fn remove_from_followers(
     Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:follows")?;
     let deleted = sqlx::query!(
         "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted' RETURNING 1 as exists",
         requester_id,
@@ -2256,6 +2265,7 @@ pub async fn endorse_account(
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:accounts")?;
     sqlx::query!(
         "INSERT INTO account_pins (account_id, target_account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         auth.account_id, target_id,
@@ -2272,6 +2282,7 @@ pub async fn unendorse_account(
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
+    auth.require_scope("write:accounts")?;
     sqlx::query!(
         "DELETE FROM account_pins WHERE account_id = $1 AND target_account_id = $2",
         auth.account_id, target_id,
@@ -2359,6 +2370,7 @@ pub async fn update_profile_settings(
     State(state): State<AppState>,
     Json(_body): Json<serde_json::Value>,
 ) -> AppResult<Json<super::types::Account>> {
+    auth.require_scope("write:accounts")?;
     let account = sqlx::query_as!(
         crate::db::models::Account,
         "SELECT * FROM accounts WHERE id = $1",
@@ -2375,6 +2387,7 @@ pub async fn delete_profile_avatar(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<super::types::Account>> {
+    auth.require_scope("write:accounts")?;
     sqlx::query!(
         "UPDATE accounts SET avatar = NULL, avatar_static = NULL WHERE id = $1",
         auth.account_id,
@@ -2397,6 +2410,7 @@ pub async fn delete_profile_header(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<super::types::Account>> {
+    auth.require_scope("write:accounts")?;
     sqlx::query!(
         "UPDATE accounts SET header = NULL, header_static = NULL WHERE id = $1",
         auth.account_id,
@@ -2420,6 +2434,7 @@ pub async fn get_familiar_followers(
     Extension(auth): Extension<AuthenticatedUser>,
     RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
+    auth.require_scope("read:follows")?;
     let mut seen = std::collections::HashSet::new();
     let ids: Vec<i64> = url::form_urlencoded::parse(
             qs.as_deref().unwrap_or("").as_bytes()
@@ -2551,6 +2566,7 @@ pub async fn get_account_lists(
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::List>>> {
+    auth.require_scope("read:lists")?;
     let rows = sqlx::query!(
         r#"SELECT l.id, l.title, l.replies_policy, l.exclusive
            FROM lists l
@@ -3163,6 +3179,7 @@ pub async fn delete_account(
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<serde_json::Value>>,
 ) -> AppResult<axum::http::StatusCode> {
+    auth.require_scope("write:accounts")?;
     let password = body.as_ref()
         .and_then(|b| b.get("password"))
         .and_then(|v| v.as_str())
