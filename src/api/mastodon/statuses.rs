@@ -2023,7 +2023,7 @@ pub async fn translate_status(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<axum::response::Response> {
     use axum::response::IntoResponse;
-    auth.require_scope("write:statuses")?;
+    auth.require_scope("read:statuses")?;
     // Translation is not supported; return 503 as Mastodon does when disabled.
     Ok((
         axum::http::StatusCode::SERVICE_UNAVAILABLE,

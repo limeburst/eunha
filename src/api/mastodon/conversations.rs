@@ -254,7 +254,7 @@ pub async fn mark_conversation_unread(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
-    auth.require_scope("write:statuses")?;
+    auth.require_scope("write:conversations")?;
     let updated = sqlx::query!(
         "UPDATE conversation_participants SET unread = true WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
         id,
@@ -311,7 +311,7 @@ pub async fn mark_conversation_read(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
-    auth.require_scope("write:statuses")?;
+    auth.require_scope("write:conversations")?;
     let updated = sqlx::query!(
         "UPDATE conversation_participants SET unread = false WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
         id,
