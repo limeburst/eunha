@@ -213,7 +213,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Familiar followers
         .route("/api/v1/accounts/familiar_followers", get(accounts::get_familiar_followers))
         // Profile tab display settings
-        .route("/api/v1/profile", put(accounts::update_profile_settings))
+        .route("/api/v1/profile", get(accounts::get_profile).put(accounts::update_profile_settings))
         // Followed tags
         .route("/api/v1/followed_tags", get(tags::list_followed_tags))
         .route("/api/v1/tags/{name}/follow", post(tags::follow_tag))

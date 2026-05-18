@@ -900,16 +900,43 @@ async fn test_status_source_returns_text() {
     );
 }
 
-/// Only the author can fetch status source; stranger gets 403.
+/// Any authenticated user can read the source of a public status (not just the author).
 #[tokio::test]
-async fn test_status_source_forbidden_for_non_author() {
-    let ctx = TestContext::new("status-src-403").await;
+async fn test_status_source_readable_by_any_authenticated_user() {
+    let ctx = TestContext::new("status-src-public").await;
 
     let status = ctx.api.post_status(&ctx.alice_token, "alice's text", "public").await;
     let id = status["id"].as_str().unwrap();
 
+    // Bob is not the author but should still get 200.
     let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/source"), Some(&ctx.bob_token)).await;
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["text"].as_str(), Some("alice's text"));
+}
+
+/// Source of a private status is visible to followers, 404 to strangers.
+#[tokio::test]
+async fn test_status_source_private_visible_to_follower() {
+    let ctx = TestContext::new("status-src-private").await;
+
+    // alice follows bob
+    ctx.api.post_json(&format!("/api/v1/accounts/{}/follow", ctx.bob_id), Some(&ctx.alice_token), &json!({})).await;
+    let status = ctx.api.post_status(&ctx.bob_token, "bob's private text", "private").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Alice (follower) can read it.
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/source"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["text"].as_str(), Some("bob's private text"));
+
+    // Carol (a stranger who doesn't follow bob) gets 404.
+    let (_, carol_token) = super::helpers::seed_user(
+        &ctx.db, &ctx.domain, "carol-src-prv", "carol-src-prv@test.invalid",
+    ).await;
+    let resp2 = ctx.api.get(&format!("/api/v1/statuses/{id}/source"), Some(&carol_token)).await;
+    assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
 }
 
 /// GET /api/v1/statuses/:id/source after edit returns the updated text.
@@ -3235,23 +3262,32 @@ async fn test_local_status_url_is_pretty_format() {
     assert_ne!(url, uri, "url and uri should differ for local statuses");
 }
 
-/// favourited/reblogged/muted/bookmarked are always present as false (not omitted) when
-/// unauthenticated. filtered is always present as an empty array, not omitted.
+/// Mastodon omits viewer-dependent fields entirely from unauthenticated responses.
+/// When authenticated they are present.
 #[tokio::test]
-async fn test_status_viewer_fields_present_when_unauthenticated() {
+async fn test_status_viewer_fields_omitted_when_unauthenticated() {
     let ctx = TestContext::new("status-viewer-fields").await;
 
     let status = ctx.api.post_status(&ctx.alice_token, "viewer field test", "public").await;
     let sid = status["id"].as_str().unwrap();
 
+    // Unauthenticated: fields must be absent.
     let s: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), None)
         .await.json().await.unwrap();
+    assert!(s.get("favourited").is_none(), "favourited must be absent when unauthenticated");
+    assert!(s.get("reblogged").is_none(), "reblogged must be absent when unauthenticated");
+    assert!(s.get("muted").is_none(), "muted must be absent when unauthenticated");
+    assert!(s.get("bookmarked").is_none(), "bookmarked must be absent when unauthenticated");
+    assert!(s.get("filtered").is_none(), "filtered must be absent when unauthenticated");
 
-    assert_eq!(s["favourited"].as_bool(), Some(false), "favourited should be false not absent");
-    assert_eq!(s["reblogged"].as_bool(), Some(false), "reblogged should be false not absent");
-    assert_eq!(s["muted"].as_bool(), Some(false), "muted should be false not absent");
-    assert_eq!(s["bookmarked"].as_bool(), Some(false), "bookmarked should be false not absent");
-    assert!(s["filtered"].as_array().is_some(), "filtered should be an array, not absent");
+    // Authenticated: fields must be present.
+    let s2: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(s2["favourited"].as_bool(), Some(false));
+    assert_eq!(s2["reblogged"].as_bool(), Some(false));
+    assert_eq!(s2["muted"].as_bool(), Some(false));
+    assert_eq!(s2["bookmarked"].as_bool(), Some(false));
+    assert!(s2["filtered"].as_array().is_some(), "filtered should be an array when authenticated");
 }
 
 /// Status mentions field should be populated when the status text contains @-mentions.
@@ -3359,4 +3395,69 @@ async fn test_status_context_private_requires_auth() {
     // Author can see it.
     let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/context"), Some(&ctx.alice_token)).await;
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// When the posting account is sensitized, the author sees their own raw `sensitive`
+/// value; other viewers see it overridden to true.
+#[tokio::test]
+async fn test_status_sensitive_not_overridden_for_author() {
+    let ctx = TestContext::new("sensitive-author").await;
+
+    // Mark alice's account as sensitized at the DB level.
+    sqlx::query!(
+        "UPDATE accounts SET sensitized_at = now() WHERE id = $1",
+        ctx.alice_id.parse::<i64>().unwrap(),
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    // Alice posts a non-sensitive status.
+    let status = ctx.api.post_status(&ctx.alice_token, "not marked sensitive", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    // Alice (author) sees her own stored value: sensitive = false.
+    let s_author: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(s_author["sensitive"].as_bool(), Some(false), "author should see their own sensitive=false");
+
+    // Bob (another viewer) sees sensitive = true because of sensitized_at.
+    let s_viewer: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert_eq!(s_viewer["sensitive"].as_bool(), Some(true), "other viewer should see sensitive=true due to sensitized account");
+}
+
+/// `pinned` field is present only for the author, absent for other viewers.
+#[tokio::test]
+async fn test_status_pinned_field_only_for_author() {
+    let ctx = TestContext::new("pinned-author-only").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "pin me", "public").await;
+    let id = status["id"].as_str().unwrap();
+    ctx.api.post_json(&format!("/api/v1/statuses/{id}/pin"), Some(&ctx.alice_token), &json!({})).await;
+
+    // Author sees `pinned`.
+    let s_author: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(s_author.get("pinned").is_some(), "author should see pinned field");
+    assert_eq!(s_author["pinned"].as_bool(), Some(true));
+
+    // Another authenticated user does not see `pinned`.
+    let s_other: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(s_other.get("pinned").is_none(), "other viewer should not see pinned field");
+}
+
+/// GET /api/v1/statuses/:id/quotes returns an empty array (quotes not yet supported).
+#[tokio::test]
+async fn test_status_quotes_returns_array() {
+    let ctx = TestContext::new("status-quotes").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "quotable", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(&format!("/api/v1/statuses/{id}/quotes"), Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body.as_array().is_some(), "quotes endpoint must return an array");
 }

@@ -65,26 +65,32 @@ pub async fn verify_credentials(
         quote_policy: "public".into(),
     });
 
-    // Populate roles for admin/moderator accounts
-    if let Ok(Some(role)) = sqlx::query_scalar!(
+    api_account.roles = fetch_account_roles(&state, account.id).await;
+
+    Ok(Json(api_account))
+}
+
+/// Fetch highlighted roles for a local account.  Returns an empty vec for
+/// remote accounts (they have no row in `users`).
+async fn fetch_account_roles(state: &AppState, account_id: i64) -> Vec<super::types::Role> {
+    let role = sqlx::query_scalar!(
         "SELECT role FROM users WHERE account_id = $1",
-        account.id
+        account_id,
     )
     .fetch_optional(&state.db)
     .await
-    {
-        api_account.roles = match role.as_str() {
-            "admin" => vec![super::types::Role {
-                id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
-            }],
-            "moderator" => vec![super::types::Role {
-                id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
-            }],
-            _ => vec![],
-        };
-    }
+    .ok()
+    .flatten();
 
-    Ok(Json(api_account))
+    match role.as_deref() {
+        Some("admin") => vec![super::types::Role {
+            id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
+        }],
+        Some("moderator") => vec![super::types::Role {
+            id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
+        }],
+        _ => vec![],
+    }
 }
 
 // ── GET /api/v1/accounts/lookup ───────────────────────────────────────────
@@ -186,6 +192,7 @@ pub async fn get_account(
     let account = fetch_account(&state, id).await?;
     let mut api_account = account_from_db(&account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
+    api_account.roles = fetch_account_roles(&state, account.id).await;
     if let Some(ref moved_uri) = account.moved_to_uri {
         if let Ok(Some(moved)) = sqlx::query_as!(
             Account,
@@ -2359,6 +2366,26 @@ pub async fn get_account_featured_tags(
         })
         .collect();
     Ok(Json(tags))
+}
+
+// ── GET /api/v1/profile ───────────────────────────────────────────────────
+
+pub async fn get_profile(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+) -> AppResult<Json<super::types::Account>> {
+    auth.require_scope("read:accounts")?;
+    let account = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    let mut api_account = account_from_db(&account);
+    api_account.emojis = fetch_account_emojis(&state, &account).await;
+    api_account.roles = fetch_account_roles(&state, account.id).await;
+    Ok(Json(api_account))
 }
 
 // ── PUT /api/v1/profile (tab display settings) ───────────────────────────

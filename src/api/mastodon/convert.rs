@@ -149,12 +149,37 @@ pub fn status_from_db_with_app(
         Box::new(status_from_db(&rs, &ra, rm, None, viewer_context.clone(), reblog_mentions, &[]))
     });
 
+    // Mastodon: the author always sees their own raw `sensitive` flag; sensitization
+    // from account-level flags is only applied to other viewers.
+    let is_author = viewer_context.as_ref().map(|c| c.account_id) == Some(account.id);
+    let sensitive = if is_author {
+        s.sensitive
+    } else {
+        s.sensitive || account.sensitized_at.is_some()
+    };
+
+    // Mastodon omits viewer-dependent fields entirely for unauthenticated responses.
+    // `pinned` is further restricted to the author's own view.
+    let (favourited, reblogged, muted, bookmarked, pinned, filtered) =
+        if let Some(ref ctx) = viewer_context {
+            (
+                Some(ctx.favourited),
+                Some(ctx.reblogged),
+                Some(ctx.muted),
+                Some(ctx.bookmarked),
+                if is_author { Some(ctx.pinned) } else { None },
+                Some(vec![]),
+            )
+        } else {
+            (None, None, None, None, None, None)
+        };
+
     types::Status {
         id: s.id.to_string(),
         created_at: s.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
         in_reply_to_id: s.in_reply_to_id.map(|i| i.to_string()),
         in_reply_to_account_id: s.in_reply_to_account_id.map(|i| i.to_string()),
-        sensitive: s.sensitive || account.sensitized_at.is_some(),
+        sensitive,
         spoiler_text: s.spoiler_text.clone(),
         visibility: s.visibility.clone(),
         language: s.language.clone(),
@@ -190,12 +215,12 @@ pub fn status_from_db_with_app(
             manual: vec![],
             current_user: "denied".to_string(),
         },
-        favourited: viewer_context.as_ref().map(|c| c.favourited).unwrap_or(false),
-        reblogged: viewer_context.as_ref().map(|c| c.reblogged).unwrap_or(false),
-        muted: viewer_context.as_ref().map(|c| c.muted).unwrap_or(false),
-        bookmarked: viewer_context.as_ref().map(|c| c.bookmarked).unwrap_or(false),
-        pinned: viewer_context.as_ref().map(|c| c.pinned),
-        filtered: vec![],
+        favourited,
+        reblogged,
+        muted,
+        bookmarked,
+        pinned,
+        filtered,
         text: None,
     }
 }

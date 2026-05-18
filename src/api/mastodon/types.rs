@@ -112,13 +112,20 @@ pub struct Status {
     pub poll: Option<Poll>,
     pub quote: Option<Box<Status>>,
     pub quote_approval: QuoteApproval,
-    pub favourited: bool,
-    pub reblogged: bool,
-    pub muted: bool,
-    pub bookmarked: bool,
+    // Viewer-dependent fields: omitted entirely when the request is unauthenticated,
+    // matching Mastodon's `attribute :favourited, if: :current_user?` behaviour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favourited: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reblogged: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub muted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bookmarked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned: Option<bool>,
-    pub filtered: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filtered: Option<Vec<serde_json::Value>>,
     // Only present on DELETE response
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,

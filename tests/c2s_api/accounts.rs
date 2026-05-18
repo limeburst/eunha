@@ -2284,3 +2284,57 @@ async fn test_preferences_requires_auth() {
     let resp = ctx.api.get("/api/v1/preferences", None).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+// ── account roles ─────────────────────────────────────────────────────────────
+
+/// GET /api/v1/accounts/:id returns a `roles` array. For ordinary users it is
+/// empty; for admins it contains an entry with `name: "Admin"`.
+#[tokio::test]
+async fn test_get_account_includes_roles() {
+    let ctx = TestContext::new("acct-roles").await;
+
+    // Ordinary user: roles must be an empty array.
+    let resp = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let roles = body["roles"].as_array().expect("roles must be an array");
+    assert!(roles.is_empty(), "ordinary user should have no roles");
+
+    // Promote alice to admin.
+    sqlx::query!(
+        "UPDATE users SET role = 'admin' WHERE account_id = $1",
+        ctx.alice_id.parse::<i64>().unwrap(),
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let resp2 = ctx.api.get(&format!("/api/v1/accounts/{}", ctx.alice_id), None).await;
+    let body2: Value = resp2.json().await.unwrap();
+    let roles2 = body2["roles"].as_array().expect("roles must be an array");
+    assert!(!roles2.is_empty(), "admin should have a role entry");
+    assert_eq!(roles2[0]["name"].as_str(), Some("Admin"));
+}
+
+// ── GET /api/v1/profile ────────────────────────────────────────────────────────
+
+/// GET /api/v1/profile returns the authenticated account.
+#[tokio::test]
+async fn test_get_profile() {
+    let ctx = TestContext::new("get-profile").await;
+
+    let resp = ctx.api.get("/api/v1/profile", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"].as_str(), Some(ctx.alice_id.as_str()));
+    assert_eq!(body["username"].as_str(), Some("alice"));
+}
+
+/// GET /api/v1/profile without a token → 401.
+#[tokio::test]
+async fn test_get_profile_requires_auth() {
+    let ctx = TestContext::new("get-profile-unauth").await;
+
+    let resp = ctx.api.get("/api/v1/profile", None).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

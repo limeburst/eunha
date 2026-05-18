@@ -1405,7 +1405,7 @@ pub async fn get_status_context(
                 if let Some((_, ref fj)) = filters.get(&s.id) {
                     if let Some(arr) = fj.as_array() {
                         if !arr.is_empty() {
-                            api.filtered = arr.clone();
+                            api.filtered = Some(arr.clone());
                         }
                     }
                 }
@@ -2005,8 +2005,36 @@ pub async fn get_status_source(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    if status.account_id != auth.account_id {
-        return Err(AppError::Forbidden);
+    // Mastodon allows any authenticated user who has visibility to the status
+    // to read its source — not just the author.
+    match status.visibility.as_str() {
+        "private" => {
+            let is_author = status.account_id == auth.account_id;
+            let is_follower = sqlx::query_scalar!(
+                "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                auth.account_id, status.account_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if !is_author && !is_follower {
+                return Err(AppError::NotFound);
+            }
+        }
+        "direct" => {
+            let is_author = status.account_id == auth.account_id;
+            let is_mentioned = sqlx::query_scalar!(
+                "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
+                id, auth.account_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if !is_author && !is_mentioned {
+                return Err(AppError::NotFound);
+            }
+        }
+        _ => {}
     }
 
     Ok(Json(StatusSource {
