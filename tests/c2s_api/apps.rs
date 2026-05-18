@@ -1,5 +1,5 @@
 use reqwest::StatusCode;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::helpers::TestContext;
 
@@ -156,4 +156,247 @@ async fn test_revoke_token() {
     // After revocation the token should no longer work.
     let after = ctx.api.get("/api/v1/accounts/verify_credentials", Some(&ctx.alice_token)).await;
     assert_eq!(after.status(), StatusCode::UNAUTHORIZED, "revoked token should return 401");
+}
+
+// ── POST /oauth/token — grant type tests ──────────────────────────────────────
+
+/// Helper: register an app and return (client_id, client_secret).
+async fn register_test_app(ctx: &TestContext) -> (String, String) {
+    let body: Value = ctx.api.post_json(
+        "/api/v1/apps",
+        None,
+        &json!({
+            "client_name": "OAuth Test App",
+            "redirect_uris": "urn:ietf:wg:oauth:2.0:oob",
+            "scopes": "read write"
+        }),
+    ).await.json().await.unwrap();
+    (
+        body["client_id"].as_str().unwrap().to_string(),
+        body["client_secret"].as_str().unwrap().to_string(),
+    )
+}
+
+/// client_credentials grant returns a bearer token.
+#[tokio::test]
+async fn test_client_credentials_grant() {
+    let ctx = TestContext::new("oauth-cc").await;
+    let (client_id, client_secret) = register_test_app(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["access_token"].as_str().is_some(), "access_token missing");
+    assert_eq!(body["token_type"].as_str(), Some("Bearer"));
+}
+
+/// password grant with correct credentials issues a usable token.
+#[tokio::test]
+async fn test_password_grant_issues_token() {
+    let ctx = TestContext::new("oauth-pw").await;
+    let (client_id, client_secret) = register_test_app(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "password",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "username": "alice@test.invalid",
+            "password": "testpassword123",
+            "scope": "read write",
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK, "password grant should succeed");
+    let body: Value = resp.json().await.unwrap();
+    let token = body["access_token"].as_str().expect("access_token missing");
+
+    // The token should be usable for authenticated requests.
+    let me = ctx.api.get("/api/v1/accounts/verify_credentials", Some(token)).await;
+    assert_eq!(me.status(), StatusCode::OK, "token from password grant should authenticate");
+    let account: Value = me.json().await.unwrap();
+    assert_eq!(account["username"].as_str(), Some("alice"));
+}
+
+/// password grant with wrong password returns 401.
+#[tokio::test]
+async fn test_password_grant_wrong_password_returns_401() {
+    let ctx = TestContext::new("oauth-pw-bad").await;
+    let (client_id, client_secret) = register_test_app(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "password",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "username": "alice@test.invalid",
+            "password": "wrongpassword",
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "wrong password should return 401");
+}
+
+/// password grant with wrong client_secret returns 401.
+#[tokio::test]
+async fn test_password_grant_wrong_client_secret_returns_401() {
+    let ctx = TestContext::new("oauth-pw-badsecret").await;
+    let (client_id, _) = register_test_app(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "password",
+            "client_id": client_id,
+            "client_secret": "not-the-real-secret",
+            "username": "alice@test.invalid",
+            "password": "testpassword123",
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "bad client_secret should return 401");
+}
+
+/// authorization_code grant with a seeded code issues a token.
+#[tokio::test]
+async fn test_authorization_code_grant() {
+    let ctx = TestContext::new("oauth-ac").await;
+
+    // Register an app to get a real application_id.
+    let app: Value = ctx.api.post_json(
+        "/api/v1/apps",
+        None,
+        &json!({
+            "client_name": "Auth Code App",
+            "redirect_uris": "https://app.example/callback",
+            "scopes": "read write"
+        }),
+    ).await.json().await.unwrap();
+    let client_id = app["client_id"].as_str().unwrap();
+    let client_secret = app["client_secret"].as_str().unwrap();
+
+    // Look up the DB application_id by client_id.
+    let app_id: i64 = sqlx::query_scalar!(
+        "SELECT id FROM oauth_applications WHERE client_id = $1",
+        client_id,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+
+    let alice_id: i64 = ctx.alice_id.parse().unwrap();
+    let code = "test-auth-code-12345";
+
+    sqlx::query!(
+        r#"INSERT INTO oauth_authorization_codes
+             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+           VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')"#,
+        app_id,
+        alice_id,
+        code,
+        "https://app.example/callback",
+        "read write",
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "redirect_uri": "https://app.example/callback",
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK, "authorization_code grant should succeed");
+    let body: Value = resp.json().await.unwrap();
+    let token = body["access_token"].as_str().expect("access_token missing");
+
+    let me = ctx.api.get("/api/v1/accounts/verify_credentials", Some(token)).await;
+    assert_eq!(me.status(), StatusCode::OK, "token from authorization_code grant should authenticate");
+}
+
+/// Expired authorization code returns 401.
+#[tokio::test]
+async fn test_authorization_code_expired_returns_401() {
+    let ctx = TestContext::new("oauth-ac-exp").await;
+
+    let app: Value = ctx.api.post_json(
+        "/api/v1/apps",
+        None,
+        &json!({
+            "client_name": "Expired Code App",
+            "redirect_uris": "https://app.example/callback",
+            "scopes": "read"
+        }),
+    ).await.json().await.unwrap();
+    let client_id = app["client_id"].as_str().unwrap();
+    let client_secret = app["client_secret"].as_str().unwrap();
+
+    let app_id: i64 = sqlx::query_scalar!(
+        "SELECT id FROM oauth_applications WHERE client_id = $1",
+        client_id,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+
+    sqlx::query!(
+        r#"INSERT INTO oauth_authorization_codes
+             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+           VALUES ($1, $2, $3, $4, $5, now() - interval '1 minute')"#,
+        app_id,
+        ctx.alice_id.parse::<i64>().unwrap(),
+        "expired-code-99999",
+        "https://app.example/callback",
+        "read",
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": "expired-code-99999",
+            "redirect_uri": "https://app.example/callback",
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "expired code should return 401");
+}
+
+/// Unsupported grant_type returns 422.
+#[tokio::test]
+async fn test_unsupported_grant_type_returns_422() {
+    let ctx = TestContext::new("oauth-bad-grant").await;
+    let (client_id, client_secret) = register_test_app(&ctx).await;
+
+    let resp = ctx.api.post_json(
+        "/oauth/token",
+        None,
+        &json!({
+            "grant_type": "magic_token",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "unsupported grant_type should return 422");
 }

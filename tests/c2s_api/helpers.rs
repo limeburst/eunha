@@ -289,6 +289,8 @@ pub struct TestContext {
     pub bob_token: String,
     pub bob_id: String,
     pub db: PgPool,
+    /// Cloned AppState — use this to call internal functions (e.g. background jobs) in tests.
+    pub state: eunha::state::AppState,
     /// Kept alive so the server task isn't dropped while tests run.
     pub _server: tokio::task::JoinHandle<()>,
 }
@@ -348,6 +350,7 @@ impl TestContext {
         };
         let state = eunha::state::AppState::new(db, config).await
             .expect("failed to initialize AppState");
+        let state_clone = state.clone();
         let app = eunha::build_app(state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -369,6 +372,7 @@ impl TestContext {
             bob_token,
             bob_id: bob_id.to_string(),
             db: test_db,
+            state: state_clone,
             _server: server,
         }
     }

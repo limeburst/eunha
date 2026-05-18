@@ -2303,6 +2303,52 @@ async fn test_delete_scheduled_status() {
     assert_eq!(not_found.status(), StatusCode::NOT_FOUND);
 }
 
+/// A past-due scheduled status is published by the background job and appears in the timeline.
+#[tokio::test]
+async fn test_scheduled_status_publish_end_to_end() {
+    let ctx = TestContext::new("sched-publish").await;
+
+    // Schedule a status in the past so it's immediately due.
+    let created: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "This was scheduled and should now be published",
+            "visibility": "public",
+            "scheduled_at": "2020-01-01T00:00:00Z"
+        }),
+    ).await.json().await.unwrap();
+    let sched_id = created["id"].as_str().unwrap();
+
+    // Confirm it's pending.
+    let pending = ctx.api.get(
+        &format!("/api/v1/scheduled_statuses/{sched_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(pending.status(), StatusCode::OK, "scheduled status should exist before publish");
+
+    // Run the background job synchronously.
+    eunha::background::publish_due_statuses(&ctx.state).await
+        .expect("publish_due_statuses failed");
+
+    // The scheduled status entry should be gone.
+    let after = ctx.api.get(
+        &format!("/api/v1/scheduled_statuses/{sched_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(after.status(), StatusCode::NOT_FOUND, "scheduled status should be removed after publish");
+
+    // The post should now appear in alice's account statuses.
+    let statuses: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/statuses", ctx.alice_id),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert!(
+        statuses.iter().any(|s| s["content"].as_str().unwrap_or("").contains("scheduled and should now be published")),
+        "published status should appear in account statuses",
+    );
+}
+
 // ── mentions and tags in status response ──────────────────────────────────────
 
 /// A status with @username mention includes the mentioned account in the mentions array.

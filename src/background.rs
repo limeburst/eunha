@@ -20,7 +20,7 @@ async fn run_scheduled_statuses(state: AppState) {
     }
 }
 
-async fn publish_due_statuses(state: &AppState) -> anyhow::Result<()> {
+pub async fn publish_due_statuses(state: &AppState) -> anyhow::Result<()> {
     let rows = sqlx::query!(
         r#"SELECT id, account_id, params
            FROM scheduled_statuses
