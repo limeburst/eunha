@@ -355,13 +355,14 @@ async fn test_authorization_code_expired_returns_401() {
     .await
     .unwrap();
 
+    let expired_code = format!("expired-code-{}", uuid::Uuid::new_v4());
     sqlx::query!(
         r#"INSERT INTO oauth_authorization_codes
              (application_id, account_id, code, redirect_uri, scopes, expires_at)
            VALUES ($1, $2, $3, $4, $5, now() - interval '1 minute')"#,
         app_id,
         ctx.alice_id.parse::<i64>().unwrap(),
-        "expired-code-99999",
+        expired_code,
         "https://app.example/callback",
         "read",
     )
@@ -376,7 +377,7 @@ async fn test_authorization_code_expired_returns_401() {
             "grant_type": "authorization_code",
             "client_id": client_id,
             "client_secret": client_secret,
-            "code": "expired-code-99999",
+            "code": expired_code,
             "redirect_uri": "https://app.example/callback",
         }),
     ).await;
