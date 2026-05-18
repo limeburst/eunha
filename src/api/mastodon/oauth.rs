@@ -95,7 +95,7 @@ pub async fn register_app(
     let client_id = generate_token(32);
     let client_secret = generate_token(64);
     let redirect_uris = form.redirect_uris.unwrap_or_else(|| "urn:ietf:wg:oauth:2.0:oob".into());
-    let scopes = form.scopes.unwrap_or_else(|| "read".into());
+    let scopes = normalize_scopes(&form.scopes.unwrap_or_else(|| "read".into()));
 
     let app = sqlx::query_as!(
         OauthApplication,
@@ -124,7 +124,7 @@ fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
         id: app.id.to_string(),
         name: app.name.clone(),
         website: app.website.clone(),
-        scopes: app.scopes.split_whitespace().map(str::to_owned).collect(),
+        scopes: normalize_scopes(&app.scopes).split_whitespace().map(str::to_owned).collect(),
         redirect_uri,
         redirect_uris: uris,
         client_id: app.client_id.clone(),
@@ -217,7 +217,7 @@ pub async fn issue_token(
 
             verify_password(password, &user.password_hash)?;
 
-            (Some(user.account_id), form.scope.unwrap_or_else(|| app.scopes.clone()))
+            (Some(user.account_id), normalize_scopes(&form.scope.unwrap_or_else(|| app.scopes.clone())))
         }
 
         _ => return Err(AppError::Unprocessable("unsupported grant_type".into())),
@@ -266,6 +266,15 @@ pub async fn revoke_token(
     .execute(&state.db)
     .await?;
     Ok(Json(serde_json::json!({})))
+}
+
+/// Normalize an OAuth scope string: split on whitespace or commas, deduplicate,
+/// and rejoin with spaces. Ensures "read,write" and "read write" are equivalent.
+fn normalize_scopes(s: &str) -> String {
+    s.split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn verify_password(password: &str, hash: &str) -> Result<(), AppError> {

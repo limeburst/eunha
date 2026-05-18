@@ -133,7 +133,7 @@ pub async fn authenticate(
                     let user = AuthenticatedUser {
                         account_id,
                         token_id: tok.id,
-                        scopes: tok.scopes.split_whitespace().map(str::to_owned).collect(),
+                        scopes: tok.scopes.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(str::to_owned).collect(),
                         application_id: tok.application_id,
                     };
                     req.extensions_mut().insert(user);

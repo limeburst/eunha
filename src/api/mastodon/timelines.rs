@@ -26,6 +26,7 @@ pub struct PublicTimelineQuery {
     pub local: Option<bool>,
     pub remote: Option<bool>,
     pub only_media: Option<bool>,
+    pub exclude_replies: Option<bool>,
 }
 
 // ── GET /api/v1/timelines/public ──────────────────────────────────────────
@@ -45,6 +46,7 @@ pub async fn public_timeline(
     let local_only = q.local.unwrap_or(false);
     let remote_only = q.remote.unwrap_or(false);
     let only_media = q.only_media.unwrap_or(false);
+    let exclude_replies = q.exclude_replies.unwrap_or(false);
     let viewer_id: Option<i64> = auth.as_ref().map(|Extension(a)| a.account_id);
 
     // min_id: return oldest items just after min_id (ASC); else DESC
@@ -57,7 +59,7 @@ pub async fn public_timeline(
                WHERE s.visibility = 'public'
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
-                 AND (NOT s.reply OR s.in_reply_to_account_id = s.account_id)
+                 AND (NOT $8::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
                  AND s.instance_id = $2
                  AND (NOT $1::bool OR a.domain IS NULL)
                  AND (NOT $5::bool OR a.domain IS NOT NULL)
@@ -92,6 +94,7 @@ pub async fn public_timeline(
             remote_only,
             only_media,
             viewer_id,
+            exclude_replies,
         )
         .fetch_all(&state.db)
         .await?
@@ -104,7 +107,7 @@ pub async fn public_timeline(
                WHERE s.visibility = 'public'
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
-                 AND (NOT s.reply OR s.in_reply_to_account_id = s.account_id)
+                 AND (NOT $9::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
                  AND s.instance_id = $2
                  AND (NOT $1::bool OR a.domain IS NULL)
                  AND (NOT $6::bool OR a.domain IS NOT NULL)
@@ -141,6 +144,7 @@ pub async fn public_timeline(
             remote_only,
             only_media,
             viewer_id,
+            exclude_replies,
         )
         .fetch_all(&state.db)
         .await?
