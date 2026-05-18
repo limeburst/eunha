@@ -20,6 +20,7 @@ pub struct Instance {
     pub vapid_public_key: String,
     pub icon_url: Option<String>,
     pub privacy_policy: String,
+    pub terms_of_service: String,
     pub rules: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -84,6 +85,7 @@ pub struct Account {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub fields: serde_json::Value,
+    pub attribution_domains: Vec<String>,
 }
 
 impl Account {

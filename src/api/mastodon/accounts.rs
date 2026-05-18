@@ -61,7 +61,7 @@ pub async fn verify_credentials(
         discoverable: account.discoverable,
         indexable: account.indexable,
         hide_collections: Some(account.hide_collections),
-        attribution_domains: vec![],
+        attribution_domains: account.attribution_domains.clone(),
         quote_policy: "public".into(),
     });
 
@@ -942,9 +942,16 @@ pub async fn update_credentials(
     // fields_attributes[N][name] / fields_attributes[N][value]
     let mut fields_map: std::collections::BTreeMap<u32, (String, String)> = std::collections::BTreeMap::new();
     let mut fields_submitted = false;
+    let mut attribution_domains: Option<Vec<String>> = None;
 
     while let Some(field) = multipart.next_field().await.map_err(|e| AppError::Unprocessable(e.to_string()))? {
         let name = field.name().unwrap_or("").to_string();
+        // Parse attribution_domains[] array fields
+        if name == "attribution_domains[]" {
+            let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+            attribution_domains.get_or_insert_with(Vec::new).push(v);
+            continue;
+        }
         // Parse fields_attributes[N][name] and fields_attributes[N][value]
         if let Some(rest) = name.strip_prefix("fields_attributes[") {
             if let Some((idx_str, key)) = rest.split_once(']') {
@@ -1142,6 +1149,13 @@ pub async fn update_credentials(
         )
         .execute(&state.db).await?;
     }
+    if let Some(ref domains) = attribution_domains {
+        sqlx::query!(
+            "UPDATE accounts SET attribution_domains = $1 WHERE id = $2",
+            domains, auth.account_id
+        )
+        .execute(&state.db).await?;
+    }
 
     let account = fetch_account(&state, auth.account_id).await?;
     let fields = super::convert::fields_from_db(&account.fields);
@@ -1176,7 +1190,7 @@ pub async fn update_credentials(
         discoverable: account.discoverable,
         indexable: account.indexable,
         hide_collections: Some(account.hide_collections),
-        attribution_domains: vec![],
+        attribution_domains: account.attribution_domains.clone(),
         quote_policy: "public".into(),
     });
     Ok(Json(api_account))

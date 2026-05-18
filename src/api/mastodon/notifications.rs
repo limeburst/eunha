@@ -996,6 +996,7 @@ pub async fn get_notification_requests(
             hide_collections: r.hide_collections,
             last_status_at: r.last_status_at,
             fields: r.fields,
+            attribution_domains: vec![],
             created_at: r.account_created_at,
             updated_at: r.account_updated_at,
         };
@@ -1161,6 +1162,7 @@ pub async fn get_notification_request(
         hide_collections: r.hide_collections,
         last_status_at: r.last_status_at,
         fields: r.fields,
+        attribution_domains: vec![],
         created_at: r.account_created_at,
         updated_at: r.account_updated_at,
     };

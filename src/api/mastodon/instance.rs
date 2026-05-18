@@ -27,10 +27,47 @@ pub async fn get_instance_languages() -> Json<Vec<serde_json::Value>> {
 }
 
 // ── GET /api/v1/instance/domain_blocks ───────────────────────────────────
-// Returns publicly visible domain blocks (always empty in our policy).
 
-pub async fn get_instance_domain_blocks() -> Json<Vec<serde_json::Value>> {
-    Json(vec![])
+pub async fn get_instance_domain_blocks(
+    State(state): State<AppState>,
+) -> AppResult<Json<Vec<serde_json::Value>>> {
+    let rows = sqlx::query!(
+        "SELECT domain, severity, public_comment, obfuscate FROM domain_blocks ORDER BY id"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let blocks: Vec<serde_json::Value> = rows.into_iter().map(|r| {
+        let domain = if r.obfuscate {
+            obfuscate_domain(&r.domain)
+        } else {
+            r.domain
+        };
+        serde_json::json!({
+            "domain": domain,
+            "severity": r.severity,
+            "comment": r.public_comment.unwrap_or_default(),
+        })
+    }).collect();
+
+    Ok(Json(blocks))
+}
+
+fn obfuscate_domain(domain: &str) -> String {
+    let parts: Vec<&str> = domain.splitn(2, '.').collect();
+    if parts.len() == 2 {
+        let label = parts[0];
+        let rest = parts[1];
+        if label.len() <= 2 {
+            format!("*.{rest}")
+        } else {
+            let keep = label.len() / 3;
+            let stars = "*".repeat(label.len() - keep);
+            format!("{}{stars}.{rest}", &label[..keep])
+        }
+    } else {
+        domain.to_string()
+    }
 }
 
 // ── GET /api/v1/instance/rules ────────────────────────────────────────────
@@ -188,7 +225,7 @@ pub async fn get_terms_of_service(
 ) -> AppResult<Json<ExtendedDescription>> {
     Ok(Json(ExtendedDescription {
         updated_at: super::convert::mastodon_date(instance.updated_at),
-        content: String::new(),
+        content: instance.terms_of_service.clone(),
     }))
 }
 

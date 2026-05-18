@@ -1030,10 +1030,62 @@ fn with_pagination_link(
 }
 
 // ── GET /api/v1/timelines/link ────────────────────────────────────────────
-// Stub — preview card trending is not supported; return empty list.
+
+#[derive(Debug, Deserialize)]
+pub struct LinkTimelineQuery {
+    pub url: Option<String>,
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+}
 
 pub async fn link_timeline(
-    _auth: Option<Extension<AuthenticatedUser>>,
-) -> Json<Vec<Status>> {
-    Json(vec![])
+    State(state): State<AppState>,
+    auth: Option<Extension<AuthenticatedUser>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(params): Query<LinkTimelineQuery>,
+) -> AppResult<impl IntoResponse> {
+    let url = match params.url {
+        Some(u) if !u.is_empty() => u,
+        _ => return Err(AppError::Unprocessable("url parameter is required".into())),
+    };
+
+    let card_id: Option<i64> = sqlx::query_scalar!(
+        "SELECT id FROM preview_cards WHERE url = $1",
+        url,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let card_id = card_id.ok_or(AppError::NotFound)?;
+
+    let viewer_id = auth.map(|Extension(u)| u.account_id);
+    let limit: i64 = 20;
+    let max_id: Option<i64> = params.pagination.max_id.as_deref().and_then(|s| s.parse().ok());
+    let since_id: Option<i64> = params.pagination.since_id.as_deref().and_then(|s| s.parse().ok());
+    let min_id: Option<i64> = params.pagination.min_id.as_deref().and_then(|s| s.parse().ok());
+
+    let statuses = sqlx::query_as!(
+        crate::db::models::Status,
+        r#"SELECT s.* FROM statuses s
+           JOIN status_preview_cards spc ON spc.status_id = s.id
+           WHERE spc.card_id = $1
+             AND s.visibility = 'public'
+             AND s.deleted_at IS NULL
+             AND ($2::bigint IS NULL OR s.id < $2)
+             AND ($3::bigint IS NULL OR s.id > $3)
+             AND ($4::bigint IS NULL OR s.id > $4)
+           ORDER BY s.id DESC
+           LIMIT $5"#,
+        card_id,
+        max_id,
+        since_id,
+        min_id,
+        limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let result = build_status_list_with_context(&state, statuses, viewer_id, "public").await?;
+    Ok(with_pagination_link(&headers, &uri, result))
 }
