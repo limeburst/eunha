@@ -2,9 +2,42 @@ use std::net::SocketAddr;
 
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::{rand_core::OsRng, SaltString};
+use axum::http::StatusCode as AxumStatus;
 use reqwest::Client;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
+
+// ── fake S3 server ──────────────────────────────────────────────────────────
+
+/// Spawns a minimal HTTP server that accepts all S3-style PUT/DELETE requests
+/// and returns success responses. Returns the base URL of the server.
+pub async fn spawn_fake_s3() -> String {
+    use axum::{Router, routing::any, response::Response, body::Body};
+    use axum::http::Request;
+
+    let app = Router::new().fallback(any(|req: Request<Body>| async move {
+        match req.method().as_str() {
+            "PUT" => Response::builder()
+                .status(AxumStatus::OK)
+                .header("ETag", "\"test-etag-000\"")
+                .body(Body::empty())
+                .unwrap(),
+            "DELETE" => Response::builder()
+                .status(AxumStatus::NO_CONTENT)
+                .body(Body::empty())
+                .unwrap(),
+            _ => Response::builder()
+                .status(AxumStatus::OK)
+                .body(Body::empty())
+                .unwrap(),
+        }
+    }));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{}", addr)
+}
 
 // ── client wrapper ─────────────────────────────────────────────────────────
 
@@ -137,6 +170,34 @@ impl ApiClient {
         req.send().await.unwrap()
     }
 
+    /// POST with multipart/form-data including a file part (for media upload).
+    pub async fn post_multipart_file(
+        &self,
+        path: &str,
+        token: &str,
+        file_name: &str,
+        content_type: &str,
+        data: Vec<u8>,
+        extra_fields: &[(&'static str, &str)],
+    ) -> reqwest::Response {
+        let part = reqwest::multipart::Part::bytes(data)
+            .file_name(file_name.to_string())
+            .mime_str(content_type)
+            .unwrap();
+        let mut form = reqwest::multipart::Form::new().part("file", part);
+        for (k, v) in extra_fields {
+            form = form.text(*k, v.to_string());
+        }
+        self.http
+            .post(self.url(path))
+            .header("host", &self.host)
+            .bearer_auth(token)
+            .multipart(form)
+            .send()
+            .await
+            .unwrap()
+    }
+
     /// PATCH with multipart/form-data (required by update_credentials).
     pub async fn patch_multipart(
         &self,
@@ -265,6 +326,7 @@ impl TestContext {
 
         let redis_url = std::env::var("REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
+        let fake_s3 = spawn_fake_s3().await;
         let config = eunha::config::Config {
             database_url: db_url,
             redis_url,
@@ -273,10 +335,10 @@ impl TestContext {
             media_storage: eunha::config::MediaStorageConfig {
                 bucket: "test-bucket".into(),
                 region: "us-east-1".into(),
-                endpoint: None,
+                endpoint: Some(fake_s3.clone()),
                 access_key_id: "test-key".into(),
                 secret_access_key: "test-secret".into(),
-                base_url: "http://localhost/media".into(),
+                base_url: fake_s3,
             },
             smtp: None,
             resend: eunha::config::ResendConfig {

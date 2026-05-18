@@ -18,6 +18,7 @@ mod helpers;
 
 mod accounts;
 mod admin;
+mod announcements;
 mod apps;
 mod blocks;
 mod bookmarks;
@@ -31,8 +32,10 @@ mod instance;
 mod invites;
 mod lists;
 mod markers;
+mod media;
 mod mutes;
 mod notifications;
+mod polls;
 mod push;
 mod reports;
 mod scope;

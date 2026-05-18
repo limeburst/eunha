@@ -53,8 +53,8 @@ pub async fn get_announcements(
     let all_reactions = sqlx::query!(
         r#"SELECT ar.announcement_id, ar.name,
                   COUNT(*) AS "count!",
-                  ce.image_url,
-                  ce.static_image_url
+                  ce.image_url AS "image_url?",
+                  ce.static_image_url AS "static_image_url?"
            FROM announcement_reactions ar
            LEFT JOIN custom_emojis ce ON ce.id = ar.custom_emoji_id
            WHERE ar.announcement_id = ANY($1::bigint[])
@@ -89,7 +89,7 @@ pub async fn get_announcements(
             name: row.name,
             count: row.count,
             me,
-            url: Some(row.image_url),
+            url: row.image_url,
             static_url: row.static_image_url,
         });
     }
@@ -126,6 +126,18 @@ pub async fn dismiss_announcement(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {
     auth.require_scope("write")?;
+
+    let exists = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM announcements WHERE id = $1 AND published = true)",
+        id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+    if !exists {
+        return Err(crate::error::AppError::NotFound);
+    }
+
     sqlx::query!(
         "INSERT INTO announcement_dismissals (announcement_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         id, auth.account_id,

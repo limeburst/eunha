@@ -45,6 +45,10 @@ pub async fn vote_poll(
         return Err(AppError::Unprocessable("Poll has expired".into()));
     }
 
+    if poll.account_id == auth.account_id {
+        return Err(AppError::Unprocessable("You cannot vote on your own poll".into()));
+    }
+
     let already_voted = sqlx::query_scalar!(
         "SELECT EXISTS(SELECT 1 FROM poll_votes WHERE poll_id = $1 AND account_id = $2)",
         id, auth.account_id,

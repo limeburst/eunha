@@ -59,6 +59,7 @@ pub async fn public_timeline(
                WHERE s.visibility = 'public'
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
+                 AND (NOT s.reply OR s.in_reply_to_id IS NOT NULL)
                  AND (NOT $8::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
                  AND s.instance_id = $2
                  AND (NOT $1::bool OR a.domain IS NULL)
@@ -107,6 +108,7 @@ pub async fn public_timeline(
                WHERE s.visibility = 'public'
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
+                 AND (NOT s.reply OR s.in_reply_to_id IS NOT NULL)
                  AND (NOT $9::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
                  AND s.instance_id = $2
                  AND (NOT $1::bool OR a.domain IS NULL)

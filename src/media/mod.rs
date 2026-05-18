@@ -22,7 +22,7 @@ impl Storage {
             .credentials_provider(creds)
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest());
         if let Some(ep) = &config.endpoint {
-            builder = builder.endpoint_url(ep);
+            builder = builder.endpoint_url(ep).force_path_style(true);
         }
         let client = aws_sdk_s3::Client::from_conf(builder.build());
         Storage {
