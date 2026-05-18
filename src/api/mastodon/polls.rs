@@ -161,7 +161,7 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i
         expired,
         multiple: poll.multiple,
         votes_count,
-        voters_count: Some(voters_count),
+        voters_count: if poll.multiple { Some(voters_count) } else { None },
         options,
         emojis: vec![],
         voted,

@@ -1615,6 +1615,17 @@ async fn test_poll_own_votes_null_when_not_voted() {
 
     assert_eq!(poll["voted"].as_bool(), Some(false), "voted should be false before voting");
     assert!(poll["own_votes"].is_null(), "own_votes should be null when viewer has not voted");
+
+    // Also verify via GET /api/v1/statuses/:id — uses fetch_status_poll, not poll_from_db.
+    let status_id = status["id"].as_str().unwrap();
+    let status_resp: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert!(
+        status_resp["poll"]["own_votes"].is_null(),
+        "own_votes must be null (not []) in status response when viewer has not voted",
+    );
 }
 
 /// Voting twice on the same poll returns 422.
@@ -1736,12 +1747,89 @@ async fn test_poll_vote_counts() {
     ).await.json().await.unwrap();
 
     assert_eq!(poll["votes_count"].as_i64(), Some(1), "votes_count should be 1");
-    assert_eq!(poll["voters_count"].as_i64(), Some(1), "voters_count should be 1");
+    // single-choice poll: voters_count must be null per Mastodon spec
+    assert!(poll["voters_count"].is_null(), "single-choice poll voters_count must be null");
 
     let options = poll["options"].as_array().unwrap();
     assert_eq!(options[0]["votes_count"].as_i64(), Some(0), "option X should have 0 votes");
     assert_eq!(options[1]["votes_count"].as_i64(), Some(1), "option Y should have 1 vote");
     assert_eq!(options[2]["votes_count"].as_i64(), Some(0), "option Z should have 0 votes");
+}
+
+/// Per-option votes_count in a status response reflects actual votes (not stale JSON).
+#[tokio::test]
+async fn test_poll_per_option_counts_in_status_response() {
+    let ctx = TestContext::new("poll-status-counts").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "Status poll counts",
+            "visibility": "public",
+            "poll": {"options": ["P", "Q"], "expires_in": 86400}
+        }),
+    ).await.json().await.unwrap();
+    let status_id = status["id"].as_str().unwrap();
+    let poll_id = status["poll"]["id"].as_str().unwrap();
+
+    // Bob votes for option Q (index 1).
+    ctx.api.post_json(
+        &format!("/api/v1/polls/{poll_id}/votes"),
+        Some(&ctx.bob_token),
+        &json!({"choices": [1]}),
+    ).await;
+
+    // Fetch the status (goes through batch_status_polls, not poll_from_db).
+    let fetched: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+
+    let options = fetched["poll"]["options"].as_array().unwrap();
+    assert_eq!(options[0]["votes_count"].as_i64(), Some(0), "option P should have 0 votes in status response");
+    assert_eq!(options[1]["votes_count"].as_i64(), Some(1), "option Q should have 1 vote in status response");
+    assert_eq!(fetched["poll"]["votes_count"].as_i64(), Some(1), "total votes_count wrong in status response");
+}
+
+/// voters_count is null for single-choice polls, non-null for multiple-choice polls.
+#[tokio::test]
+async fn test_poll_voters_count_nullability() {
+    let ctx = TestContext::new("poll-voters-null").await;
+
+    // Single-choice poll → voters_count must be null.
+    let s1: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "single choice poll",
+            "visibility": "public",
+            "poll": {"options": ["A", "B"], "expires_in": 86400, "multiple": false}
+        }),
+    ).await.json().await.unwrap();
+    let poll1_id = s1["poll"]["id"].as_str().unwrap();
+
+    // Multiple-choice poll → voters_count must be non-null after a vote.
+    let s2: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "multi choice poll",
+            "visibility": "public",
+            "poll": {"options": ["X", "Y"], "expires_in": 86400, "multiple": true}
+        }),
+    ).await.json().await.unwrap();
+    let poll2_id = s2["poll"]["id"].as_str().unwrap();
+
+    // Bob votes on both.
+    ctx.api.post_json(&format!("/api/v1/polls/{poll1_id}/votes"), Some(&ctx.bob_token), &json!({"choices": [0]})).await;
+    ctx.api.post_json(&format!("/api/v1/polls/{poll2_id}/votes"), Some(&ctx.bob_token), &json!({"choices": [0, 1]})).await;
+
+    let p1: Value = ctx.api.get(&format!("/api/v1/polls/{poll1_id}"), Some(&ctx.alice_token)).await.json().await.unwrap();
+    assert!(p1["voters_count"].is_null(), "single-choice poll voters_count must be null, got: {}", p1["voters_count"]);
+
+    let p2: Value = ctx.api.get(&format!("/api/v1/polls/{poll2_id}"), Some(&ctx.alice_token)).await.json().await.unwrap();
+    assert_eq!(p2["voters_count"].as_i64(), Some(1), "multiple-choice poll voters_count should be 1 after one voter");
 }
 
 /// A multiple-choice poll allows selecting several options.

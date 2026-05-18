@@ -1626,7 +1626,7 @@ pub async fn fetch_status_poll(
     viewer_id: Option<i64>,
 ) -> AppResult<Option<super::types::Poll>> {
     let row = sqlx::query!(
-        "SELECT id, options, multiple, votes_count, voters_count, expires_at FROM polls WHERE status_id = $1",
+        "SELECT id, options, multiple, expires_at FROM polls WHERE status_id = $1",
         status_id,
     )
     .fetch_optional(&state.db)
@@ -1639,13 +1639,42 @@ pub async fn fetch_status_poll(
     let now = chrono::Utc::now();
     let expired = row.expires_at.map_or(false, |t| t < now);
 
-    let options: Vec<super::types::PollOption> = row.options
+    let option_titles: Vec<String> = row.options
         .as_array()
-        .map(|arr| arr.iter().map(|o| super::types::PollOption {
-            title: o["title"].as_str().unwrap_or("").to_string(),
-            votes_count: o["votes_count"].as_i64(),
-        }).collect())
+        .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())
         .unwrap_or_default();
+
+    // Compute per-option vote counts live from poll_votes.
+    let per_option = sqlx::query!(
+        "SELECT choice, COUNT(*)::bigint AS \"cnt!\" FROM poll_votes WHERE poll_id = $1 GROUP BY choice",
+        row.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut per_option_map: std::collections::HashMap<i32, i64> = std::collections::HashMap::new();
+    for r in per_option {
+        per_option_map.insert(r.choice, r.cnt);
+    }
+
+    let options: Vec<super::types::PollOption> = option_titles.iter().enumerate().map(|(i, title)| {
+        super::types::PollOption {
+            title: title.clone(),
+            votes_count: Some(*per_option_map.get(&(i as i32)).unwrap_or(&0)),
+        }
+    }).collect();
+
+    // Compute aggregate counts live.
+    let (votes_count, voters_count) = sqlx::query!(
+        r#"SELECT COUNT(*)::bigint AS "votes!", COUNT(DISTINCT account_id)::bigint AS "voters!" FROM poll_votes WHERE poll_id = $1"#,
+        row.id,
+    )
+    .fetch_one(&state.db)
+    .await
+    .map(|r| (r.votes, r.voters))
+    .unwrap_or((0, 0));
+
+    let voters_count = if row.multiple { Some(voters_count) } else { None };
 
     let (voted, own_votes) = if let Some(vid) = viewer_id {
         let votes = sqlx::query!(
@@ -1655,7 +1684,7 @@ pub async fn fetch_status_poll(
         .fetch_all(&state.db)
         .await?;
         if votes.is_empty() {
-            (Some(false), Some(vec![]))
+            (Some(false), None)
         } else {
             let choices: Vec<i32> = votes.iter().map(|v| v.choice).collect();
             (Some(true), Some(choices))
@@ -1669,8 +1698,8 @@ pub async fn fetch_status_poll(
         expires_at: row.expires_at.map(super::convert::mastodon_date),
         expired,
         multiple: row.multiple,
-        votes_count: row.votes_count,
-        voters_count: row.voters_count,
+        votes_count,
+        voters_count,
         options,
         emojis: vec![],
         voted,
@@ -2750,7 +2779,7 @@ pub async fn batch_status_polls(
     }
 
     let rows = sqlx::query!(
-        r#"SELECT id, status_id, options, multiple, votes_count, voters_count, expires_at
+        r#"SELECT id, status_id, options, multiple, expires_at
            FROM polls WHERE status_id = ANY($1::bigint[])"#,
         status_ids,
     )
@@ -2762,6 +2791,38 @@ pub async fn batch_status_polls(
     }
 
     let poll_ids: Vec<uuid::Uuid> = rows.iter().map(|r| r.id).collect();
+
+    // Batch-fetch per-option vote counts live from poll_votes.
+    struct OptionCount { poll_id: uuid::Uuid, choice: i32, cnt: i64 }
+    let option_counts: Vec<OptionCount> = sqlx::query_as!(
+        OptionCount,
+        "SELECT poll_id, choice, COUNT(*)::bigint AS \"cnt!\" FROM poll_votes WHERE poll_id = ANY($1::uuid[]) GROUP BY poll_id, choice",
+        &poll_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut counts_by_poll_option: HashMap<(uuid::Uuid, i32), i64> = HashMap::new();
+    for c in option_counts {
+        counts_by_poll_option.insert((c.poll_id, c.choice), c.cnt);
+    }
+
+    // Batch-fetch total votes and unique voters per poll.
+    struct PollTotals { poll_id: uuid::Uuid, votes: i64, voters: i64 }
+    let totals: Vec<PollTotals> = sqlx::query_as!(
+        PollTotals,
+        r#"SELECT poll_id, COUNT(*)::bigint AS "votes!", COUNT(DISTINCT account_id)::bigint AS "voters!" FROM poll_votes WHERE poll_id = ANY($1::uuid[]) GROUP BY poll_id"#,
+        &poll_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut totals_map: HashMap<uuid::Uuid, (i64, i64)> = HashMap::new();
+    for t in totals {
+        totals_map.insert(t.poll_id, (t.votes, t.voters));
+    }
+
+    // Batch-fetch the viewer's own votes.
     let vote_rows = if let Some(vid) = viewer_id {
         sqlx::query!(
             "SELECT poll_id, choice FROM poll_votes WHERE poll_id = ANY($1::uuid[]) AND account_id = $2 ORDER BY poll_id, choice",
@@ -2782,13 +2843,20 @@ pub async fn batch_status_polls(
     let mut result = HashMap::new();
     for row in rows {
         let expired = row.expires_at.map_or(false, |t| t < now);
-        let options: Vec<super::types::PollOption> = row.options
+        let option_titles: Vec<String> = row.options
             .as_array()
-            .map(|arr| arr.iter().map(|o| super::types::PollOption {
-                title: o["title"].as_str().unwrap_or("").to_string(),
-                votes_count: o["votes_count"].as_i64(),
-            }).collect())
+            .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())
             .unwrap_or_default();
+        let options: Vec<super::types::PollOption> = option_titles.iter().enumerate().map(|(i, title)| {
+            let cnt = *counts_by_poll_option.get(&(row.id, i as i32)).unwrap_or(&0);
+            super::types::PollOption { title: title.clone(), votes_count: Some(cnt) }
+        }).collect();
+
+        let (votes_count, voters_count) = totals_map.get(&row.id)
+            .map(|&(v, u)| (v, u))
+            .unwrap_or((0, 0));
+        let voters_count = if row.multiple { Some(voters_count) } else { None };
+
         let (voted, own_votes) = if viewer_id.is_some() {
             let votes = votes_by_poll.get(&row.id).cloned().unwrap_or_default();
             if votes.is_empty() {
@@ -2804,8 +2872,8 @@ pub async fn batch_status_polls(
             expires_at: row.expires_at.map(super::convert::mastodon_date),
             expired,
             multiple: row.multiple,
-            votes_count: row.votes_count,
-            voters_count: row.voters_count,
+            votes_count,
+            voters_count,
             options,
             emojis: vec![],
             voted,
