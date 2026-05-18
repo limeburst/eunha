@@ -30,6 +30,7 @@ pub async fn list_invites(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<InviteResponse>>> {
+    auth.require_scope("read:accounts")?;
     let rows = sqlx::query!(
         r#"SELECT id, code, expires_at, max_uses, uses, created_at
            FROM invites
@@ -71,6 +72,7 @@ pub async fn create_invite(
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<CreateInviteRequest>>,
 ) -> AppResult<Json<InviteResponse>> {
+    auth.require_scope("write:accounts")?;
     let req = body.map(|Json(b)| b).unwrap_or(CreateInviteRequest {
         max_uses: None,
         expires_in: None,
@@ -112,6 +114,7 @@ pub async fn delete_invite(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
+    auth.require_scope("write:accounts")?;
     let deleted = sqlx::query!(
         "DELETE FROM invites WHERE id = $1 AND instance_id = $2 AND created_by = $3",
         id,
