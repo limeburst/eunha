@@ -3483,8 +3483,10 @@ async fn test_create_quote_post_embeds_quoted_status() {
     assert_eq!(body["visibility"].as_str(), Some("public"));
     let quote = &body["quote"];
     assert!(!quote.is_null(), "quote field should be populated");
-    assert_eq!(quote["id"].as_str(), Some(original_id));
-    assert_eq!(quote["content"].as_str().map(|s| s.contains("original post")), Some(true));
+    let quoted_status = &quote["quoted_status"];
+    assert!(!quoted_status.is_null(), "quoted_status field should be populated");
+    assert_eq!(quoted_status["id"].as_str(), Some(original_id));
+    assert_eq!(quoted_status["content"].as_str().map(|s| s.contains("original post")), Some(true));
 }
 
 /// Quoting increments quotes_count on the original status.
@@ -3538,8 +3540,8 @@ async fn test_get_status_quotes_lists_quotes() {
     let arr = body.as_array().unwrap();
     assert_eq!(arr.len(), 2, "should list both quotes");
     // Each entry should have a quote field pointing back to the original
-    assert_eq!(arr[0]["quote"]["id"].as_str(), Some(original_id));
-    assert_eq!(arr[1]["quote"]["id"].as_str(), Some(original_id));
+    assert_eq!(arr[0]["quote"]["quoted_status"]["id"].as_str(), Some(original_id));
+    assert_eq!(arr[1]["quote"]["quoted_status"]["id"].as_str(), Some(original_id));
     // q1 ID should appear in the list
     let ids: Vec<&str> = arr.iter().map(|s| s["id"].as_str().unwrap()).collect();
     assert!(ids.contains(&q1["id"].as_str().unwrap()));
@@ -3628,7 +3630,36 @@ async fn test_status_has_quote_approval_field() {
     // Public posts allow quoting by everyone
     let auto_arr = qa["automatic"].as_array().unwrap();
     assert!(!auto_arr.is_empty(), "public posts should have non-empty automaticApproval");
-    assert_eq!(qa["current_user"].as_str(), Some("allow"));
+    assert_eq!(qa["current_user"].as_str(), Some("automatic"));
+}
+
+/// PATCH /api/v1/statuses/:id/interaction_policy persists and returns updated policy.
+#[tokio::test]
+async fn test_update_interaction_policy() {
+    let ctx = TestContext::new("interaction-policy").await;
+    let status = ctx.api.post_status(&ctx.alice_token, "policy test post", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Default: public post should auto-approve everyone
+    let qa = &status["quote_approval"];
+    assert_eq!(qa["current_user"].as_str(), Some("automatic"));
+
+    // Restrict quoting to manual approval only
+    let updated: Value = ctx.api.patch_json(
+        &format!("/api/v1/statuses/{status_id}/interaction_policy"),
+        Some(&ctx.alice_token),
+        &json!({
+            "can_quote": {
+                "always": [],
+                "with_approval": ["https://www.w3.org/ns/activitystreams#Public"]
+            }
+        }),
+    ).await.json().await.unwrap();
+
+    let uqa = &updated["quote_approval"];
+    assert!(uqa["automatic"].as_array().unwrap().is_empty(), "automatic should be empty after policy update");
+    assert!(!uqa["manual"].as_array().unwrap().is_empty(), "manual should be non-empty");
+    assert_eq!(uqa["current_user"].as_str(), Some("manual"));
 }
 
 /// POST /api/v1/statuses/:id/unreblog returns 200 even when the status author

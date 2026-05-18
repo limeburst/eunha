@@ -36,6 +36,7 @@ pub async fn shared_inbox(
         "Like" => handle_like(&state, &instance, &activity).await?,
         "Accept" | "Reject" => handle_accept_reject(&state, &instance, &activity).await?,
         "Update" => handle_update(&state, &instance, &activity).await?,
+        "QuoteRequest" => handle_quote_request(&state, &instance, &activity).await?,
         other => {
             tracing::debug!("ignoring unhandled activity type: {other}");
         }
@@ -320,6 +321,58 @@ async fn handle_update(
     _activity: &Value,
 ) -> AppResult<()> {
     // TODO: handle actor updates, status edits
+    Ok(())
+}
+
+async fn handle_quote_request(
+    state: &AppState,
+    _instance: &crate::db::models::Instance,
+    activity: &Value,
+) -> AppResult<()> {
+    let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
+    let object_uri = activity.get("object").and_then(|o| o.as_str()).unwrap_or("");
+
+    if object_uri.is_empty() || actor_uri.is_empty() {
+        return Ok(());
+    }
+
+    // Look up the local quoted status
+    let Some(status) = sqlx::query!(
+        "SELECT id, account_id, interaction_policy FROM statuses WHERE uri = $1 AND deleted_at IS NULL",
+        object_uri,
+    )
+    .fetch_optional(&state.db)
+    .await? else { return Ok(()) };
+
+    // Look up or fetch the requesting remote account (ensure it exists locally)
+    if resolve_or_fetch_remote_account(state, actor_uri).await.is_err() {
+        return Ok(());
+    }
+
+    // Determine if the quoted status auto-approves quotes
+    let always_public = status.interaction_policy.as_ref()
+        .and_then(|p| p.get("can_quote"))
+        .and_then(|cq| cq.get("always"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().any(|v| v.as_str() == Some("https://www.w3.org/ns/activitystreams#Public")))
+        .unwrap_or(true); // default: public means auto-approve
+
+    if always_public {
+        // TODO: send Accept(QuoteRequest) via federation worker
+        tracing::debug!(
+            actor_uri,
+            object_uri,
+            "auto-accepting QuoteRequest"
+        );
+    } else {
+        // TODO: queue pending quote approval notification for the local account owner
+        tracing::debug!(
+            actor_uri,
+            object_uri,
+            "queuing QuoteRequest for manual approval"
+        );
+    }
+
     Ok(())
 }
 

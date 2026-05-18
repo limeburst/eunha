@@ -261,11 +261,49 @@ pub async fn post_status(
     .fetch_one(&state.db)
     .await?;
 
-    // Increment quotes_count on the quoted status
+    // Increment quotes_count and create a quotes record
     if let Some(qid) = quote_of_id {
         let _ = sqlx::query!(
             "UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1",
             qid,
+        )
+        .execute(&state.db)
+        .await;
+
+        // Determine state based on the quoted status's interaction_policy
+        let quoted_policy = sqlx::query!(
+            "SELECT account_id, interaction_policy FROM statuses WHERE id = $1",
+            qid,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+        let quote_state = if let Some(ref qp) = quoted_policy {
+            let always_public = qp.interaction_policy.as_ref()
+                .and_then(|p| p.get("can_quote"))
+                .and_then(|cq| cq.get("always"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some("https://www.w3.org/ns/activitystreams#Public")))
+                .unwrap_or(true); // default: public statuses allow quoting
+            if always_public { "accepted" } else { "pending" }
+        } else {
+            "accepted"
+        };
+
+        let quoted_account_id = quoted_policy.map(|qp| qp.account_id).unwrap_or(account.id);
+        let quote_row_id = crate::snowflake::next_id();
+        let _ = sqlx::query!(
+            r#"INSERT INTO quotes (id, status_id, quoted_status_id, account_id, quoted_account_id, state)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT DO NOTHING"#,
+            quote_row_id,
+            status.id,
+            qid,
+            account.id,
+            quoted_account_id,
+            quote_state,
         )
         .execute(&state.db)
         .await;
@@ -1268,7 +1306,7 @@ pub async fn get_status_context(
                   visibility, language, sensitive, url, uri,
                   replies_count, reblogs_count, favourites_count, quotes_count,
                   deleted_at, edited_at, created_at, conversation_id, idempotency_key,
-                  quote_of_id
+                  quote_of_id, interaction_policy
            FROM reply_tree ORDER BY id ASC LIMIT $2"#
     )
     .bind(id)
@@ -2138,16 +2176,59 @@ pub async fn get_status_card(
 
 // ── PATCH /api/v1/statuses/:id/interaction_policy ─────────────────────────
 
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct InteractionPolicyCanQuote {
+    pub always: Option<Vec<String>>,
+    pub with_approval: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct InteractionPolicyForm {
+    pub can_quote: Option<InteractionPolicyCanQuote>,
+}
+
 pub async fn update_interaction_policy(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
+    body: Option<Json<InteractionPolicyForm>>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
-    let status = sqlx::query_as!(
+    // Verify ownership before updating
+    let _status = sqlx::query_as!(
         DbStatus,
         "SELECT * FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
         id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if let Some(Json(form)) = body {
+        if let Some(cq) = form.can_quote {
+            let always = cq.always.unwrap_or_default();
+            let with_approval = cq.with_approval.unwrap_or_default();
+            let policy = serde_json::json!({
+                "can_quote": {
+                    "always": always,
+                    "with_approval": with_approval,
+                }
+            });
+            sqlx::query!(
+                "UPDATE statuses SET interaction_policy = $1 WHERE id = $2",
+                policy,
+                id,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+    }
+
+    // Re-fetch to get updated interaction_policy
+    let status = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id,
     )
     .fetch_optional(&state.db)
     .await?

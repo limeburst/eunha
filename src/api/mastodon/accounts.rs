@@ -325,7 +325,7 @@ pub async fn get_account_statuses(
             api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
             api_status.poll = pin_polls_map.get(&s.id).cloned();
             api_status.card = pin_cards_map.get(&s.id).cloned();
-            api_status.quote = pin_quote_map.get(&s.id).cloned().map(Box::new);
+            api_status.quote = pin_quote_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api_status.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
                 rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
@@ -476,7 +476,7 @@ pub async fn get_account_statuses(
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
         api.poll = polls_map.get(&s.id).cloned();
         api.card = cards_map.get(&s.id).cloned();
-        api.quote = quote_map.get(&s.id).cloned().map(Box::new);
+        api.quote = quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
@@ -1650,7 +1650,7 @@ pub async fn batch_quote_data(
     state: &AppState,
     statuses: &[crate::db::models::Status],
     viewer_id: Option<i64>,
-) -> AppResult<std::collections::HashMap<i64, super::types::Status>> {
+) -> AppResult<std::collections::HashMap<i64, super::types::QuoteInfo>> {
     use std::collections::{HashMap, HashSet};
 
     let quote_ids: Vec<i64> = statuses.iter()
@@ -1671,9 +1671,9 @@ pub async fn batch_quote_data(
     .fetch_all(&state.db)
     .await?;
 
-    if quoted_statuses.is_empty() {
-        return Ok(HashMap::new());
-    }
+    // Also look up any soft-deleted quoted statuses (they exist but have deleted_at set)
+    let found_ids: HashSet<i64> = quoted_statuses.iter().map(|s| s.id).collect();
+    let deleted_ids: Vec<i64> = quote_ids.iter().filter(|id| !found_ids.contains(*id)).cloned().collect();
 
     let account_ids: Vec<i64> = quoted_statuses.iter()
         .map(|s| s.account_id)
@@ -1681,25 +1681,48 @@ pub async fn batch_quote_data(
         .into_iter()
         .collect();
 
-    let accounts = sqlx::query_as!(
-        Account,
-        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
-        &account_ids,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let accounts = if !account_ids.is_empty() {
+        sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+            &account_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
     let account_map: HashMap<i64, Account> = accounts.into_iter().map(|a| (a.id, a)).collect();
 
     let qs_ids: Vec<i64> = quoted_statuses.iter().map(|s| s.id).collect();
-    let media_map = batch_status_media(state, &qs_ids).await?;
-    let tags_map = batch_status_tags(state, &qs_ids).await?;
-    let mentions_map = batch_status_mentions(state, &qs_ids).await?;
-    let emojis_map = batch_status_emojis(state, &quoted_statuses).await?;
-    let polls_map = batch_status_polls(state, &qs_ids, viewer_id).await?;
-    let cards_map = batch_status_cards(state, &qs_ids).await?;
+    let (media_map, tags_map, mentions_map, emojis_map, polls_map, cards_map, ctxs) = if !qs_ids.is_empty() {
+        let media = batch_status_media(state, &qs_ids).await?;
+        let tags = batch_status_tags(state, &qs_ids).await?;
+        let mentions = batch_status_mentions(state, &qs_ids).await?;
+        let emojis = batch_status_emojis(state, &quoted_statuses).await?;
+        let polls = batch_status_polls(state, &qs_ids, viewer_id).await?;
+        let cards = batch_status_cards(state, &qs_ids).await?;
+        let ctxs = if let Some(vid) = viewer_id {
+            super::statuses::batch_viewer_contexts(state, vid, &qs_ids).await?
+        } else {
+            HashMap::new()
+        };
+        (media, tags, mentions, emojis, polls, cards, ctxs)
+    } else {
+        (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new())
+    };
 
-    let ctxs = if let Some(vid) = viewer_id {
-        super::statuses::batch_viewer_contexts(state, vid, &qs_ids).await?
+    // Fetch quote states for all quoting statuses that have a quote_of_id
+    let quoting_ids: Vec<i64> = statuses.iter().filter(|s| s.quote_of_id.is_some()).map(|s| s.id).collect();
+    let quote_states: HashMap<i64, String> = if !quoting_ids.is_empty() {
+        let rows = sqlx::query!(
+            "SELECT status_id, state FROM quotes WHERE status_id = ANY($1::bigint[])",
+            &quoting_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        rows.into_iter().map(|r| (r.status_id, r.state)).collect()
     } else {
         HashMap::new()
     };
@@ -1720,14 +1743,22 @@ pub async fn batch_quote_data(
         qs_map.insert(qs.id, api);
     }
 
-    // Build the final map keyed by quoting status ID
-    let mut result: HashMap<i64, super::types::Status> = HashMap::new();
+    // Build the final map keyed by quoting status ID → QuoteInfo
+    let mut result: HashMap<i64, super::types::QuoteInfo> = HashMap::new();
     for s in statuses {
-        if let Some(qid) = s.quote_of_id {
-            if let Some(qs_api) = qs_map.get(&qid) {
-                result.insert(s.id, qs_api.clone());
-            }
-        }
+        let Some(qid) = s.quote_of_id else { continue };
+        let state_str = quote_states.get(&s.id).cloned().unwrap_or_else(|| "accepted".to_string());
+        let quoted_status = qs_map.get(&qid).cloned();
+        // If quoted status was deleted, mark state as "deleted"
+        let state_str = if quoted_status.is_none() && deleted_ids.contains(&qid) {
+            "deleted".to_string()
+        } else {
+            state_str
+        };
+        result.insert(s.id, super::types::QuoteInfo {
+            state: state_str,
+            quoted_status: quoted_status.map(Box::new),
+        });
     }
     Ok(result)
 }
@@ -3129,7 +3160,7 @@ pub async fn build_status_with_app(
     if let Some(quote_of_id) = s.quote_of_id {
         let quote_statuses = vec![s.clone()];
         let qmap = batch_quote_data(state, &quote_statuses, viewer_account_id).await?;
-        api.quote = qmap.into_values().next().map(Box::new);
+        api.quote = qmap.into_values().next();
         let _ = quote_of_id; // consumed by batch_quote_data via s
     }
     if let Some(ref mut rb) = api.reblog {

@@ -153,6 +153,7 @@ pub struct Status {
     pub idempotency_key: Option<String>,
     pub quote_of_id: Option<i64>,
     pub quotes_count: i64,
+    pub interaction_policy: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, FromRow)]

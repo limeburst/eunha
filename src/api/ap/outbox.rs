@@ -53,6 +53,7 @@ pub async fn get_outbox(
     let statuses = sqlx::query!(
         r#"SELECT s.id, s.text, s.spoiler_text, s.visibility, s.sensitive,
                   s.created_at, s.uri, s.url, s.in_reply_to_id, s.quote_of_id,
+                  s.interaction_policy,
                   q.uri AS quote_uri
            FROM statuses s
            LEFT JOIN statuses q ON q.id = s.quote_of_id AND q.deleted_at IS NULL
@@ -121,6 +122,24 @@ pub async fn get_outbox(
             let mention_map = mention_maps.get(&s.id).unwrap_or(&empty_map);
             let content = render_content(&s.text, &instance.domain, mention_map);
             let quote_uri = s.quote_uri.clone();
+            let always = s.interaction_policy.as_ref()
+                .and_then(|p| p.get("can_quote"))
+                .and_then(|cq| cq.get("always"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+                .unwrap_or_else(|| {
+                    if matches!(s.visibility.as_str(), "public" | "unlisted") {
+                        vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
+                    } else {
+                        vec![]
+                    }
+                });
+            let with_approval = s.interaction_policy.as_ref()
+                .and_then(|p| p.get("can_quote"))
+                .and_then(|cq| cq.get("with_approval"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+                .unwrap_or_default();
             json!({
                 "@context": [
                     "https://www.w3.org/ns/activitystreams",
@@ -149,6 +168,12 @@ pub async fn get_outbox(
                     "tag": [],
                     "quote": quote_uri,
                     "quoteUrl": s.quote_uri.clone(),
+                    "interactionPolicy": {
+                        "canQuote": {
+                            "automaticApproval": always,
+                            "manualApproval": with_approval,
+                        }
+                    }
                 }
             })
         })

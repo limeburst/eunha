@@ -110,7 +110,7 @@ pub struct Status {
     pub emojis: Vec<CustomEmoji>,
     pub card: Option<PreviewCard>,
     pub poll: Option<Poll>,
-    pub quote: Option<Box<Status>>,
+    pub quote: Option<QuoteInfo>,
     pub quote_approval: QuoteApproval,
     // Viewer-dependent fields: omitted entirely when the request is unauthenticated,
     // matching Mastodon's `attribute :favourited, if: :current_user?` behaviour.
@@ -156,6 +156,12 @@ pub struct QuoteApproval {
     pub automatic: Vec<String>,
     pub manual: Vec<String>,
     pub current_user: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QuoteInfo {
+    pub state: String,
+    pub quoted_status: Option<Box<Status>>,
 }
 
 // ── Media ──────────────────────────────────────────────────────────────────

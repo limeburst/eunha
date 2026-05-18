@@ -122,6 +122,48 @@ fn render_status_content(
     }
 }
 
+fn build_quote_approval(
+    s: &models::Status,
+    viewer: Option<&StatusViewerContext>,
+) -> types::QuoteApproval {
+    let policy = s.interaction_policy.as_ref();
+    let always = policy
+        .and_then(|p| p.get("can_quote"))
+        .and_then(|cq| cq.get("always"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .unwrap_or_else(|| {
+            // Default: public/unlisted allow everyone; private/direct allow none
+            if matches!(s.visibility.as_str(), "public" | "unlisted") {
+                vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
+            } else {
+                vec![]
+            }
+        });
+    let with_approval = policy
+        .and_then(|p| p.get("can_quote"))
+        .and_then(|cq| cq.get("with_approval"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    let current_user = if viewer.is_none() {
+        "unknown".to_string()
+    } else if always.contains(&"https://www.w3.org/ns/activitystreams#Public".to_string()) {
+        "automatic".to_string()
+    } else if with_approval.contains(&"https://www.w3.org/ns/activitystreams#Public".to_string()) {
+        "manual".to_string()
+    } else {
+        "denied".to_string()
+    };
+
+    types::QuoteApproval {
+        automatic: always,
+        manual: with_approval,
+        current_user,
+    }
+}
+
 pub fn status_from_db(
     s: &models::Status,
     account: &models::Account,
@@ -210,15 +252,7 @@ pub fn status_from_db_with_app(
         card: None,
         poll: None,
         quote: None,
-        quote_approval: types::QuoteApproval {
-            automatic: if matches!(s.visibility.as_str(), "public" | "unlisted") {
-                vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
-            } else {
-                vec![]
-            },
-            manual: vec![],
-            current_user: "allow".to_string(),
-        },
+        quote_approval: build_quote_approval(s, viewer_context.as_ref()),
         favourited,
         reblogged,
         muted,

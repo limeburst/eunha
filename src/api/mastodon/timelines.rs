@@ -999,7 +999,7 @@ async fn build_status_list(
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
         api.poll = polls_map.get(&s.id).cloned();
         api.card = cards_map.get(&s.id).cloned();
-        api.quote = quote_map.get(&s.id).cloned().map(Box::new);
+        api.quote = quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
