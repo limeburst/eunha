@@ -195,10 +195,64 @@ pub async fn get_notifications(
         std::collections::HashMap::new()
     };
 
+    // Batch-fetch reports for admin.report notifications
+    let report_ids: Vec<i64> = notifications.iter()
+        .filter_map(|n| if n.notification_type == "admin.report" { n.report_id } else { None })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let report_map: std::collections::HashMap<i64, super::types::Report> = if !report_ids.is_empty() {
+        let mut map = std::collections::HashMap::new();
+        if let Ok(rows) = sqlx::query!(
+            r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
+                      r.category, r.action_taken_at, r.created_at, r.status_ids,
+                      r.target_account_id
+               FROM reports r
+               WHERE r.id = ANY($1::bigint[])"#,
+            &report_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        {
+            let target_ids: Vec<i64> = rows.iter().map(|r| r.target_account_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+            let target_accounts: std::collections::HashMap<i64, Account> = if !target_ids.is_empty() {
+                sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &target_ids)
+                    .fetch_all(&state.db)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| (a.id, a))
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            };
+            for r in rows {
+                let Some(ta) = target_accounts.get(&r.target_account_id) else { continue };
+                map.insert(r.id, super::types::Report {
+                    id: r.id.to_string(),
+                    action_taken: r.action_taken_at.is_some(),
+                    action_taken_at: r.action_taken_at.map(super::convert::mastodon_date),
+                    category: r.category,
+                    comment: r.comment,
+                    forwarded: r.forwarded,
+                    created_at: super::convert::mastodon_date(r.created_at),
+                    status_ids: r.status_ids.iter().map(|i| i.to_string()).collect(),
+                    rule_ids: vec![],
+                    collection_ids: vec![],
+                    target_account: account_from_db(ta),
+                });
+            }
+        }
+        map
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut result = Vec::with_capacity(notifications.len());
     for n in &notifications {
         let Some(account) = from_account_map.get(&n.from_account_id) else { continue };
         let status = n.status_id.and_then(|sid| status_api_map.get(&sid)).cloned();
+        let report = n.report_id.and_then(|rid| report_map.get(&rid)).cloned();
         result.push(Notification {
             id: n.id.to_string(),
             notification_type: n.notification_type.clone(),
@@ -206,6 +260,7 @@ pub async fn get_notifications(
             group_key: format!("ungrouped-{}", n.id),
             account: account_from_db(account),
             status,
+            report,
             filtered: None,
         });
     }
@@ -1010,6 +1065,46 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         None
     };
 
+    let report = if n.notification_type == "admin.report" {
+        if let Some(rid) = n.report_id {
+            sqlx::query!(
+                r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
+                          r.category, r.action_taken_at, r.created_at, r.status_ids,
+                          r.target_account_id
+                   FROM reports r WHERE r.id = $1"#,
+                rid,
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| {
+                // We'll fetch target_account synchronously in a blocking manner — acceptable here
+                // since this is the single-notification endpoint (not batch).
+                // Store report data without target_account for now; caller must handle.
+                Some((r.id, r.comment, r.forwarded, r.category, r.action_taken_at, r.created_at, r.status_ids, r.target_account_id))
+            })
+        } else { None }
+    } else { None };
+
+    let report = if let Some((rid, comment, forwarded, category, action_taken_at, created_at_r, status_ids, ta_id)) = report {
+        let ta = sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = $1", ta_id)
+            .fetch_optional(&state.db).await.ok().flatten();
+        ta.as_ref().map(|ta| super::types::Report {
+            id: rid.to_string(),
+            action_taken: action_taken_at.is_some(),
+            action_taken_at: action_taken_at.map(super::convert::mastodon_date),
+            category,
+            comment,
+            forwarded,
+            created_at: super::convert::mastodon_date(created_at_r),
+            status_ids: status_ids.iter().map(|i| i.to_string()).collect(),
+            rule_ids: vec![],
+            collection_ids: vec![],
+            target_account: account_from_db(ta),
+        })
+    } else { None };
+
     Ok(Notification {
         id: n.id.to_string(),
         notification_type: n.notification_type.clone(),
@@ -1017,6 +1112,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         group_key: format!("ungrouped-{}", n.id),
         account: account_from_db(&from_account),
         status,
+        report,
         filtered: None,
     })
 }

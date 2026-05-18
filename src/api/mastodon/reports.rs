@@ -8,11 +8,13 @@ use crate::{
     error::{AppError, AppResult},
     middleware::AuthenticatedUser,
     state::AppState,
+    push::notify_admins,
 };
 use super::{
     convert::account_from_db,
     types::Report,
 };
+use crate::middleware::ResolvedInstance;
 
 fn de_i64_from_str_or_num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
     #[derive(Deserialize)]
@@ -38,6 +40,7 @@ pub struct ReportForm {
 
 pub async fn file_report(
     State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ReportForm>,
 ) -> AppResult<Json<Report>> {
@@ -89,6 +92,17 @@ pub async fn file_report(
     .await?;
 
     let status_id_strings: Vec<String> = status_ids.iter().map(|id| id.to_string()).collect();
+
+    // Notify admins/moderators about the new report.
+    {
+        let state2 = state.clone();
+        let reporter_id = auth.account_id;
+        let rid = report.id;
+        let iid = instance.id;
+        tokio::spawn(async move {
+            notify_admins(&state2, iid, reporter_id, "admin.report", Some(rid)).await;
+        });
+    }
 
     Ok(Json(Report {
         id: report.id.to_string(),

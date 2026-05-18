@@ -188,6 +188,7 @@ pub struct Notification {
     pub from_account_id: i64,
     pub notification_type: String,
     pub status_id: Option<i64>,
+    pub report_id: Option<i64>,
     pub read: bool,
     pub created_at: DateTime<Utc>,
 }

@@ -410,6 +410,151 @@ pub async fn create_and_push(
     });
 }
 
+/// Send an admin.sign_up or admin.report notification to all admins/moderators
+/// on the instance. Bypasses block and policy filters — admin notifications
+/// are always delivered.
+pub async fn notify_admins(
+    state: &AppState,
+    instance_id: uuid::Uuid,
+    from_account_id: i64,
+    notification_type: &'static str,
+    report_id: Option<i64>,
+) {
+    let admins = match sqlx::query_scalar!(
+        r#"SELECT a.id FROM accounts a
+           JOIN users u ON u.account_id = a.id
+           WHERE a.instance_id = $1 AND u.role IN ('admin', 'moderator')"#,
+        instance_id,
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to fetch admins for notification");
+            return;
+        }
+    };
+
+    for admin_id in admins {
+        if admin_id == from_account_id {
+            continue;
+        }
+
+        let row = if let Some(rid) = report_id {
+            sqlx::query_scalar!(
+                r#"INSERT INTO notifications (account_id, from_account_id, notification_type, report_id)
+                   VALUES ($1, $2, $3, $4)
+                   RETURNING id"#,
+                admin_id, from_account_id, notification_type, rid,
+            )
+            .fetch_one(&state.db)
+            .await
+        } else {
+            sqlx::query_scalar!(
+                r#"INSERT INTO notifications (account_id, from_account_id, notification_type)
+                   VALUES ($1, $2, $3)
+                   RETURNING id"#,
+                admin_id, from_account_id, notification_type,
+            )
+            .fetch_one(&state.db)
+            .await
+        };
+
+        let notification_id = match row {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to create admin notification");
+                continue;
+            }
+        };
+
+        if let Some(payload) = build_admin_notification_payload(
+            state, notification_id, notification_type, from_account_id, report_id,
+        ).await {
+            state.streaming.publish(crate::streaming::Event::Notification {
+                for_account_id: admin_id,
+                payload: std::sync::Arc::new(payload),
+            });
+        }
+    }
+}
+
+async fn build_admin_notification_payload(
+    state: &AppState,
+    notification_id: i64,
+    notification_type: &str,
+    from_account_id: i64,
+    report_id: Option<i64>,
+) -> Option<String> {
+    use crate::api::mastodon::convert::account_from_db;
+
+    let created_at = sqlx::query_scalar!(
+        "SELECT created_at FROM notifications WHERE id = $1",
+        notification_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let from_account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        from_account_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let report_json = if let Some(rid) = report_id {
+        sqlx::query!(
+            r#"SELECT r.id, r.comment, r.forwarded, r.category, r.action_taken_at, r.created_at,
+                      r.status_ids, a.id AS ta_id, a.username AS ta_username
+               FROM reports r
+               JOIN accounts a ON a.id = r.target_account_id
+               WHERE r.id = $1"#,
+            rid,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id.to_string(),
+                "action_taken": r.action_taken_at.is_some(),
+                "action_taken_at": r.action_taken_at.map(|t| t.to_rfc3339()),
+                "category": r.category,
+                "comment": r.comment,
+                "forwarded": r.forwarded,
+                "created_at": r.created_at.to_rfc3339(),
+                "status_ids": r.status_ids.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+                "rule_ids": [],
+                "target_account": {
+                    "id": r.ta_id.to_string(),
+                    "username": r.ta_username,
+                },
+            })
+        })
+    } else {
+        None
+    };
+
+    let payload = serde_json::json!({
+        "id": notification_id.to_string(),
+        "type": notification_type,
+        "created_at": created_at.to_rfc3339(),
+        "group_key": format!("ungrouped-{}", notification_id),
+        "account": serde_json::to_value(account_from_db(&from_account)).ok(),
+        "report": report_json,
+        "filtered": null,
+    });
+
+    serde_json::to_string(&payload).ok()
+}
+
 /// Returns true if the notification should be routed to notification_requests
 /// instead of the main notifications feed, based on the recipient's policy.
 async fn should_filter_notification(

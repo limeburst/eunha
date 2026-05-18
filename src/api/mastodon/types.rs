@@ -330,6 +330,8 @@ pub struct Notification {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<Report>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filtered: Option<Vec<serde_json::Value>>,
 }
 
@@ -668,7 +670,7 @@ pub struct Conversation {
 
 // ── Report ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub id: String,
     pub action_taken: bool,
