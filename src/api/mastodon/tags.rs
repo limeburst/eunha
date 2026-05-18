@@ -91,6 +91,7 @@ pub async fn list_followed_tags(
     uri: Uri,
     req_headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
+    auth.require_scope("read:follows")?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let limit = params.limit.unwrap_or(100).min(200).max(1) as i64;
     let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -151,6 +152,7 @@ pub async fn follow_tag(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
 ) -> AppResult<Json<Tag>> {
+    auth.require_scope("write:follows")?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let name = name.to_lowercase();
 
@@ -186,6 +188,7 @@ pub async fn unfollow_tag(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
 ) -> AppResult<Json<Tag>> {
+    auth.require_scope("write:follows")?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let name = name.to_lowercase();
 

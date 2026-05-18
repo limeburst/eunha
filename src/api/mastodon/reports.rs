@@ -41,6 +41,7 @@ pub async fn file_report(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ReportForm>,
 ) -> AppResult<Json<Report>> {
+    auth.require_scope("write:reports")?;
     let target_account = sqlx::query_as!(
         crate::db::models::Account,
         "SELECT * FROM accounts WHERE id = $1",

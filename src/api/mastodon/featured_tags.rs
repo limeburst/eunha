@@ -22,6 +22,7 @@ pub async fn list_featured_tags(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FeaturedTag>>> {
+    auth.require_scope("read:accounts")?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
 
     let rows = sqlx::query!(
@@ -62,6 +63,7 @@ pub async fn feature_tag(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<FeaturedTagForm>,
 ) -> AppResult<Json<FeaturedTag>> {
+    auth.require_scope("write:accounts")?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let name = form.name.to_lowercase();
     let name = name.trim_start_matches('#');
@@ -103,6 +105,7 @@ pub async fn unfeature_tag(
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:accounts")?;
     let deleted = sqlx::query!(
         "DELETE FROM featured_tags WHERE id = $1 AND account_id = $2",
         id,
@@ -125,6 +128,7 @@ pub async fn featured_tag_suggestions(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::Tag>>> {
+    auth.require_scope("read:accounts")?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
 
     let rows = sqlx::query!(

@@ -1,6 +1,5 @@
 use axum::{
     extract::{Extension, State},
-    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -85,6 +84,7 @@ pub async fn create_subscription(
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Json(body): Json<CreateSubscriptionBody>,
 ) -> AppResult<Json<PushSubscription>> {
+    auth.require_scope("push")?;
     ensure_vapid_keys(&state, instance.id)
         .await
         .map_err(|e| AppError::Internal(e))?;
@@ -158,6 +158,7 @@ pub async fn get_subscription(
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
 ) -> AppResult<Json<PushSubscription>> {
+    auth.require_scope("push")?;
     let instance = sqlx::query_as!(
         crate::db::models::Instance,
         "SELECT * FROM instances WHERE id = $1",
@@ -208,6 +209,7 @@ pub async fn update_subscription(
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Json(body): Json<UpdateSubscriptionBody>,
 ) -> AppResult<Json<PushSubscription>> {
+    auth.require_scope("push")?;
     let instance = sqlx::query_as!(
         crate::db::models::Instance,
         "SELECT * FROM instances WHERE id = $1",
@@ -267,13 +269,14 @@ pub async fn update_subscription(
 pub async fn delete_subscription(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-) -> impl IntoResponse {
-    let _ = sqlx::query!(
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("push")?;
+    sqlx::query!(
         "DELETE FROM web_push_subscriptions WHERE access_token_id = $1",
         auth.token_id,
     )
     .execute(&state.db)
-    .await;
+    .await?;
 
-    Json(serde_json::json!({}))
+    Ok(Json(serde_json::json!({})))
 }
