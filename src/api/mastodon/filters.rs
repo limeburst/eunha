@@ -456,6 +456,7 @@ pub async fn delete_filter_keyword(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:filters")?;
     let deleted = sqlx::query_scalar!(
         r#"DELETE FROM custom_filter_keywords fk
            USING custom_filters f

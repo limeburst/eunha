@@ -858,7 +858,7 @@ pub async fn get_notification_request(
 ) -> AppResult<Json<NotificationRequest>> {
     auth.require_scope("read:notifications")?;
     let r = sqlx::query!(
-        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at,
+        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at, nr.updated_at,
                   a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
                   a.note, a.note_text, a.url, a.uri, a.header, a.header_static,
                   a.public_key, a.private_key, a.followers_count, a.following_count,
@@ -915,7 +915,7 @@ pub async fn get_notification_request(
     Ok(Json(NotificationRequest {
         id: r.id.to_string(),
         created_at: super::convert::mastodon_date(r.created_at),
-        updated_at: super::convert::mastodon_date(r.created_at),
+        updated_at: super::convert::mastodon_date(r.updated_at),
         notifications_count: r.notifications_count.to_string(),
         last_status,
         account: super::convert::account_from_db(&acc),

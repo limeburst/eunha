@@ -36,6 +36,7 @@ pub async fn get_conversations(
     req_headers: HeaderMap,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<impl IntoResponse> {
+    auth.require_scope("read:statuses")?;
     let limit = pagination.limit_clamped(20, 40);
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -230,6 +231,7 @@ pub async fn delete_conversation(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:conversations")?;
     let deleted = sqlx::query!(
         "DELETE FROM conversation_participants WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
         id,
@@ -252,6 +254,7 @@ pub async fn mark_conversation_unread(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
+    auth.require_scope("write:statuses")?;
     let updated = sqlx::query!(
         "UPDATE conversation_participants SET unread = true WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
         id,
@@ -308,6 +311,7 @@ pub async fn mark_conversation_read(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
+    auth.require_scope("write:statuses")?;
     let updated = sqlx::query!(
         "UPDATE conversation_participants SET unread = false WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
         id,
