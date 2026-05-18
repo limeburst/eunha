@@ -315,7 +315,7 @@ async fn test_notification_policy_defaults() {
     assert_eq!(policy["for_not_following"].as_str(), Some("accept"));
     assert_eq!(policy["for_not_followers"].as_str(), Some("accept"));
     assert_eq!(policy["for_new_accounts"].as_str(), Some("accept"));
-    assert_eq!(policy["for_private_mentions"].as_str(), Some("accept"));
+    assert_eq!(policy["for_private_mentions"].as_str(), Some("filter"));
     assert_eq!(policy["for_limited_accounts"].as_str(), Some("accept"));
     assert!(policy["summary"].is_object(), "summary field missing");
 }
@@ -345,6 +345,61 @@ async fn test_notification_policy_update() {
     let policy: Value = patch_resp.json().await.unwrap();
     assert_eq!(policy["for_not_following"].as_str(), Some("filter"));
     assert_eq!(policy["for_not_followers"].as_str(), Some("accept"), "unchanged field should stay accept");
+}
+
+/// GET /api/v1/notifications/policy returns boolean-format policy (Mastodon v1 contract).
+#[tokio::test]
+async fn test_notification_policy_v1_get() {
+    let ctx = TestContext::new("notif-policy-v1-get").await;
+
+    let resp = ctx.api.get("/api/v1/notifications/policy", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policy: Value = resp.json().await.unwrap();
+
+    assert_eq!(policy["filter_not_following"].as_bool(), Some(false));
+    assert_eq!(policy["filter_not_followers"].as_bool(), Some(false));
+    assert_eq!(policy["filter_new_accounts"].as_bool(), Some(false));
+    assert_eq!(policy["filter_private_mentions"].as_bool(), Some(true), "filter_private_mentions defaults to true per Mastodon contract");
+    assert!(policy["summary"].is_object(), "summary field missing");
+    assert!(policy["summary"]["pending_requests_count"].is_number());
+    assert!(policy["summary"]["pending_notifications_count"].is_number());
+}
+
+/// PUT /api/v1/notifications/policy updates policy using boolean format.
+#[tokio::test]
+async fn test_notification_policy_v1_put() {
+    let ctx = TestContext::new("notif-policy-v1-put").await;
+
+    let resp = ctx.api.http
+        .put(ctx.api.url("/api/v1/notifications/policy"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&serde_json::json!({"filter_not_following": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policy: Value = resp.json().await.unwrap();
+    assert_eq!(policy["filter_not_following"].as_bool(), Some(true));
+    assert_eq!(policy["filter_not_followers"].as_bool(), Some(false), "unchanged field stays false");
+}
+
+/// PUT /api/v2/notifications/policy (Mastodon uses PUT, not just PATCH).
+#[tokio::test]
+async fn test_notification_policy_v2_put() {
+    let ctx = TestContext::new("notif-policy-v2-put").await;
+
+    let resp = ctx.api.http
+        .put(ctx.api.url("/api/v2/notifications/policy"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .json(&serde_json::json!({"for_not_followers": "filter"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policy: Value = resp.json().await.unwrap();
+    assert_eq!(policy["for_not_followers"].as_str(), Some("filter"));
 }
 
 /// GET /api/v1/notifications/requests returns an empty list initially.

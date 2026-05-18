@@ -734,6 +734,18 @@ pub struct NotificationPolicySummary {
     pub pending_notifications_count: i64,
 }
 
+// ── Notification Policy V1 ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct NotificationPolicyV1 {
+    pub filter_not_following: bool,
+    pub filter_not_followers: bool,
+    pub filter_new_accounts: bool,
+    pub filter_private_mentions: bool,
+    pub filter_limited_accounts: bool,
+    pub summary: NotificationPolicySummary,
+}
+
 // ── Notification Request ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

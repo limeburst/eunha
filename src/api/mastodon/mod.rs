@@ -141,7 +141,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/notifications/{id}", get(notifications::get_notification))
         .route("/api/v1/notifications/{id}/dismiss", post(notifications::dismiss_notification))
         .route("/api/v2/notifications", get(notifications::get_notifications_v2))
-        .route("/api/v2/notifications/policy", get(notifications::get_notification_policy).patch(notifications::update_notification_policy))
+        .route("/api/v1/notifications/policy", get(notifications::get_notification_policy_v1).put(notifications::update_notification_policy_v1))
+        .route("/api/v2/notifications/policy", get(notifications::get_notification_policy).put(notifications::update_notification_policy).patch(notifications::update_notification_policy))
         // Media — get / update / delete
         .route("/api/v1/media/{id}", get(media::get_media).put(media::update_media).delete(media::delete_media))
         // Bookmarks / Favourites

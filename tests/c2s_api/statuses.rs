@@ -3461,3 +3461,39 @@ async fn test_status_quotes_returns_array() {
     let body: Value = resp.json().await.unwrap();
     assert!(body.as_array().is_some(), "quotes endpoint must return an array");
 }
+
+/// POST /api/v1/statuses/:id/unreblog returns 200 even when the status author
+/// subsequently blocks the viewer (Mastodon contract: unreblog is always allowed).
+#[tokio::test]
+async fn test_unreblog_when_blocked_by_author_returns_200() {
+    let ctx = TestContext::new("unreblog-blocked-author").await;
+
+    // Alice posts a public status.
+    let status = ctx.api.post_status(&ctx.alice_token, "unreblog-block test", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    // Bob reblogs it.
+    let rb = ctx.api.post_json(
+        &format!("/api/v1/statuses/{status_id}/reblog"),
+        Some(&ctx.bob_token),
+        &serde_json::json!({}),
+    ).await;
+    assert_eq!(rb.status(), StatusCode::OK);
+
+    // Alice blocks Bob.
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &serde_json::json!({}),
+    ).await;
+
+    // Bob unreblogs — should succeed even though Alice blocked him.
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{status_id}/unreblog"),
+        Some(&ctx.bob_token),
+        &serde_json::json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK, "unreblog should succeed even when blocked by author");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["reblogged"].as_bool(), Some(false));
+}

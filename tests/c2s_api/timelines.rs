@@ -1453,3 +1453,23 @@ async fn test_db_and_redis_home_timelines_agree_on_direct_messages() {
         "DB and Redis paths must agree on direct message visibility",
     );
 }
+
+/// GET /api/v1/timelines/list/:id returns 404 when list belongs to a different user.
+#[tokio::test]
+async fn test_list_timeline_wrong_user_returns_404() {
+    let ctx = TestContext::new("list-tl-wrong-user").await;
+
+    // Alice creates a list.
+    let list_resp = ctx.api.post_json(
+        "/api/v1/lists",
+        Some(&ctx.alice_token),
+        &serde_json::json!({"title": "Alice's list"}),
+    ).await;
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list: Value = list_resp.json().await.unwrap();
+    let list_id = list["id"].as_str().unwrap();
+
+    // Bob tries to access Alice's list timeline — should get 404.
+    let resp = ctx.api.get(&format!("/api/v1/timelines/list/{list_id}"), Some(&ctx.bob_token)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
