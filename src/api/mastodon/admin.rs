@@ -220,6 +220,101 @@ pub async fn list_admin_accounts(
     Ok((resp_headers, Json(result)))
 }
 
+// ── GET /api/v2/admin/accounts ────────────────────────────────────────────
+// Adds origin (local/remote) and display_name filters on top of v1.
+
+#[derive(Debug, Deserialize)]
+pub struct AdminAccountsV2Params {
+    pub origin: Option<String>,      // "local" | "remote"
+    pub status: Option<String>,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub by_domain: Option<String>,
+    pub email: Option<String>,
+    pub role_ids: Option<Vec<String>>,
+    pub limit: Option<i64>,
+    pub max_id: Option<String>,
+    pub min_id: Option<String>,
+    pub since_id: Option<String>,
+}
+
+pub async fn list_admin_accounts_v2(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Query(params): Query<AdminAccountsV2Params>,
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    require_admin(&state, auth.account_id).await?;
+
+    let instance_id = sqlx::query_scalar!(
+        "SELECT instance_id FROM accounts WHERE id = $1",
+        auth.account_id,
+    ).fetch_one(&state.db).await?;
+
+    let limit = params.limit.unwrap_or(40).min(80).max(1);
+    let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = params.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
+    // origin filter: "local" = domain IS NULL, "remote" = domain IS NOT NULL
+    let local_only = params.origin.as_deref() == Some("local");
+    let remote_only = params.origin.as_deref() == Some("remote");
+
+    let display_name_pattern = params.display_name.as_ref().map(|s| format!("%{}%", s));
+    let email_lower = params.email.as_ref().map(|s| s.to_lowercase());
+
+    let accounts = sqlx::query_as!(
+        models::Account,
+        r#"SELECT a.* FROM accounts a
+           LEFT JOIN users u ON u.account_id = a.id
+           WHERE a.instance_id = $1
+             AND ($3::boolean IS NOT TRUE OR a.domain IS NULL)
+             AND ($4::boolean IS NOT TRUE OR a.domain IS NOT NULL)
+             AND ($5::text IS NULL OR a.username ILIKE $5)
+             AND ($6::text IS NULL OR a.display_name ILIKE $6)
+             AND ($7::text IS NULL OR
+                  ($7 = 'suspended' AND a.suspended_at IS NOT NULL) OR
+                  ($7 = 'silenced' AND a.silenced_at IS NOT NULL) OR
+                  ($7 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
+                  ($7 = 'disabled' AND a.suspended_at IS NOT NULL) OR
+                  ($7 = 'pending' AND u.approved_at IS NULL AND u.id IS NOT NULL) OR
+                  ($7 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
+                      AND (u.id IS NULL OR u.approved_at IS NOT NULL))
+             )
+             AND ($8::text IS NULL OR (u.email_normalized = $8 AND a.domain IS NULL))
+             AND ($9::bigint IS NULL OR a.id < $9)
+             AND ($10::bigint IS NULL OR a.id > $10)
+             AND ($11::bigint IS NULL OR a.id > $11)
+           ORDER BY a.id DESC
+           LIMIT $2"#,
+        instance_id, limit,
+        local_only, remote_only,
+        params.username.as_deref(),
+        display_name_pattern.as_deref(),
+        params.status.as_deref(),
+        email_lower.as_deref(),
+        max_id, since_id, min_id,
+    ).fetch_all(&state.db).await?;
+
+    let mut result = Vec::with_capacity(accounts.len());
+    for a in &accounts {
+        result.push(build_admin_account(&state, a).await?);
+    }
+
+    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+    Ok((resp_headers, Json(result)))
+}
+
 // ── GET /api/v1/admin/accounts/:id ───────────────────────────────────────
 
 pub async fn get_admin_account(

@@ -697,6 +697,112 @@ pub struct FollowersQuery {
     pub pagination: PaginationParams,
 }
 
+// ── GET /api/v1/accounts/:id/pins ─────────────────────────────────────────
+
+pub async fn get_account_pins(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    auth: Option<Extension<AuthenticatedUser>>,
+) -> AppResult<Json<Vec<super::types::Status>>> {
+    let account = fetch_account(&state, id).await?;
+    if account.suspended_at.is_some() {
+        return Ok(Json(vec![]));
+    }
+    let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
+
+    // Block check
+    if let Some(vid) = viewer_id {
+        if vid != account.id {
+            let blocked = sqlx::query_scalar!(
+                "SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2",
+                account.id, vid,
+            ).fetch_optional(&state.db).await?.is_some();
+            if blocked {
+                return Err(AppError::Forbidden);
+            }
+        }
+    }
+
+    let is_self = viewer_id == Some(account.id);
+    let is_follower = if !is_self {
+        if let Some(vid) = viewer_id {
+            sqlx::query_scalar!(
+                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted')",
+                vid, account.id,
+            ).fetch_one(&state.db).await?.unwrap_or(false)
+        } else { false }
+    } else { false };
+
+    let pinned_statuses = sqlx::query_as!(
+        crate::db::models::Status,
+        r#"SELECT s.* FROM statuses s
+           JOIN status_pins sp ON sp.status_id = s.id
+           WHERE sp.account_id = $1 AND s.deleted_at IS NULL
+             AND (
+               s.visibility IN ('public', 'unlisted')
+               OR ($2::boolean = true)
+               OR ($3::boolean = true AND s.visibility = 'private')
+             )
+           ORDER BY sp.id DESC"#,
+        account.id, is_self, is_follower,
+    ).fetch_all(&state.db).await?;
+
+    let pin_status_ids: Vec<i64> = pinned_statuses.iter().map(|s| s.id).collect();
+    let pin_ids: Vec<i64> = pinned_statuses.iter()
+        .map(|s| s.reblog_of_id.unwrap_or(s.id))
+        .collect();
+    let pin_ctxs = if let Some(vid) = viewer_id {
+        super::statuses::batch_viewer_contexts(&state, vid, &pin_ids).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+    let pin_media_map = batch_status_media(&state, &pin_status_ids).await?;
+    let pin_reblog_map = batch_reblog_data(&state, &pinned_statuses).await?;
+    let pin_quote_map = batch_quote_data(&state, &pinned_statuses, viewer_id).await?;
+    let pin_reblog_ids: Vec<i64> = pin_reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+    let mut pin_enrich_ids = pin_status_ids.clone();
+    pin_enrich_ids.extend_from_slice(&pin_reblog_ids);
+    let pin_tags_map = batch_status_tags(&state, &pin_enrich_ids).await?;
+    let pin_mentions_map = batch_status_mentions(&state, &pin_enrich_ids).await?;
+    let all_pin_statuses: Vec<crate::db::models::Status> = pinned_statuses.iter().cloned()
+        .chain(pin_reblog_map.values().map(|(rs, _, _)| rs.clone()))
+        .collect();
+    let pin_emojis_map = batch_status_emojis(&state, &all_pin_statuses).await?;
+    let pin_polls_map = batch_status_polls(&state, &pin_enrich_ids, viewer_id).await?;
+    let pin_cards_map = batch_status_cards(&state, &pin_enrich_ids).await?;
+
+    let mut result = Vec::with_capacity(pinned_statuses.len());
+    for s in &pinned_statuses {
+        let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
+        let reblog = pin_reblog_map.get(&s.id).cloned();
+        let effective_id = s.reblog_of_id.unwrap_or(s.id);
+        let ctx = pin_ctxs.get(&effective_id).cloned();
+        let mentions = pin_mentions_map.get(&s.id).cloned().unwrap_or_default();
+        let rb_mentions = reblog.as_ref()
+            .and_then(|(rs, _, _)| pin_mentions_map.get(&rs.id))
+            .cloned()
+            .unwrap_or_default();
+        let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+        api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
+        api_status.mentions = mentions;
+        api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
+        api_status.poll = pin_polls_map.get(&s.id).cloned();
+        api_status.card = pin_cards_map.get(&s.id).cloned();
+        api_status.quote = pin_quote_map.get(&s.id).cloned();
+        if let Some(ref mut rb) = api_status.reblog {
+            let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
+            rb.mentions = rb_mentions;
+            rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
+            rb.poll = pin_polls_map.get(&rid).cloned();
+            rb.card = pin_cards_map.get(&rid).cloned();
+        }
+        api_status.pinned = Some(true);
+        result.push(api_status);
+    }
+    Ok(Json(result))
+}
+
 pub async fn get_account_followers(
     State(state): State<AppState>,
     Path(id): Path<i64>,

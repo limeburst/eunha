@@ -172,6 +172,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/emails/check_confirmation", get(signup::check_email_confirmation))
         // Admin API
         .route("/api/v1/admin/accounts", get(admin::list_admin_accounts))
+        .route("/api/v2/admin/accounts", get(admin::list_admin_accounts_v2))
         .route("/api/v1/admin/accounts/{id}", get(admin::get_admin_account).delete(admin::delete_admin_account))
         .route("/api/v1/admin/accounts/{id}/approve", post(admin::approve_account))
         .route("/api/v1/admin/accounts/{id}/reject", post(admin::reject_account))
@@ -304,6 +305,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/accounts/lookup", get(accounts::lookup_account))
         .route("/api/v1/accounts/{id}", get(accounts::get_account))
         .route("/api/v1/accounts/{id}/featured_tags", get(accounts::get_account_featured_tags))
+        .route("/api/v1/accounts/{id}/pins", get(accounts::get_account_pins))
         .route("/api/v1/accounts/{id}/statuses", get(accounts::get_account_statuses))
         .route("/api/v1/accounts/{id}/followers", get(accounts::get_account_followers))
         .route("/api/v1/accounts/{id}/following", get(accounts::get_account_following))

@@ -773,3 +773,74 @@ async fn test_admin_update_tag() {
     assert_eq!(updated["usable"].as_bool(), Some(true));
     assert_eq!(updated["requires_review"].as_bool(), Some(false));
 }
+
+// ── GET /api/v2/admin/accounts ────────────────────────────────────────────────
+
+/// GET /api/v2/admin/accounts returns all local accounts.
+#[tokio::test]
+async fn test_admin_v2_accounts_list() {
+    let ctx = TestContext::new("adm-v2-list").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v2/admin/accounts", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp.json().await.unwrap();
+    assert!(!accounts.is_empty(), "should return at least alice and bob");
+    // Each account should have id and username
+    for a in &accounts {
+        assert!(a["id"].as_str().is_some());
+        assert!(a["username"].as_str().is_some());
+    }
+}
+
+/// origin=local returns only local accounts.
+#[tokio::test]
+async fn test_admin_v2_accounts_filter_origin_local() {
+    let ctx = TestContext::new("adm-v2-local").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v2/admin/accounts?origin=local", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp.json().await.unwrap();
+    // All returned accounts should be local (no domain)
+    for a in &accounts {
+        assert!(a["domain"].is_null(), "expected local account, got domain={:?}", a["domain"]);
+    }
+    assert!(accounts.iter().any(|a| a["username"].as_str() == Some("alice")));
+}
+
+/// origin=remote returns zero accounts when no remote accounts exist.
+#[tokio::test]
+async fn test_admin_v2_accounts_filter_origin_remote() {
+    let ctx = TestContext::new("adm-v2-remote").await;
+    make_admin(&ctx).await;
+
+    let resp = ctx.api.get("/api/v2/admin/accounts?origin=remote", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp.json().await.unwrap();
+    // No remote accounts seeded in test context
+    assert!(accounts.is_empty(), "no remote accounts expected in test instance");
+}
+
+/// display_name filter narrows results.
+#[tokio::test]
+async fn test_admin_v2_accounts_filter_display_name() {
+    let ctx = TestContext::new("adm-v2-dname").await;
+    make_admin(&ctx).await;
+
+    // Update alice's display_name
+    ctx.api.patch_multipart(
+        "/api/v1/accounts/update_credentials",
+        &ctx.alice_token,
+        &[("display_name", "UniqueDisplayNameXYZ")],
+    ).await;
+
+    let resp = ctx.api.get(
+        "/api/v2/admin/accounts?display_name=UniqueDisplayNameXYZ",
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0]["username"].as_str(), Some("alice"));
+}

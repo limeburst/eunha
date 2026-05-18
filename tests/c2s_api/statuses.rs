@@ -1305,6 +1305,54 @@ async fn test_unpin_requires_auth() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+// ── GET /api/v1/accounts/:id/pins ────────────────────────────────────────────
+
+/// Pinned statuses appear in GET /api/v1/accounts/{id}/pins.
+#[tokio::test]
+async fn test_account_pins_endpoint() {
+    let ctx = TestContext::new("acct-pins").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "pinnable post", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(&format!("/api/v1/statuses/{id}/pin"), Some(&ctx.alice_token), &json!({})).await;
+
+    let resp = ctx.api.get(&format!("/api/v1/accounts/{}/pins", ctx.alice_id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let pins: Vec<Value> = resp.json().await.unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0]["id"].as_str(), Some(id));
+    assert_eq!(pins[0]["pinned"].as_bool(), Some(true));
+}
+
+/// Unpinning removes the status from GET /api/v1/accounts/{id}/pins.
+#[tokio::test]
+async fn test_account_pins_removes_after_unpin() {
+    let ctx = TestContext::new("acct-pins-rm").await;
+
+    let status = ctx.api.post_status(&ctx.alice_token, "pin then remove", "public").await;
+    let id = status["id"].as_str().unwrap();
+
+    ctx.api.post_json(&format!("/api/v1/statuses/{id}/pin"), Some(&ctx.alice_token), &json!({})).await;
+    ctx.api.post_json(&format!("/api/v1/statuses/{id}/unpin"), Some(&ctx.alice_token), &json!({})).await;
+
+    let pins: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/pins", ctx.alice_id), None,
+    ).await.json().await.unwrap();
+    assert!(pins.is_empty());
+}
+
+/// GET /api/v1/accounts/{id}/pins returns empty array for an account with no pins.
+#[tokio::test]
+async fn test_account_pins_empty() {
+    let ctx = TestContext::new("acct-pins-empty").await;
+
+    let pins: Vec<Value> = ctx.api.get(
+        &format!("/api/v1/accounts/{}/pins", ctx.alice_id), None,
+    ).await.json().await.unwrap();
+    assert!(pins.is_empty());
+}
+
 // ── favourited_by / reblogged_by ──────────────────────────────────────────────
 
 /// GET /api/v1/statuses/:id/favourited_by on a private status (unauthenticated) → 404.
