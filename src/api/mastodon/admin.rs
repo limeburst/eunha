@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     db::models,
     error::{AppError, AppResult},
-    middleware::AuthenticatedUser,
+    middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
 use super::convert::account_from_db;
@@ -1313,6 +1313,81 @@ pub async fn create_domain_block(
     }))
 }
 
+// ── GET /api/v1/admin/domain_blocks/:id ──────────────────────────────────
+
+pub async fn get_admin_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<AdminDomainBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let r = sqlx::query!(
+        "SELECT id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at
+         FROM domain_blocks WHERE id = $1",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminDomainBlock {
+        id: r.id.to_string(),
+        digest: hex::encode(md5_bytes(&r.domain)),
+        domain: r.domain,
+        created_at: super::convert::mastodon_date(r.created_at),
+        severity: r.severity,
+        reject_media: r.reject_media,
+        reject_reports: r.reject_reports,
+        private_comment: r.private_comment,
+        public_comment: r.public_comment,
+        obfuscate: r.obfuscate,
+    }))
+}
+
+// ── PATCH /api/v1/admin/domain_blocks/:id ────────────────────────────────
+
+pub async fn update_admin_domain_block(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(id): Path<i64>,
+    Json(form): Json<CreateDomainBlockForm>,
+) -> AppResult<Json<AdminDomainBlock>> {
+    require_admin(&state, auth.account_id).await?;
+    let r = sqlx::query!(
+        r#"UPDATE domain_blocks SET
+               severity       = COALESCE($2, severity),
+               reject_media   = COALESCE($3, reject_media),
+               reject_reports = COALESCE($4, reject_reports),
+               private_comment = $5,
+               public_comment  = $6,
+               obfuscate      = COALESCE($7, obfuscate),
+               updated_at     = now()
+           WHERE id = $1
+           RETURNING id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at"#,
+        id,
+        form.severity,
+        form.reject_media,
+        form.reject_reports,
+        form.private_comment,
+        form.public_comment,
+        form.obfuscate,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminDomainBlock {
+        id: r.id.to_string(),
+        digest: hex::encode(md5_bytes(&r.domain)),
+        domain: r.domain,
+        created_at: super::convert::mastodon_date(r.created_at),
+        severity: r.severity,
+        reject_media: r.reject_media,
+        reject_reports: r.reject_reports,
+        private_comment: r.private_comment,
+        public_comment: r.public_comment,
+        obfuscate: r.obfuscate,
+    }))
+}
+
 // ── DELETE /api/v1/admin/domain_blocks/:id ───────────────────────────────
 
 pub async fn delete_domain_block(
@@ -2003,6 +2078,133 @@ pub async fn test_canonical_email_block(
         canonical_email_hash: r.canonical_email_hash,
         created_at: super::convert::mastodon_date(r.created_at),
     }).collect()))
+}
+
+// ── Admin Tags ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AdminTag {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub trendable: bool,
+    pub usable: bool,
+    pub requires_review: bool,
+    pub listable: bool,
+}
+
+fn admin_tag_url(domain: &str, name: &str) -> String {
+    format!("https://{domain}/tags/{name}")
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateAdminTagForm {
+    pub trendable: Option<bool>,
+    pub usable: Option<bool>,
+    pub listable: Option<bool>,
+}
+
+pub async fn list_admin_tags(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Query(pagination): Query<super::types::PaginationParams>,
+) -> AppResult<Json<Vec<AdminTag>>> {
+    require_admin(&state, auth.account_id).await?;
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let limit = pagination.limit_clamped(100, 100);
+    let max_id = pagination.max_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+    let rows = sqlx::query!(
+        r#"SELECT id, name, trendable, usable, listable, reviewed_at
+           FROM tags
+           WHERE ($2::uuid IS NULL OR id < $2)
+             AND ($3::uuid IS NULL OR id > $3)
+             AND ($4::uuid IS NULL OR id > $4)
+           ORDER BY id DESC
+           LIMIT $1"#,
+        limit,
+        max_id,
+        since_id,
+        min_id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(rows.into_iter().map(|r| AdminTag {
+        id: r.id.to_string(),
+        name: r.name.clone(),
+        url: admin_tag_url(domain, &r.name),
+        trendable: r.trendable.unwrap_or(false),
+        usable: r.usable.unwrap_or(true),
+        listable: r.listable.unwrap_or(true),
+        requires_review: r.reviewed_at.is_none(),
+    }).collect()))
+}
+
+pub async fn get_admin_tag(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Path(id): Path<uuid::Uuid>,
+) -> AppResult<Json<AdminTag>> {
+    require_admin(&state, auth.account_id).await?;
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let r = sqlx::query!(
+        "SELECT id, name, trendable, usable, listable, reviewed_at FROM tags WHERE id = $1",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminTag {
+        id: r.id.to_string(),
+        name: r.name.clone(),
+        url: admin_tag_url(domain, &r.name),
+        trendable: r.trendable.unwrap_or(false),
+        usable: r.usable.unwrap_or(true),
+        listable: r.listable.unwrap_or(true),
+        requires_review: r.reviewed_at.is_none(),
+    }))
+}
+
+pub async fn update_admin_tag(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Path(id): Path<uuid::Uuid>,
+    Json(form): Json<UpdateAdminTagForm>,
+) -> AppResult<Json<AdminTag>> {
+    require_admin(&state, auth.account_id).await?;
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let r = sqlx::query!(
+        r#"UPDATE tags SET
+               trendable   = COALESCE($2, trendable),
+               usable      = COALESCE($3, usable),
+               listable    = COALESCE($4, listable),
+               reviewed_at = now(),
+               updated_at  = now()
+           WHERE id = $1
+           RETURNING id, name, trendable, usable, listable, reviewed_at"#,
+        id,
+        form.trendable,
+        form.usable,
+        form.listable,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(Json(AdminTag {
+        id: r.id.to_string(),
+        name: r.name.clone(),
+        url: admin_tag_url(domain, &r.name),
+        trendable: r.trendable.unwrap_or(false),
+        usable: r.usable.unwrap_or(true),
+        listable: r.listable.unwrap_or(true),
+        requires_review: r.reviewed_at.is_none(),
+    }))
 }
 
 fn md5_bytes(s: &str) -> [u8; 16] {

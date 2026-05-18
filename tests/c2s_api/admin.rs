@@ -489,7 +489,7 @@ async fn test_admin_email_domain_blocks_crud() {
     assert_eq!(del.status(), StatusCode::OK);
 }
 
-/// PUT /api/v1/admin/ip_blocks/:id updates an existing IP block.
+/// PATCH /api/v1/admin/ip_blocks/:id updates an existing IP block.
 #[tokio::test]
 async fn test_admin_update_ip_block() {
     let ctx = TestContext::new("admin-ipblock-upd").await;
@@ -502,7 +502,7 @@ async fn test_admin_update_ip_block() {
     ).await.json().await.unwrap();
     let block_id = block["id"].as_str().unwrap();
 
-    let update_resp = ctx.api.put_json(
+    let update_resp = ctx.api.patch_json(
         &format!("/api/v1/admin/ip_blocks/{block_id}"),
         Some(&ctx.alice_token),
         &json!({"ip": "192.0.2.99", "severity": "noop", "comment": "updated"}),
@@ -674,4 +674,102 @@ async fn test_admin_accounts_ordered_by_id_desc() {
         .collect();
     let sorted_desc: Vec<i64> = { let mut s = ids.clone(); s.sort_unstable_by(|a, b| b.cmp(a)); s };
     assert_eq!(ids, sorted_desc, "admin accounts should be ordered by id DESC");
+}
+
+/// GET /api/v1/admin/domain_blocks/:id returns the specific block.
+#[tokio::test]
+async fn test_admin_get_domain_block() {
+    let ctx = TestContext::new("admin-dblock-get").await;
+    make_admin(&ctx).await;
+
+    let block: Value = ctx.api.post_json(
+        "/api/v1/admin/domain_blocks",
+        Some(&ctx.alice_token),
+        &json!({"domain": "gettest.example.com", "severity": "silence"}),
+    ).await.json().await.unwrap();
+    let block_id = block["id"].as_str().unwrap();
+
+    let resp = ctx.api.get(
+        &format!("/api/v1/admin/domain_blocks/{block_id}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let fetched: Value = resp.json().await.unwrap();
+    assert_eq!(fetched["id"].as_str(), Some(block_id));
+    assert_eq!(fetched["domain"].as_str(), Some("gettest.example.com"));
+
+    ctx.api.delete(&format!("/api/v1/admin/domain_blocks/{block_id}"), &ctx.alice_token).await;
+}
+
+/// PATCH /api/v1/admin/domain_blocks/:id updates an existing block.
+#[tokio::test]
+async fn test_admin_update_domain_block() {
+    let ctx = TestContext::new("admin-dblock-upd").await;
+    make_admin(&ctx).await;
+
+    let block: Value = ctx.api.post_json(
+        "/api/v1/admin/domain_blocks",
+        Some(&ctx.alice_token),
+        &json!({"domain": "patchtest.example.com", "severity": "silence"}),
+    ).await.json().await.unwrap();
+    let block_id = block["id"].as_str().unwrap();
+
+    let resp = ctx.api.patch_json(
+        &format!("/api/v1/admin/domain_blocks/{block_id}"),
+        Some(&ctx.alice_token),
+        &json!({"domain": "patchtest.example.com", "severity": "suspend", "reject_media": true}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated: Value = resp.json().await.unwrap();
+    assert_eq!(updated["severity"].as_str(), Some("suspend"));
+    assert_eq!(updated["reject_media"].as_bool(), Some(true));
+
+    ctx.api.delete(&format!("/api/v1/admin/domain_blocks/{block_id}"), &ctx.alice_token).await;
+}
+
+/// GET /api/v1/admin/tags returns a JSON array.
+#[tokio::test]
+async fn test_admin_list_tags() {
+    let ctx = TestContext::new("admin-tags-list").await;
+    make_admin(&ctx).await;
+
+    ctx.api.post_status(&ctx.alice_token, "Post with #admintag1", "public").await;
+
+    let resp = ctx.api.get("/api/v1/admin/tags", Some(&ctx.alice_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tags: Vec<Value> = resp.json().await.unwrap();
+    assert!(tags.iter().any(|t| t["name"].as_str() == Some("admintag1")),
+        "created tag should appear in admin tags list: {tags:?}");
+    let tag = tags.iter().find(|t| t["name"].as_str() == Some("admintag1")).unwrap();
+    assert!(tag["id"].as_str().is_some());
+    assert!(tag["trendable"].as_bool().is_some());
+    assert!(tag["usable"].as_bool().is_some());
+    assert!(tag["listable"].as_bool().is_some());
+    assert!(tag["requires_review"].as_bool().is_some());
+}
+
+/// PATCH /api/v1/admin/tags/:id updates tag moderation settings.
+#[tokio::test]
+async fn test_admin_update_tag() {
+    let ctx = TestContext::new("admin-tags-upd").await;
+    make_admin(&ctx).await;
+
+    ctx.api.post_status(&ctx.alice_token, "Post with #updatabletag", "public").await;
+
+    let tags: Vec<Value> = ctx.api.get("/api/v1/admin/tags", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let tag = tags.iter().find(|t| t["name"].as_str() == Some("updatabletag"))
+        .expect("tag not found in admin list");
+    let tag_id = tag["id"].as_str().unwrap();
+
+    let resp = ctx.api.patch_json(
+        &format!("/api/v1/admin/tags/{tag_id}"),
+        Some(&ctx.alice_token),
+        &json!({"trendable": true, "usable": true, "listable": true}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated: Value = resp.json().await.unwrap();
+    assert_eq!(updated["trendable"].as_bool(), Some(true));
+    assert_eq!(updated["usable"].as_bool(), Some(true));
+    assert_eq!(updated["requires_review"].as_bool(), Some(false));
 }

@@ -764,8 +764,7 @@ pub async fn get_notification_policy_v1(
     auth.require_scope("read:notifications")?;
     let user = sqlx::query!(
         r#"SELECT notif_filter_not_following, notif_filter_not_followers,
-                  notif_filter_new_accounts, notif_filter_private_mentions,
-                  notif_filter_limited_accounts
+                  notif_filter_new_accounts, notif_filter_private_mentions
            FROM users WHERE account_id = $1"#,
         auth.account_id,
     )
@@ -775,8 +774,7 @@ pub async fn get_notification_policy_v1(
     let any_filter = user.notif_filter_not_following
         || user.notif_filter_not_followers
         || user.notif_filter_new_accounts
-        || user.notif_filter_private_mentions
-        || user.notif_filter_limited_accounts;
+        || user.notif_filter_private_mentions;
 
     let (pending_requests, pending_notifs) = if any_filter {
         let pending_requests: i64 = sqlx::query_scalar!(
@@ -803,7 +801,6 @@ pub async fn get_notification_policy_v1(
         filter_not_followers: user.notif_filter_not_followers,
         filter_new_accounts: user.notif_filter_new_accounts,
         filter_private_mentions: user.notif_filter_private_mentions,
-        filter_limited_accounts: user.notif_filter_limited_accounts,
         summary: NotificationPolicySummary {
             pending_requests_count: pending_requests,
             pending_notifications_count: pending_notifs,
@@ -811,7 +808,7 @@ pub async fn get_notification_policy_v1(
     }))
 }
 
-// ── PUT /api/v1/notifications/policy ─────────────────────────────────────────
+// ── PATCH /api/v1/notifications/policy ───────────────────────────────────────
 
 #[derive(Debug, Deserialize, Default)]
 pub struct UpdateNotificationPolicyV1Form {
@@ -819,7 +816,6 @@ pub struct UpdateNotificationPolicyV1Form {
     pub filter_not_followers: Option<bool>,
     pub filter_new_accounts: Option<bool>,
     pub filter_private_mentions: Option<bool>,
-    pub filter_limited_accounts: Option<bool>,
 }
 
 pub async fn update_notification_policy_v1(
@@ -834,7 +830,6 @@ pub async fn update_notification_policy_v1(
                notif_filter_not_followers    = COALESCE($3, notif_filter_not_followers),
                notif_filter_new_accounts     = COALESCE($4, notif_filter_new_accounts),
                notif_filter_private_mentions = COALESCE($5, notif_filter_private_mentions),
-               notif_filter_limited_accounts = COALESCE($6, notif_filter_limited_accounts),
                updated_at = now()
            WHERE account_id = $1"#,
         auth.account_id,
@@ -842,7 +837,6 @@ pub async fn update_notification_policy_v1(
         form.filter_not_followers,
         form.filter_new_accounts,
         form.filter_private_mentions,
-        form.filter_limited_accounts,
     )
     .execute(&state.db)
     .await?;

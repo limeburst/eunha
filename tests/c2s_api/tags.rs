@@ -187,6 +187,75 @@ async fn test_unfeature_tag_not_found() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// POST /api/v1/tags/:name/feature creates a featured tag by name and returns it.
+#[tokio::test]
+async fn test_feature_tag_by_name() {
+    let ctx = TestContext::new("tag-feature-name").await;
+    ctx.api.post_status(&ctx.alice_token, "I love #featureme1", "public").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/tags/featureme1/feature",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ft: Value = resp.json().await.unwrap();
+    assert_eq!(ft["name"].as_str(), Some("featureme1"));
+    assert!(ft["id"].as_str().is_some());
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/featured_tags", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(list.iter().any(|t| t["name"].as_str() == Some("featureme1")));
+}
+
+/// POST /api/v1/tags/:name/unfeature removes a previously featured tag.
+#[tokio::test]
+async fn test_unfeature_tag_by_name() {
+    let ctx = TestContext::new("tag-unfeature-name").await;
+    ctx.api.post_status(&ctx.alice_token, "I love #unfeatureme1", "public").await;
+
+    ctx.api.post_json(
+        "/api/v1/tags/unfeatureme1/feature",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/tags/unfeatureme1/unfeature",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/featured_tags", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert!(!list.iter().any(|t| t["name"].as_str() == Some("unfeatureme1")));
+}
+
+/// POST /api/v1/tags/:name/feature is idempotent with POST /api/v1/featured_tags.
+#[tokio::test]
+async fn test_feature_tag_by_name_consistent_with_featured_tags() {
+    let ctx = TestContext::new("tag-feature-consistent").await;
+    ctx.api.post_status(&ctx.alice_token, "Posting about #consistent42", "public").await;
+
+    ctx.api.post_json(
+        "/api/v1/tags/consistent42/feature",
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    ctx.api.post_json(
+        "/api/v1/featured_tags",
+        Some(&ctx.alice_token),
+        &json!({"name": "consistent42"}),
+    ).await;
+
+    let list: Vec<Value> = ctx.api.get("/api/v1/featured_tags", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    let count = list.iter().filter(|t| t["name"].as_str() == Some("consistent42")).count();
+    assert_eq!(count, 1, "duplicate featured tags must not be created");
+}
+
 /// GET /api/v1/followed_tags pagination link header uses a parseable integer cursor,
 /// not the tag UUID which would silently break max_id/since_id filtering.
 #[tokio::test]

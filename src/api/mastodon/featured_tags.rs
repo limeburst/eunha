@@ -121,6 +121,72 @@ pub async fn unfeature_tag(
     Ok(Json(serde_json::json!({})))
 }
 
+// ── POST /api/v1/tags/:name/feature ──────────────────────────────────────
+
+pub async fn feature_tag_by_name(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(name): Path<String>,
+) -> AppResult<Json<FeaturedTag>> {
+    auth.require_scope("write:accounts")?;
+    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let name = name.to_lowercase();
+    let name = name.trim_start_matches('#');
+
+    let tag_id = sqlx::query_scalar!(
+        r#"INSERT INTO tags (name) VALUES ($1)
+           ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id"#,
+        name,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let row = sqlx::query!(
+        r#"INSERT INTO featured_tags (account_id, tag_id, name)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (account_id, tag_id) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id, statuses_count, last_status_at"#,
+        auth.account_id,
+        tag_id,
+        name,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(FeaturedTag {
+        id: row.id.to_string(),
+        name: name.to_string(),
+        url: tag_url(domain, name),
+        statuses_count: row.statuses_count,
+        last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+    }))
+}
+
+// ── POST /api/v1/tags/:name/unfeature ────────────────────────────────────
+
+pub async fn unfeature_tag_by_name(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path(name): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:accounts")?;
+    let name = name.to_lowercase();
+
+    sqlx::query!(
+        r#"DELETE FROM featured_tags
+           WHERE account_id = $1
+             AND tag_id = (SELECT id FROM tags WHERE name = $2)"#,
+        auth.account_id,
+        name,
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({})))
+}
+
 // ── GET /api/v1/featured_tags/suggestions ────────────────────────────────
 
 pub async fn featured_tag_suggestions(

@@ -365,41 +365,21 @@ async fn test_notification_policy_v1_get() {
     assert!(policy["summary"]["pending_notifications_count"].is_number());
 }
 
-/// PUT /api/v1/notifications/policy updates policy using boolean format.
+/// PATCH /api/v1/notifications/policy updates policy using boolean format.
 #[tokio::test]
-async fn test_notification_policy_v1_put() {
-    let ctx = TestContext::new("notif-policy-v1-put").await;
+async fn test_notification_policy_v1_patch() {
+    let ctx = TestContext::new("notif-policy-v1-patch").await;
 
-    let resp = ctx.api.http
-        .put(ctx.api.url("/api/v1/notifications/policy"))
-        .header("host", &ctx.api.host)
-        .bearer_auth(&ctx.alice_token)
-        .json(&serde_json::json!({"filter_not_following": true}))
-        .send()
-        .await
-        .unwrap();
+    let resp = ctx.api.patch_json(
+        "/api/v1/notifications/policy",
+        Some(&ctx.alice_token),
+        &serde_json::json!({"filter_not_following": true}),
+    ).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let policy: Value = resp.json().await.unwrap();
     assert_eq!(policy["filter_not_following"].as_bool(), Some(true));
     assert_eq!(policy["filter_not_followers"].as_bool(), Some(false), "unchanged field stays false");
-}
-
-/// PUT /api/v2/notifications/policy (Mastodon uses PUT, not just PATCH).
-#[tokio::test]
-async fn test_notification_policy_v2_put() {
-    let ctx = TestContext::new("notif-policy-v2-put").await;
-
-    let resp = ctx.api.http
-        .put(ctx.api.url("/api/v2/notifications/policy"))
-        .header("host", &ctx.api.host)
-        .bearer_auth(&ctx.alice_token)
-        .json(&serde_json::json!({"for_not_followers": "filter"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let policy: Value = resp.json().await.unwrap();
-    assert_eq!(policy["for_not_followers"].as_str(), Some("filter"));
+    assert!(policy.get("filter_limited_accounts").is_none(), "v1 policy must not expose filter_limited_accounts");
 }
 
 /// GET /api/v1/notifications/requests returns an empty list initially.
@@ -504,10 +484,10 @@ async fn test_notification_request_accept_removes_from_list() {
     );
 }
 
-/// POST /api/v1/notifications/requests/dismiss_all dismisses all notification requests.
+/// POST /api/v1/notifications/requests/dismiss (bulk) dismisses all notification requests.
 #[tokio::test]
-async fn test_notification_requests_dismiss_all() {
-    let ctx = TestContext::new("notif-req-dismiss-all").await;
+async fn test_notification_requests_dismiss_bulk() {
+    let ctx = TestContext::new("notif-req-dismiss-bulk").await;
 
     // Enable filter so bob's follow creates a request.
     ctx.api.http
@@ -524,26 +504,26 @@ async fn test_notification_requests_dismiss_all() {
     // Verify a request exists.
     let requests: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert!(!requests.is_empty(), "expected a request before dismiss_all");
+    assert!(!requests.is_empty(), "expected a request before bulk dismiss");
 
-    // Dismiss all.
+    // Dismiss all via the Mastodon-compatible path.
     let resp = ctx.api.post_json(
-        "/api/v1/notifications/requests/dismiss_all",
+        "/api/v1/notifications/requests/dismiss",
         Some(&ctx.alice_token),
         &json!({}),
     ).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Requests should now be empty.
+    // Requests should now be empty (dismissed).
     let after: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert!(after.is_empty(), "dismiss_all should remove all notification requests");
+    assert!(after.is_empty(), "bulk dismiss should hide all notification requests");
 }
 
-/// POST /api/v1/notifications/requests/accept_all removes all pending notification requests.
+/// POST /api/v1/notifications/requests/accept (bulk) removes all pending notification requests.
 #[tokio::test]
-async fn test_notification_requests_accept_all() {
-    let ctx = TestContext::new("notif-req-accept-all").await;
+async fn test_notification_requests_accept_bulk() {
+    let ctx = TestContext::new("notif-req-accept-bulk").await;
 
     ctx.api.http
         .patch(ctx.api.url("/api/v2/notifications/policy"))
@@ -558,11 +538,11 @@ async fn test_notification_requests_accept_all() {
 
     let requests: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert!(!requests.is_empty(), "expected a request before accept_all");
+    assert!(!requests.is_empty(), "expected a request before bulk accept");
 
-    // Accept all → all pending requests should be gone.
+    // Accept all via the Mastodon-compatible path.
     let accept_resp = ctx.api.post_json(
-        "/api/v1/notifications/requests/accept_all",
+        "/api/v1/notifications/requests/accept",
         Some(&ctx.alice_token),
         &json!({}),
     ).await;
@@ -570,7 +550,7 @@ async fn test_notification_requests_accept_all() {
 
     let after_accept: Vec<Value> = ctx.api.get("/api/v1/notifications/requests", Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert!(after_accept.is_empty(), "accept_all should remove all pending notification requests");
+    assert!(after_accept.is_empty(), "bulk accept should remove all pending notification requests");
 }
 
 /// GET /api/v2/notifications returns notification groups with accounts and statuses sideloaded.
