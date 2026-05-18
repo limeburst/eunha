@@ -210,6 +210,48 @@ async fn test_search_excludes_muted_accounts() {
     );
 }
 
+/// Viewer's own private and direct statuses appear in their own search results.
+#[tokio::test]
+async fn test_search_own_private_statuses() {
+    let ctx = TestContext::new("search-private").await;
+
+    ctx.api.post_status(&ctx.alice_token, "privateuniqueterm11111", "private").await;
+    ctx.api.post_status(&ctx.alice_token, "directuniqueterm22222", "direct").await;
+
+    // Alice can find her own private status.
+    let body: Value = ctx.api.get(
+        "/api/v2/search?q=privateuniqueterm11111&type=statuses",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let statuses = body["statuses"].as_array().unwrap();
+    assert!(
+        statuses.iter().any(|s| s["content"].as_str().unwrap_or("").contains("privateuniqueterm11111")),
+        "alice should find her own private status in search results",
+    );
+
+    // Alice can find her own direct status.
+    let body: Value = ctx.api.get(
+        "/api/v2/search?q=directuniqueterm22222&type=statuses",
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let statuses = body["statuses"].as_array().unwrap();
+    assert!(
+        statuses.iter().any(|s| s["content"].as_str().unwrap_or("").contains("directuniqueterm22222")),
+        "alice should find her own direct status in search results",
+    );
+
+    // Bob cannot find alice's private status.
+    let body: Value = ctx.api.get(
+        "/api/v2/search?q=privateuniqueterm11111&type=statuses",
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    let statuses = body["statuses"].as_array().unwrap();
+    assert!(
+        statuses.iter().all(|s| !s["content"].as_str().unwrap_or("").contains("privateuniqueterm11111")),
+        "bob should not find alice's private status in search results",
+    );
+}
+
 /// GET /api/v2/search?account_id= filters statuses to the specified account.
 #[tokio::test]
 async fn test_search_account_id_filter() {
