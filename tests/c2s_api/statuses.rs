@@ -3475,7 +3475,7 @@ async fn test_create_quote_post_embeds_quoted_status() {
     let resp = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.bob_token),
-        &json!({"status": "my quote", "quote_id": original_id, "visibility": "public"}),
+        &json!({"status": "my quote", "quoted_status_id": original_id, "visibility": "public"}),
     ).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
@@ -3501,7 +3501,7 @@ async fn test_quote_post_increments_quotes_count() {
     ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.bob_token),
-        &json!({"status": "quoting!", "quote_id": original_id, "visibility": "public"}),
+        &json!({"status": "quoting!", "quoted_status_id": original_id, "visibility": "public"}),
     ).await;
 
     let fetched: Value = ctx.api.get(
@@ -3523,12 +3523,12 @@ async fn test_get_status_quotes_lists_quotes() {
     let q1 = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.bob_token),
-        &json!({"status": "first quote", "quote_id": original_id, "visibility": "public"}),
+        &json!({"status": "first quote", "quoted_status_id": original_id, "visibility": "public"}),
     ).await.json::<Value>().await.unwrap();
     let _q2 = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.alice_token),
-        &json!({"status": "second quote", "quote_id": original_id, "visibility": "public"}),
+        &json!({"status": "second quote", "quoted_status_id": original_id, "visibility": "public"}),
     ).await.json::<Value>().await.unwrap();
 
     let resp = ctx.api.get(
@@ -3562,7 +3562,7 @@ async fn test_quote_nonexistent_status_returns_422() {
     let resp = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.alice_token),
-        &json!({"status": "quoting thin air", "quote_id": "9999999999999", "visibility": "public"}),
+        &json!({"status": "quoting thin air", "quoted_status_id": "9999999999999", "visibility": "public"}),
     ).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
@@ -3576,7 +3576,7 @@ async fn test_quote_direct_message_returns_422() {
     let resp = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.bob_token),
-        &json!({"status": "quoting DM", "quote_id": dm_id, "visibility": "public"}),
+        &json!({"status": "quoting DM", "quoted_status_id": dm_id, "visibility": "public"}),
     ).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
@@ -3592,7 +3592,7 @@ async fn test_delete_quote_decrements_count() {
     let quote_resp = ctx.api.post_json(
         "/api/v1/statuses",
         Some(&ctx.bob_token),
-        &json!({"status": "quoting!", "quote_id": original_id, "visibility": "public"}),
+        &json!({"status": "quoting!", "quoted_status_id": original_id, "visibility": "public"}),
     ).await.json::<Value>().await.unwrap();
     let quote_id = quote_resp["id"].as_str().unwrap();
 
@@ -3696,4 +3696,291 @@ async fn test_unreblog_when_blocked_by_author_returns_200() {
     assert_eq!(resp.status(), StatusCode::OK, "unreblog should succeed even when blocked by author");
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["reblogged"].as_bool(), Some(false));
+}
+
+// ── quote post contract fixes ─────────────────────────────────────────────────
+
+/// Quoting a reblog unwraps to the original status (quoted_status.id is the original).
+#[tokio::test]
+async fn test_quote_reblog_unwraps_to_original() {
+    let ctx = TestContext::new("quote-reblog-unwrap").await;
+
+    // Alice posts the original
+    let original = ctx.api.post_status(&ctx.alice_token, "original post", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    // Bob boosts it
+    let reblog: Value = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/reblog"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await.json().await.unwrap();
+    let reblog_id = reblog["id"].as_str().unwrap();
+
+    // Charlie quotes the reblog — should land on the original
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "quoting a boost", "quoted_status_id": reblog_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+
+    let quoted_id = quote["quote"]["quoted_status"]["id"].as_str().unwrap();
+    assert_eq!(quoted_id, original_id, "quoting a boost must resolve to the original post");
+}
+
+/// Quoting a post by a user who blocked you returns 422.
+#[tokio::test]
+async fn test_quote_blocked_by_quotee_returns_422() {
+    let ctx = TestContext::new("quote-blocked-by").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "alice's post", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    // Alice blocks Bob
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.bob_id),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "quoting despite block", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Quoting a post when you blocked the author returns 422.
+#[tokio::test]
+async fn test_quote_quoter_blocked_quotee_returns_422() {
+    let ctx = TestContext::new("quote-blocked-quotee").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "alice's post", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    // Bob blocks Alice
+    ctx.api.post_json(
+        &format!("/api/v1/accounts/{}/block", ctx.alice_id),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "quoting despite block", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Pending quote appears as null in the quoting status response.
+#[tokio::test]
+async fn test_pending_quote_is_null_in_response() {
+    let ctx = TestContext::new("quote-pending-null").await;
+
+    // Alice posts with manual-only quote policy
+    let original: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "manual approval only", "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let original_id = original["id"].as_str().unwrap();
+
+    ctx.api.patch_json(
+        &format!("/api/v1/statuses/{original_id}/interaction_policy"),
+        Some(&ctx.alice_token),
+        &json!({
+            "can_quote": {
+                "always": [],
+                "with_approval": ["https://www.w3.org/ns/activitystreams#Public"]
+            }
+        }),
+    ).await;
+
+    // Bob quotes it — state should be "pending"
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "quoting pending post", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+
+    assert!(quote["quote"].is_null(), "pending quote must appear as null in the response");
+}
+
+/// GET /api/v1/statuses/:id/quotes does not return pending or rejected quotes.
+#[tokio::test]
+async fn test_get_quotes_only_returns_accepted() {
+    let ctx = TestContext::new("quote-list-accepted-only").await;
+
+    // Alice posts with manual-only policy so quotes start as pending
+    let original: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "manual approval only", "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let original_id = original["id"].as_str().unwrap();
+
+    ctx.api.patch_json(
+        &format!("/api/v1/statuses/{original_id}/interaction_policy"),
+        Some(&ctx.alice_token),
+        &json!({
+            "can_quote": {
+                "always": [],
+                "with_approval": ["https://www.w3.org/ns/activitystreams#Public"]
+            }
+        }),
+    ).await;
+
+    // Bob quotes (pending state)
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "pending quote", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await;
+
+    let quotes: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}/quotes"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    let arr = quotes.as_array().unwrap();
+    assert_eq!(arr.len(), 0, "pending quotes must not appear in GET /quotes");
+}
+
+/// GET /api/v1/statuses/:id/quotes: owner of quoted post sees private quotes; others do not.
+#[tokio::test]
+async fn test_get_quotes_private_visibility_rules() {
+    let ctx = TestContext::new("quote-list-private-visibility").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "original", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    // Bob quotes with private visibility (accepted because original is public)
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "private quote", "quoted_status_id": original_id, "visibility": "private"}),
+    ).await;
+
+    // Alice owns the quoted post so she CAN see Bob's private quote
+    let quotes_alice: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}/quotes"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(quotes_alice.as_array().unwrap().len(), 1, "owner of quoted post should see private quoting posts");
+
+    // Bob (not the quoted-post owner) cannot see his own private quote in this list
+    let quotes_bob: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}/quotes"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+    assert_eq!(quotes_bob.as_array().unwrap().len(), 0, "non-owner viewer must not see private quoting posts");
+}
+
+/// POST /api/v1/statuses/:status_id/quotes/:id/revoke — success case.
+#[tokio::test]
+async fn test_revoke_quote_success() {
+    let ctx = TestContext::new("quote-revoke-success").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "alice's original", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob's quote", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let quote_status_id = quote["id"].as_str().unwrap();
+
+    // Alice (quoted post author) revokes the quote
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/quotes/{quote_status_id}/revoke"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"].as_str(), Some(quote_status_id));
+    // After revoke the quote field should be null (state = "revoked", not "accepted")
+    assert!(body["quote"].is_null(), "quote should be null after revoke");
+}
+
+/// POST revoke by wrong user (not the quoted post author) returns 403.
+#[tokio::test]
+async fn test_revoke_quote_wrong_user_returns_403() {
+    let ctx = TestContext::new("quote-revoke-403").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "alice's original", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob's quote", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let quote_status_id = quote["id"].as_str().unwrap();
+
+    // Bob tries to revoke his own quote — only Alice (the quoted author) can do this
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/quotes/{quote_status_id}/revoke"),
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// POST revoke without a token returns 401.
+#[tokio::test]
+async fn test_revoke_quote_unauthenticated_returns_401() {
+    let ctx = TestContext::new("quote-revoke-401").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "alice's original", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob's quote", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let quote_status_id = quote["id"].as_str().unwrap();
+
+    let resp = ctx.api.post_json(
+        &format!("/api/v1/statuses/{original_id}/quotes/{quote_status_id}/revoke"),
+        None,
+        &json!({}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Deleted quoted status causes quote.state = "deleted" with no quoted_status.
+#[tokio::test]
+async fn test_quote_state_deleted_when_quoted_post_removed() {
+    let ctx = TestContext::new("quote-state-deleted").await;
+
+    let original = ctx.api.post_status(&ctx.alice_token, "will be deleted", "public").await;
+    let original_id = original["id"].as_str().unwrap();
+
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "bob quotes alice", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let quote_status_id = quote["id"].as_str().unwrap();
+
+    // Confirm quote is present before deletion
+    assert!(!quote["quote"].is_null(), "quote should be present before deletion");
+
+    // Alice deletes the original
+    ctx.api.delete(&format!("/api/v1/statuses/{original_id}"), &ctx.alice_token).await;
+
+    // Fetch the quoting post — quote.state should now be "deleted"
+    let refetched: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{quote_status_id}"),
+        Some(&ctx.bob_token),
+    ).await.json().await.unwrap();
+
+    let q = &refetched["quote"];
+    assert!(!q.is_null(), "quote object should still be present");
+    assert_eq!(q["state"].as_str(), Some("deleted"), "state should be 'deleted' after quoted post removed");
+    assert!(q["quoted_status"].is_null(), "quoted_status should be null when deleted");
 }

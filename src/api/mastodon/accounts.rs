@@ -1727,6 +1727,29 @@ pub async fn batch_quote_data(
         HashMap::new()
     };
 
+    // Check block relationships between viewer and quoted status authors (for "unauthorized" state)
+    let blocked_author_ids: HashSet<i64> = if let Some(vid) = viewer_id {
+        let author_ids: Vec<i64> = quoted_statuses.iter().map(|s| s.account_id).collect::<HashSet<_>>().into_iter().collect();
+        if !author_ids.is_empty() {
+            sqlx::query_scalar!(
+                r#"SELECT target_account_id FROM blocks WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])
+                   UNION
+                   SELECT account_id FROM blocks WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])"#,
+                vid, &author_ids,
+            )
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect()
+        } else {
+            HashSet::new()
+        }
+    } else {
+        HashSet::new()
+    };
+
     // Build a map from quoted status id → API Status
     let mut qs_map: HashMap<i64, super::types::Status> = HashMap::new();
     for qs in &quoted_statuses {
@@ -1743,20 +1766,35 @@ pub async fn batch_quote_data(
         qs_map.insert(qs.id, api);
     }
 
-    // Build the final map keyed by quoting status ID → QuoteInfo
+    // Build the final map keyed by quoting status ID → QuoteInfo.
+    // Mastodon: quote field is null when DB state is not "accepted".
+    // Within accepted quotes, state may be further derived as "deleted" or "unauthorized".
     let mut result: HashMap<i64, super::types::QuoteInfo> = HashMap::new();
     for s in statuses {
         let Some(qid) = s.quote_of_id else { continue };
         let state_str = quote_states.get(&s.id).cloned().unwrap_or_else(|| "accepted".to_string());
-        let quoted_status = qs_map.get(&qid).cloned();
-        // If quoted status was deleted, mark state as "deleted"
-        let state_str = if quoted_status.is_none() && deleted_ids.contains(&qid) {
-            "deleted".to_string()
+
+        // Only produce a QuoteInfo when DB state is "accepted"
+        if state_str != "accepted" {
+            continue;
+        }
+
+        // Derive effective display state
+        let (effective_state, include_status) = if deleted_ids.contains(&qid) {
+            ("deleted".to_string(), false)
         } else {
-            state_str
+            let quoted_author_id = quoted_statuses.iter().find(|qs| qs.id == qid).map(|qs| qs.account_id);
+            let unauthorized = quoted_author_id.map(|aid| blocked_author_ids.contains(&aid)).unwrap_or(false);
+            if unauthorized {
+                ("unauthorized".to_string(), false)
+            } else {
+                ("accepted".to_string(), true)
+            }
         };
+
+        let quoted_status = if include_status { qs_map.get(&qid).cloned() } else { None };
         result.insert(s.id, super::types::QuoteInfo {
-            state: state_str,
+            state: effective_state,
             quoted_status: quoted_status.map(Box::new),
         });
     }

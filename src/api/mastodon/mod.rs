@@ -121,6 +121,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/statuses/{id}/source", get(statuses::get_status_source))
         .route("/api/v1/statuses/{id}/interaction_policy", patch(statuses::update_interaction_policy))
         .route("/api/v1/statuses/{id}/quotes", get(statuses::get_status_quotes))
+        .route("/api/v1/statuses/{status_id}/quotes/{id}/revoke", post(statuses::revoke_quote))
         // Blocks / Mutes lists
         .route("/api/v1/blocks", get(accounts::get_blocks))
         .route("/api/v1/mutes", get(accounts::get_mutes))

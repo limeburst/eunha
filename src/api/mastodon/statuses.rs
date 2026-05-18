@@ -41,7 +41,8 @@ pub struct PollForm {
 pub struct PostStatusForm {
     pub status: Option<String>,
     pub in_reply_to_id: Option<String>,
-    pub quote_id: Option<String>,
+    #[serde(alias = "quote_id")]
+    pub quoted_status_id: Option<String>,
     pub spoiler_text: Option<String>,
     pub sensitive: Option<bool>,
     pub language: Option<String>,
@@ -180,21 +181,63 @@ pub async fn post_status(
         None
     };
 
-    // Validate quote_id
-    let quote_of_id: Option<i64> = if let Some(ref qid_str) = form.quote_id {
-        let qid = qid_str.parse::<i64>().map_err(|_| AppError::Unprocessable("invalid quote_id".into()))?;
+    // Validate quoted_status_id
+    let quote_of_id: Option<i64> = if let Some(ref qid_str) = form.quoted_status_id {
+        let qid = qid_str.parse::<i64>().map_err(|_| AppError::Unprocessable("invalid quoted_status_id".into()))?;
         let quoted = sqlx::query!(
-            "SELECT id, visibility FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT id, account_id, visibility, reblog_of_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
             qid,
         )
         .fetch_optional(&state.db)
         .await?
-        .ok_or_else(|| AppError::Unprocessable("quote_id does not exist".into()))?;
+        .ok_or_else(|| AppError::Unprocessable("quoted_status_id does not exist".into()))?;
         // Cannot quote direct messages
         if quoted.visibility == "direct" {
             return Err(AppError::Unprocessable("cannot quote a direct message".into()));
         }
-        Some(quoted.id)
+        // Unwrap reblogs: quoting a boost quotes the original
+        let effective_id = if let Some(original_id) = quoted.reblog_of_id {
+            let original = sqlx::query!(
+                "SELECT id, account_id, visibility FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+                original_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::Unprocessable("quoted_status_id does not exist".into()))?;
+            if original.visibility == "direct" {
+                return Err(AppError::Unprocessable("cannot quote a direct message".into()));
+            }
+            // Block check against original author
+            let blocked = sqlx::query_scalar!(
+                r#"SELECT 1 FROM blocks
+                   WHERE (account_id = $1 AND target_account_id = $2)
+                      OR (account_id = $2 AND target_account_id = $1)
+                   LIMIT 1"#,
+                account.id, original.account_id,
+            )
+            .fetch_optional(&state.db)
+            .await?;
+            if blocked.is_some() {
+                return Err(AppError::Unprocessable("not allowed to interact with this post".into()));
+            }
+            original.id
+        } else {
+            // Block check against quoted author
+            let blocked = sqlx::query_scalar!(
+                r#"SELECT 1 FROM blocks
+                   WHERE (account_id = $1 AND target_account_id = $2)
+                      OR (account_id = $2 AND target_account_id = $1)
+                   LIMIT 1"#,
+                account.id, quoted.account_id,
+            )
+            .fetch_optional(&state.db)
+            .await?;
+            if blocked.is_some() {
+                return Err(AppError::Unprocessable("not allowed to interact with this post".into()));
+            }
+            quoted.id
+        };
+        Some(effective_id)
     } else {
         None
     };
@@ -596,7 +639,7 @@ async fn extract_post_status_form(request: axum::extract::Request) -> AppResult<
             match name.as_str() {
                 "status" => form.status = Some(text),
                 "in_reply_to_id" => form.in_reply_to_id = if text.is_empty() { None } else { Some(text) },
-                "quote_id" => form.quote_id = if text.is_empty() { None } else { Some(text) },
+                "quoted_status_id" | "quote_id" => form.quoted_status_id = if text.is_empty() { None } else { Some(text) },
                 "spoiler_text" => form.spoiler_text = if text.is_empty() { None } else { Some(text) },
                 "visibility" => form.visibility = Some(text),
                 "language" => form.language = if text.is_empty() { None } else { Some(text) },
@@ -2412,18 +2455,28 @@ pub async fn get_status_quotes(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    // Only return accepted quotes; private quoting statuses are hidden from non-owners
+    let quoted_owner: Option<i64> = sqlx::query_scalar!(
+        "SELECT account_id FROM statuses WHERE id = $1",
+        id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+    let viewer_is_owner = viewer_id.is_some() && viewer_id == quoted_owner;
+
     let quotes = sqlx::query_as!(
         DbStatus,
         r#"SELECT s.* FROM statuses s
-           WHERE s.quote_of_id = $1
-             AND s.deleted_at IS NULL
-             AND s.visibility IN ('public', 'unlisted')
-             AND ($2::bigint IS NULL OR s.id < $2)
-             AND ($3::bigint IS NULL OR s.id > $3)
-             AND ($4::bigint IS NULL OR s.id > $4)
-           ORDER BY s.id DESC
+           JOIN quotes q ON q.status_id = s.id AND q.quoted_status_id = $1
+           WHERE s.deleted_at IS NULL
+             AND q.state = 'accepted'
+             AND (s.visibility IN ('public', 'unlisted') OR (s.visibility = 'private' AND $6::bool))
+             AND ($2::bigint IS NULL OR q.id < $2)
+             AND ($3::bigint IS NULL OR q.id > $3)
+             AND ($4::bigint IS NULL OR q.id > $4)
+           ORDER BY q.id DESC
            LIMIT $5"#,
-        id, max_id, since_id, min_id, limit,
+        id, max_id, since_id, min_id, limit, viewer_is_owner,
     )
     .fetch_all(&state.db)
     .await?;
@@ -2442,6 +2495,56 @@ pub async fn get_status_quotes(
         }
     }
     Ok((headers, Json(result)))
+}
+
+// ── POST /api/v1/statuses/:status_id/quotes/:id/revoke ────────────────────
+
+pub async fn revoke_quote(
+    State(state): State<AppState>,
+    Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Path((quoted_status_id, quoting_status_id)): Path<(i64, i64)>,
+) -> AppResult<impl axum::response::IntoResponse> {
+    auth.require_scope("write:statuses")?;
+
+    // Find the quote record; the caller must be the quoted status's author
+    let quote = sqlx::query!(
+        r#"SELECT q.id, q.status_id, q.quoted_status_id, q.quoted_account_id, q.state
+           FROM quotes q
+           WHERE q.quoted_status_id = $1 AND q.status_id = $2 AND q.state != 'revoked'"#,
+        quoted_status_id, quoting_status_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if quote.quoted_account_id != auth.account_id {
+        return Err(AppError::Forbidden);
+    }
+
+    sqlx::query!(
+        "UPDATE quotes SET state = 'revoked' WHERE id = $1",
+        quote.id,
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Return the quoting status
+    let quoting_status = sqlx::query_as!(
+        DbStatus,
+        "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        quoting_status_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let account = fetch_account(&state, quoting_status.account_id).await?;
+    let media = fetch_status_media(&state, quoting_status.id).await?;
+    let reblog = fetch_reblog_data(&state, &quoting_status).await?;
+    let ctx = build_viewer_context(&state, auth.account_id, quoting_status.id).await.ok();
+    let api_status = build_status(&state, &quoting_status, &account, media, reblog, ctx).await?;
+    Ok(Json(api_status))
 }
 
 pub async fn build_viewer_context(
