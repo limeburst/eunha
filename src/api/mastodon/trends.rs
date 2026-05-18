@@ -12,7 +12,7 @@ use crate::{
 use super::{
     accounts::{batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_status_tags},
     convert::status_from_db,
-    types::{Status, Tag, TagHistory},
+    types::{Status, Tag},
 };
 
 #[derive(Debug, Deserialize)]
@@ -50,15 +50,18 @@ pub async fn trending_tags(
     .fetch_all(&state.db)
     .await?;
 
+    let tag_ids: Vec<uuid::Uuid> = rows.iter().map(|r| r.id).collect();
+    let histories = super::tags::fetch_tags_histories(&state.db, &tag_ids, instance.id).await;
+
     let tags: Vec<Tag> = rows
         .into_iter()
         .map(|r| {
             let name_lower = r.name.to_lowercase();
             Tag {
                 id: r.id.to_string(),
+                history: histories.get(&r.id).cloned().unwrap_or_default(),
                 name: r.name,
                 url: format!("https://{}/tags/{}", domain, urlencoding::encode(&name_lower)),
-                history: vec![TagHistory { day: "0".into(), uses: r.uses.unwrap_or(0).to_string(), accounts: "0".into() }],
                 following: None,
                 featuring: None,
             }

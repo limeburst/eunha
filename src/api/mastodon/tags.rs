@@ -4,12 +4,92 @@ use axum::{
     response::{IntoResponse, Json},
     Extension,
 };
+use std::collections::HashMap;
+use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
-use super::types::Tag;
+use super::types::{Tag, TagHistory};
+
+// ── Tag history helpers ────────────────────────────────────────────────────
+
+/// Returns 7 days of daily use/account counts for the given tags, newest day first.
+pub(super) async fn fetch_tags_histories(
+    db: &sqlx::PgPool,
+    tag_ids: &[Uuid],
+    instance_id: Uuid,
+) -> HashMap<Uuid, Vec<TagHistory>> {
+    if tag_ids.is_empty() {
+        return HashMap::new();
+    }
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+    let rows = sqlx::query!(
+        r#"SELECT st.tag_id,
+                  date_trunc('day', s.created_at)::date AS day,
+                  COUNT(*)::bigint AS uses,
+                  COUNT(DISTINCT s.account_id)::bigint AS accounts
+           FROM status_tags st
+           JOIN statuses s ON s.id = st.status_id
+           WHERE st.tag_id = ANY($1::uuid[])
+             AND s.instance_id = $2
+             AND s.deleted_at IS NULL
+             AND s.visibility = 'public'
+             AND s.created_at >= $3
+           GROUP BY st.tag_id, date_trunc('day', s.created_at)::date"#,
+        tag_ids as &[Uuid],
+        instance_id,
+        cutoff,
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    // Build tag_id → NaiveDate → (uses, accounts)
+    let mut raw: HashMap<Uuid, HashMap<chrono::NaiveDate, (i64, i64)>> = HashMap::new();
+    for r in rows {
+        if let Some(day) = r.day {
+            raw.entry(r.tag_id).or_default().insert(
+                day,
+                (r.uses.unwrap_or(0), r.accounts.unwrap_or(0)),
+            );
+        }
+    }
+
+    let today = chrono::Utc::now().date_naive();
+    tag_ids
+        .iter()
+        .map(|&tid| {
+            let day_map = raw.get(&tid).cloned().unwrap_or_default();
+            let history = (0..7i64)
+                .map(|i| {
+                    let day = today - chrono::Duration::days(i);
+                    let (uses, accounts) = day_map.get(&day).copied().unwrap_or((0, 0));
+                    let ts = day
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                        .and_utc()
+                        .timestamp()
+                        .to_string();
+                    TagHistory { day: ts, uses: uses.to_string(), accounts: accounts.to_string() }
+                })
+                .collect();
+            (tid, history)
+        })
+        .collect()
+}
+
+pub(super) async fn fetch_tag_history(
+    db: &sqlx::PgPool,
+    tag_id: Uuid,
+    instance_id: Uuid,
+) -> Vec<TagHistory> {
+    fetch_tags_histories(db, &[tag_id], instance_id)
+        .await
+        .remove(&tag_id)
+        .unwrap_or_default()
+}
 
 fn tag_url(domain: &str, name: &str) -> String {
     format!("https://{domain}/tags/{name}")
@@ -65,11 +145,13 @@ pub async fn get_tag(
         (None, None)
     };
 
+    let history = fetch_tag_history(&state.db, tag.id, instance.id).await;
+
     Ok(Json(Tag {
         id: tag.id.to_string(),
         url: tag_url(domain, &name),
         name,
-        history: vec![],
+        history,
         following,
         featuring,
     }))
@@ -121,13 +203,16 @@ pub async fn list_followed_tags(
     let first_follow_id = rows.first().map(|r| r.follow_id.to_string());
     let last_follow_id = rows.last().map(|r| r.follow_id.to_string());
 
+    let tag_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let histories = fetch_tags_histories(&state.db, &tag_ids, instance.id).await;
+
     let result: Vec<Tag> = rows
         .into_iter()
         .map(|r| Tag {
             id: r.id.to_string(),
             url: tag_url(domain, &r.name),
+            history: histories.get(&r.id).cloned().unwrap_or_default(),
             name: r.name,
-            history: vec![],
             following: Some(true),
             featuring: None,
         })
@@ -172,11 +257,13 @@ pub async fn follow_tag(
     .execute(&state.db)
     .await?;
 
+    let history = fetch_tag_history(&state.db, tag_id, instance.id).await;
+
     Ok(Json(Tag {
         id: tag_id.to_string(),
         url: tag_url(domain, &name),
         name,
-        history: vec![],
+        history,
         following: Some(true),
         featuring: Some(false),
     }))
@@ -208,11 +295,13 @@ pub async fn unfollow_tag(
     .execute(&state.db)
     .await?;
 
+    let history = fetch_tag_history(&state.db, tag_id, instance.id).await;
+
     Ok(Json(Tag {
         id: tag_id.to_string(),
         url: tag_url(domain, &name),
         name,
-        history: vec![],
+        history,
         following: Some(false),
         featuring: Some(false),
     }))

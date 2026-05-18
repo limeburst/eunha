@@ -470,7 +470,7 @@ pub struct Tag {
     pub featuring: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TagHistory {
     pub day: String,
     pub accounts: String,
