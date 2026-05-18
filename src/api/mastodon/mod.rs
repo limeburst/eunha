@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod admin;
 pub mod announcements;
+pub mod annual_reports;
 pub mod bookmarks;
 pub mod conversations;
 pub mod trends;
@@ -18,6 +19,7 @@ pub mod markers;
 pub mod media;
 pub mod notifications;
 pub mod oauth;
+pub mod oembed;
 pub mod polls;
 pub mod push;
 pub mod reports;
@@ -263,6 +265,12 @@ pub fn router(state: AppState) -> Router<AppState> {
             .put(push::update_subscription)
             .delete(push::delete_subscription)
         )
+        // Annual reports
+        .route("/api/v1/annual_reports", get(annual_reports::list_annual_reports))
+        .route("/api/v1/annual_reports/{year}", get(annual_reports::get_annual_report))
+        .route("/api/v1/annual_reports/{year}/read", post(annual_reports::read_annual_report))
+        .route("/api/v1/annual_reports/{year}/generate", post(annual_reports::generate_annual_report))
+        .route("/api/v1/annual_reports/{year}/state", get(annual_reports::get_annual_report_state))
         // Scheduled statuses
         .route("/api/v1/scheduled_statuses", get(scheduled_statuses::list_scheduled_statuses))
         .route("/api/v1/scheduled_statuses/{id}", get(scheduled_statuses::get_scheduled_status).put(scheduled_statuses::update_scheduled_status).delete(scheduled_statuses::delete_scheduled_status))
@@ -336,6 +344,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/donation_campaigns", get(accounts::list_donation_campaigns))
         .route("/api/v1/accounts/{id}/identity_proofs", get(accounts::get_account_identity_proofs))
         .route("/api/v1/instance/terms_of_service", get(instance::get_terms_of_service))
+        .route("/api/v1/instance/terms_of_service/{date}", get(instance::get_terms_of_service_by_date))
+        .route("/api/oembed", get(oembed::get_oembed))
         .route("/api/v1/peers/search", get(instance::search_peers))
         .route("/api/v1/custom_emojis", get(emojis::list_custom_emojis))
         // Announcements / conversations — not yet implemented

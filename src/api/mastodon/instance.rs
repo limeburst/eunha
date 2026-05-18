@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Path, Query, State},
     Json,
 };
 use serde::Deserialize;
@@ -226,6 +226,41 @@ pub async fn get_terms_of_service(
     Ok(Json(ExtendedDescription {
         updated_at: super::convert::mastodon_date(instance.updated_at),
         content: instance.terms_of_service.clone(),
+    }))
+}
+
+// ── GET /api/v1/instance/terms_of_service/{date} ─────────────────────────
+// Mastodon supports versioned ToS by effective date. eunha has a single ToS,
+// so we return it for any date, or 404 if the ToS is empty.
+
+#[derive(Debug, serde::Serialize)]
+pub struct TermsOfServiceByDate {
+    pub effective_date: String,
+    pub effective: bool,
+    pub content: String,
+    pub succeeded_by: Option<String>,
+}
+
+pub async fn get_terms_of_service_by_date(
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Path(date): Path<String>,
+) -> AppResult<Json<TermsOfServiceByDate>> {
+    if instance.terms_of_service.is_empty() {
+        return Err(crate::error::AppError::NotFound);
+    }
+    // Validate that `date` looks like a date (YYYY-MM-DD); return 404 for other dates
+    if date.len() != 10 || !date.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        return Err(crate::error::AppError::NotFound);
+    }
+    let updated_date = instance.updated_at.format("%Y-%m-%d").to_string();
+    if date != updated_date {
+        return Err(crate::error::AppError::NotFound);
+    }
+    Ok(Json(TermsOfServiceByDate {
+        effective_date: date,
+        effective: true,
+        content: instance.terms_of_service.clone(),
+        succeeded_by: None,
     }))
 }
 

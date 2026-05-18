@@ -262,6 +262,10 @@ pub async fn get_notifications(
             status,
             report,
             filtered: None,
+            event: None,
+            moderation_warning: None,
+            fallback: None,
+            collection: None,
         });
     }
 
@@ -1308,5 +1312,9 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         status,
         report,
         filtered: None,
+        event: None,
+        moderation_warning: None,
+        fallback: None,
+        collection: None,
     })
 }
