@@ -207,7 +207,7 @@ pub async fn search(
                JOIN accounts a ON a.id = s.account_id
                WHERE s.instance_id = $1
                  AND s.deleted_at IS NULL
-                 AND s.visibility IN ('public', 'unlisted')
+                 AND (s.visibility IN ('public', 'unlisted') OR s.account_id = $5)
                  AND a.suspended_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
