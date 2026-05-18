@@ -21,6 +21,7 @@ pub async fn list_scheduled_statuses(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<ScheduledStatus>>> {
+    auth.require_scope("read:statuses")?;
     let rows = sqlx::query!(
         r#"SELECT id, scheduled_at, params
            FROM scheduled_statuses
@@ -51,6 +52,7 @@ pub async fn get_scheduled_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<ScheduledStatus>> {
+    auth.require_scope("read:statuses")?;
     let row = sqlx::query!(
         "SELECT id, scheduled_at, params FROM scheduled_statuses WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -80,6 +82,7 @@ pub async fn update_scheduled_status(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<UpdateScheduledStatusForm>,
 ) -> AppResult<Json<ScheduledStatus>> {
+    auth.require_scope("write:statuses")?;
     let scheduled_at = form.scheduled_at.as_deref()
         .map(|s| chrono::DateTime::parse_from_rfc3339(s)
             .map(|dt| dt.with_timezone(&chrono::Utc)))
@@ -113,6 +116,7 @@ pub async fn delete_scheduled_status(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
+    auth.require_scope("write:statuses")?;
     let deleted = sqlx::query_scalar!(
         "DELETE FROM scheduled_statuses WHERE id = $1 AND account_id = $2 RETURNING id",
         id, auth.account_id,

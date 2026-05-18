@@ -24,6 +24,7 @@ pub async fn upload_media(
     Extension(auth): Extension<AuthenticatedUser>,
     mut multipart: Multipart,
 ) -> AppResult<Json<MediaAttachment>> {
+    auth.require_scope("write:media")?;
     let mut file_field: Option<(String, String, Vec<u8>)> = None;
     let mut description: Option<String> = None;
 
@@ -174,6 +175,7 @@ pub async fn get_media(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<MediaAttachment>> {
+    auth.require_scope("write:media")?;
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
         "SELECT * FROM media_attachments WHERE id = $1 AND account_id = $2",
@@ -199,6 +201,7 @@ pub async fn update_media(
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<UpdateMediaForm>,
 ) -> AppResult<Json<MediaAttachment>> {
+    auth.require_scope("write:media")?;
     sqlx::query!(
         "SELECT id FROM media_attachments WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
@@ -234,6 +237,7 @@ pub async fn delete_media(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<axum::http::StatusCode> {
+    auth.require_scope("write:media")?;
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
         "DELETE FROM media_attachments WHERE id = $1 AND account_id = $2 AND status_id IS NULL RETURNING *",
