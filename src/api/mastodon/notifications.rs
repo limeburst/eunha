@@ -162,9 +162,13 @@ pub async fn get_notifications(
         let polls_map = batch_status_polls(&state, &enrich_ids, Some(auth.account_id)).await?;
         let cards_map = batch_status_cards(&state, &enrich_ids).await?;
         let viewer_ctxs = super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
+        let notif_filter_map = super::timelines::compute_filter_results(&state, auth.account_id, &statuses, "notifications").await;
 
         let mut map = std::collections::HashMap::new();
         for s in &statuses {
+            if notif_filter_map.get(&s.id).map_or(false, |(hide, _)| *hide) {
+                continue;
+            }
             let Some(account) = stat_account_map.get(&s.account_id) else { continue };
             let media = media_map.get(&s.id).cloned().unwrap_or_default();
             let reblog = reblog_map.get(&s.id).cloned();
@@ -187,6 +191,13 @@ pub async fn get_notifications(
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
                 rb.poll = polls_map.get(&rid).cloned();
                 rb.card = cards_map.get(&rid).cloned();
+            }
+            if let Some((_, ref filter_json)) = notif_filter_map.get(&s.id) {
+                if let Some(arr) = filter_json.as_array() {
+                    if !arr.is_empty() {
+                        api.filtered = Some(arr.clone());
+                    }
+                }
             }
             map.insert(s.id, api);
         }
@@ -443,9 +454,13 @@ pub async fn get_notifications_v2(
         let polls_map = batch_status_polls(&state, &enrich_ids, Some(auth.account_id)).await?;
         let cards_map = batch_status_cards(&state, &enrich_ids).await?;
         let viewer_ctxs = super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
+        let notif_filter_map = super::timelines::compute_filter_results(&state, auth.account_id, &statuses, "notifications").await;
 
         let mut map = std::collections::HashMap::new();
         for s in &statuses {
+            if notif_filter_map.get(&s.id).map_or(false, |(hide, _)| *hide) {
+                continue;
+            }
             let Some(account) = stat_account_map.get(&s.account_id) else { continue };
             let media = media_map.get(&s.id).cloned().unwrap_or_default();
             let reblog = reblog_map.get(&s.id).cloned();
@@ -468,6 +483,13 @@ pub async fn get_notifications_v2(
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
                 rb.poll = polls_map.get(&rid).cloned();
                 rb.card = cards_map.get(&rid).cloned();
+            }
+            if let Some((_, ref filter_json)) = notif_filter_map.get(&s.id) {
+                if let Some(arr) = filter_json.as_array() {
+                    if !arr.is_empty() {
+                        api.filtered = Some(arr.clone());
+                    }
+                }
             }
             map.insert(s.id, api);
         }

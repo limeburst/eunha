@@ -847,6 +847,24 @@ pub(super) async fn compute_filter_results(
         kw_map.entry(kw.custom_filter_id).or_default().push((kw.keyword, kw.whole_word));
     }
 
+    // Load status-id based filter entries
+    let status_id_list: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+    let filter_status_entries = match sqlx::query!(
+        "SELECT custom_filter_id, status_id FROM custom_filter_statuses WHERE custom_filter_id = ANY($1::bigint[]) AND status_id = ANY($2::bigint[])",
+        &filter_ids,
+        &status_id_list,
+    )
+    .fetch_all(&state.db)
+    .await {
+        Ok(fs) => fs,
+        Err(_) => return result,
+    };
+
+    let mut fs_map: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for fs in filter_status_entries {
+        fs_map.entry(fs.custom_filter_id).or_default().push(fs.status_id);
+    }
+
     for s in statuses {
         let text = format!("{} {}", s.text, s.spoiler_text);
         let text_lower = text.to_lowercase();
@@ -854,31 +872,35 @@ pub(super) async fn compute_filter_results(
         let mut should_hide = false;
 
         for f in &filters {
-            let kws = kw_map.get(&f.id);
-            let Some(kws) = kws else { continue };
-
-            let mut matched_keywords: Vec<String> = Vec::new();
-            for (kw, whole_word) in kws {
-                let kw_lower = kw.to_lowercase();
-                let matches = if *whole_word {
-                    let pattern = format!(r"(?i)(^|[^a-zA-Z0-9_]){}($|[^a-zA-Z0-9_])", regex::escape(&kw_lower));
-                    regex::Regex::new(&pattern).map(|re| re.is_match(&text_lower)).unwrap_or(false)
-                } else {
-                    text_lower.contains(&kw_lower)
-                };
-                if matches {
-                    matched_keywords.push(kw.clone());
+            let matched_keywords: Vec<String> = if let Some(kws) = kw_map.get(&f.id) {
+                let mut matched = Vec::new();
+                for (kw, whole_word) in kws {
+                    let kw_lower = kw.to_lowercase();
+                    let kw_match = if *whole_word {
+                        let pattern = format!(r"(?i)(^|[^a-zA-Z0-9_]){}($|[^a-zA-Z0-9_])", regex::escape(&kw_lower));
+                        regex::Regex::new(&pattern).map(|re| re.is_match(&text_lower)).unwrap_or(false)
+                    } else {
+                        text_lower.contains(&kw_lower)
+                    };
+                    if kw_match {
+                        matched.push(kw.clone());
+                    }
                 }
-            }
+                matched
+            } else {
+                Vec::new()
+            };
 
-            if !matched_keywords.is_empty() {
+            let status_matched = fs_map.get(&f.id).map_or(false, |sids| sids.contains(&s.id));
+
+            if !matched_keywords.is_empty() || status_matched {
                 if f.filter_action == "hide" {
                     should_hide = true;
                 }
                 filter_results.push(serde_json::json!({
                     "filter": { "id": f.id.to_string(), "title": f.title, "context": [context], "filter_action": f.filter_action },
-                    "keyword_matches": matched_keywords,
-                    "status_matches": serde_json::Value::Null,
+                    "keyword_matches": if matched_keywords.is_empty() { serde_json::Value::Null } else { serde_json::json!(matched_keywords) },
+                    "status_matches": if status_matched { serde_json::json!([s.id.to_string()]) } else { serde_json::Value::Null },
                 }));
             }
         }

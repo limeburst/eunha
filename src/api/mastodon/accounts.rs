@@ -434,6 +434,15 @@ pub async fn get_account_statuses(
         .await?
     };
 
+    let filter_map = if let Some(vid) = viewer_id {
+        super::timelines::compute_filter_results(&state, vid, &statuses, "account").await
+    } else {
+        std::collections::HashMap::new()
+    };
+    let statuses: Vec<crate::db::models::Status> = statuses.into_iter()
+        .filter(|s| !filter_map.get(&s.id).map_or(false, |(hide, _)| *hide))
+        .collect();
+
     let effective_ids: Vec<i64> = statuses.iter()
         .map(|s| s.reblog_of_id.unwrap_or(s.id))
         .collect();
@@ -484,6 +493,13 @@ pub async fn get_account_statuses(
             rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
             rb.poll = polls_map.get(&rid).cloned();
             rb.card = cards_map.get(&rid).cloned();
+        }
+        if let Some((_, ref filter_json)) = filter_map.get(&s.id) {
+            if let Some(arr) = filter_json.as_array() {
+                if !arr.is_empty() {
+                    api.filtered = Some(arr.clone());
+                }
+            }
         }
         result.push(api);
     }
@@ -747,6 +763,15 @@ pub async fn get_account_pins(
         account.id, is_self, is_follower,
     ).fetch_all(&state.db).await?;
 
+    let pin_filter_map = if let Some(vid) = viewer_id {
+        super::timelines::compute_filter_results(&state, vid, &pinned_statuses, "account").await
+    } else {
+        std::collections::HashMap::new()
+    };
+    let pinned_statuses: Vec<crate::db::models::Status> = pinned_statuses.into_iter()
+        .filter(|s| !pin_filter_map.get(&s.id).map_or(false, |(hide, _)| *hide))
+        .collect();
+
     let pin_status_ids: Vec<i64> = pinned_statuses.iter().map(|s| s.id).collect();
     let pin_ids: Vec<i64> = pinned_statuses.iter()
         .map(|s| s.reblog_of_id.unwrap_or(s.id))
@@ -796,6 +821,13 @@ pub async fn get_account_pins(
             rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
             rb.poll = pin_polls_map.get(&rid).cloned();
             rb.card = pin_cards_map.get(&rid).cloned();
+        }
+        if let Some((_, ref filter_json)) = pin_filter_map.get(&s.id) {
+            if let Some(arr) = filter_json.as_array() {
+                if !arr.is_empty() {
+                    api_status.filtered = Some(arr.clone());
+                }
+            }
         }
         api_status.pinned = Some(true);
         result.push(api_status);
