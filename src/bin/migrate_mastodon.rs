@@ -1167,7 +1167,7 @@ async fn migrate_tags(
         let new_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO tags (name, created_at)
                VALUES (lower($1), $2)
-               ON CONFLICT (name) DO UPDATE SET updated_at = now()
+               ON CONFLICT ((lower(name))) DO UPDATE SET updated_at = now()
                RETURNING id"#,
         )
         .bind(&name)

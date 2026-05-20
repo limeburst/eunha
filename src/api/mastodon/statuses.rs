@@ -2824,7 +2824,7 @@ pub async fn store_statuses_tags(state: &AppState, status_id: i64, account_id: i
     for tag_name in hashtags {
         let tag_id = sqlx::query_scalar!(
             "INSERT INTO tags (name) VALUES ($1)
-             ON CONFLICT (name) DO UPDATE SET updated_at = now()
+             ON CONFLICT ((lower(name))) DO UPDATE SET updated_at = now()
              RETURNING id",
             tag_name,
         )

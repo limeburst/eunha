@@ -70,7 +70,7 @@ pub async fn feature_tag(
 
     let tag_id = sqlx::query_scalar!(
         r#"INSERT INTO tags (name) VALUES ($1)
-           ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+           ON CONFLICT ((lower(name))) DO UPDATE SET name = EXCLUDED.name
            RETURNING id"#,
         name,
     )
@@ -136,7 +136,7 @@ pub async fn feature_tag_by_name(
 
     let tag_id = sqlx::query_scalar!(
         r#"INSERT INTO tags (name) VALUES ($1)
-           ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+           ON CONFLICT ((lower(name))) DO UPDATE SET name = EXCLUDED.name
            RETURNING id"#,
         name,
     )
