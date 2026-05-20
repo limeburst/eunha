@@ -2548,6 +2548,57 @@ async fn test_post_status_empty_returns_422() {
     );
 }
 
+/// POST /api/v1/statuses with allowed_mentions rejects posts that mention unlisted accounts.
+/// Matches Mastodon's PostStatusService#safeguard_mentions! behaviour.
+#[tokio::test]
+async fn test_post_status_allowed_mentions_rejects_unexpected() {
+    let ctx = TestContext::new("status-allowed-mentions").await;
+
+    // Alice posts mentioning Bob but only lists herself in allowed_mentions.
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "@bob hello",
+            "visibility": "public",
+            "allowed_mentions": [ctx.alice_id],
+        }),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "should reject when a mention is not in allowed_mentions",
+    );
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["unexpected_accounts"].is_array(), "response should include unexpected_accounts array");
+    let unexpected = body["unexpected_accounts"].as_array().unwrap();
+    assert!(
+        unexpected.iter().any(|a| a["id"].as_str() == Some(ctx.bob_id.as_str())),
+        "Bob should be in unexpected_accounts, got: {unexpected:?}",
+    );
+}
+
+/// POST /api/v1/statuses with allowed_mentions succeeds when all mentions are listed.
+#[tokio::test]
+async fn test_post_status_allowed_mentions_accepts_listed() {
+    let ctx = TestContext::new("status-allowed-mentions-ok").await;
+
+    let resp = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({
+            "status": "@bob hello",
+            "visibility": "public",
+            "allowed_mentions": [ctx.bob_id],
+        }),
+    ).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "should succeed when all mentions are in allowed_mentions",
+    );
+}
+
 /// POST /api/v1/statuses with a non-existent media_id returns 422.
 #[tokio::test]
 async fn test_post_status_invalid_media_id_returns_422() {
@@ -3670,6 +3721,12 @@ async fn test_delete_quote_decrements_count() {
 async fn test_status_has_quote_approval_field() {
     let ctx = TestContext::new("quote-approval-field").await;
     let status = ctx.api.post_status(&ctx.alice_token, "public post", "public").await;
+    // tagged_collections must be present as an empty array (Mastodon API contract).
+    assert!(
+        status["tagged_collections"].is_array(),
+        "tagged_collections must be present as an array, got: {}",
+        status["tagged_collections"],
+    );
     assert!(status["quote_approval"].is_object(), "quote_approval must be an object");
     let qa = &status["quote_approval"];
     assert!(qa["automatic"].is_array());

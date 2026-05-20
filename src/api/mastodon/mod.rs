@@ -145,6 +145,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/notifications/{id}", get(notifications::get_notification))
         .route("/api/v1/notifications/{id}/dismiss", post(notifications::dismiss_notification))
         .route("/api/v2/notifications", get(notifications::get_notifications_v2))
+        .route("/api/v2/notifications/clear", post(notifications::clear_notifications))
+        .route("/api/v2/notifications/unread_count", get(notifications::get_notifications_unread_count))
         .route("/api/v2/notifications/{group_key}", get(notifications::get_notification_group))
         .route("/api/v2/notifications/{group_key}/dismiss", post(notifications::dismiss_notification_group))
         .route("/api/v2/notifications/{group_key}/accounts", get(notifications::get_notification_group_accounts))

@@ -1100,3 +1100,46 @@ async fn test_notification_timestamps_use_z_suffix() {
         "notification created_at should not use +00:00 offset, got: {created_at}"
     );
 }
+
+/// POST /api/v2/notifications/clear removes all notifications (v2 alias).
+#[tokio::test]
+async fn test_v2_clear_notifications() {
+    let ctx = TestContext::new("notif-v2-clear").await;
+
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let clear_resp = ctx.api.post_json(
+        "/api/v2/notifications/clear",
+        Some(&ctx.bob_token),
+        &json!({}),
+    ).await;
+    assert_eq!(clear_resp.status(), StatusCode::OK);
+
+    let after: Value = ctx.api.get("/api/v2/notifications", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(
+        after["notification_groups"].as_array().map_or(true, |g| g.is_empty()),
+        "notifications not cleared after POST /api/v2/notifications/clear",
+    );
+}
+
+/// GET /api/v2/notifications/unread_count returns a count of unread notifications.
+#[tokio::test]
+async fn test_v2_notifications_unread_count() {
+    let ctx = TestContext::new("notif-v2-unread").await;
+
+    // No notifications yet — count should be 0.
+    let body: Value = ctx.api.get("/api/v2/notifications/unread_count", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert_eq!(body["count"].as_i64(), Some(0), "unread count should start at 0");
+
+    // Alice follows Bob → creates a notification.
+    ctx.api.follow(&ctx.alice_token, &ctx.bob_id).await;
+
+    let body2: Value = ctx.api.get("/api/v2/notifications/unread_count", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(
+        body2["count"].as_i64().unwrap_or(0) > 0,
+        "unread count should be > 0 after receiving a notification",
+    );
+}

@@ -51,6 +51,7 @@ pub struct PostStatusForm {
     pub media_ids: Option<Vec<String>>,
     pub poll: Option<PollForm>,
     pub scheduled_at: Option<String>,
+    pub allowed_mentions: Option<Vec<String>>,
 }
 
 // ── POST /api/v1/statuses ──────────────────────────────────────────────────
@@ -221,6 +222,23 @@ pub async fn post_status(
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
     let resolved = resolve_mention_accounts(&state, instance.id, &mention_handles).await;
+
+    // Safeguard: if the caller passed allowed_mentions, reject the post if any resolved
+    // mentions are not in that list (mirrors Mastodon's PostStatusService#safeguard_mentions!).
+    if let Some(ref allowed_ids) = form.allowed_mentions {
+        let unexpected: Vec<serde_json::Value> = resolved.iter()
+            .filter(|(_, acct)| !allowed_ids.iter().any(|aid| aid == &acct.id.to_string()))
+            .map(|(_, acct)| serde_json::json!({ "id": acct.id.to_string(), "acct": acct.acct() }))
+            .collect();
+        if !unexpected.is_empty() {
+            let body = serde_json::json!({
+                "error": "These accounts will be mentioned, but you did not explicitly select them",
+                "unexpected_accounts": unexpected,
+            });
+            return Ok((axum::http::StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response());
+        }
+    }
+
     let mention_map = build_mention_map(&resolved);
     let content = render_content(&text, &instance.domain, &mention_map);
 

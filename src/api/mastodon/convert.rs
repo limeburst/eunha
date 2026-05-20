@@ -276,6 +276,7 @@ pub fn status_from_db_with_app(
         poll: None,
         quote: None,
         quote_approval: build_quote_approval(s, viewer_context.as_ref()),
+        tagged_collections: vec![],
         favourited,
         reblogged,
         muted,

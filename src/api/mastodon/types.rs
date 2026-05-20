@@ -112,6 +112,7 @@ pub struct Status {
     pub poll: Option<Poll>,
     pub quote: Option<QuoteInfo>,
     pub quote_approval: QuoteApproval,
+    pub tagged_collections: Vec<serde_json::Value>,
     // Viewer-dependent fields: omitted entirely when the request is unauthenticated,
     // matching Mastodon's `attribute :favourited, if: :current_user?` behaviour.
     #[serde(skip_serializing_if = "Option::is_none")]
