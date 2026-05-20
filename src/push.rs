@@ -111,6 +111,7 @@ async fn try_deliver(
         "mention"   => ("mention",   "true"),
         "poll"      => ("poll",      "false"),
         "status"    => ("status",    "false"),
+        "update"    => ("update",    "false"),
         _ => return Ok(()),
     };
 

@@ -760,8 +760,11 @@ pub async fn get_statuses_batch(
     let ids: Vec<i64> = url::form_urlencoded::parse(qs.as_deref().unwrap_or("").as_bytes())
         .filter(|(k, _)| k == "id[]" || k == "id")
         .filter_map(|(_, v)| v.parse::<i64>().ok())
-        .take(100)
         .collect();
+
+    if ids.len() > 20 {
+        return Err(AppError::Unprocessable("Too many IDs requested".into()));
+    }
 
     if ids.is_empty() {
         return Ok(Json(vec![]));

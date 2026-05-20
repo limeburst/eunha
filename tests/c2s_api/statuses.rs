@@ -147,6 +147,28 @@ async fn test_get_direct_status_non_recipient() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND, "non-recipient should not see direct status");
 }
 
+/// A status with internal "limited" visibility (value=4) is serialized as "private"
+/// in API responses, matching Mastodon's behaviour (limited is masked behind private
+/// to avoid API contract changes on clients that don't know the limited type).
+#[tokio::test]
+async fn test_limited_visibility_serialized_as_private() {
+    let ctx = TestContext::new("limited-vis").await;
+
+    // Post a normal status, then forcefully set its visibility to 4 (limited) in the DB.
+    let status = ctx.api.post_status(&ctx.alice_token, "limited post", "private").await;
+    let id: i64 = status["id"].as_str().unwrap().parse().unwrap();
+
+    sqlx::query!("UPDATE statuses SET visibility = 4 WHERE id = $1", id)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+
+    let body: Value = ctx.api.get(&format!("/api/v1/statuses/{id}"), Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+    assert_eq!(body["visibility"].as_str(), Some("private"),
+        "limited visibility must be serialized as private; got {:?}", body["visibility"]);
+}
+
 // ── block visibility ─────────────────────────────────────────────────────────
 
 /// GET a public status when the viewer has been blocked by the author → 404.
@@ -2197,6 +2219,18 @@ async fn test_batch_get_statuses_shows_direct_to_mentioned() {
     ).await.json().await.unwrap();
     let ids: Vec<&str> = statuses.iter().filter_map(|s| s["id"].as_str()).collect();
     assert!(ids.contains(&dm_id), "mentioned recipient should see direct status in batch");
+}
+
+/// GET /api/v1/statuses?id[]=... with more than 20 IDs returns 422.
+#[tokio::test]
+async fn test_batch_get_statuses_over_limit_returns_422() {
+    let ctx = TestContext::new("batch-limit-422").await;
+    let query = (1..=21).map(|i| format!("id[]={i}")).collect::<Vec<_>>().join("&");
+    let resp = ctx.api.get(
+        &format!("/api/v1/statuses?{query}"),
+        Some(&ctx.alice_token),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ── scheduled statuses ────────────────────────────────────────────────────────

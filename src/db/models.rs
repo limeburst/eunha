@@ -387,19 +387,22 @@ pub struct WebPushSubscription {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Integer-to-text helpers for statuses.visibility (public=0 unlisted=1 private=2 direct=3).
+/// Integer-to-text helpers for statuses.visibility (public=0 unlisted=1 private=2 direct=3 limited=4).
 pub mod vis {
     pub const PUBLIC: i32 = 0;
     pub const UNLISTED: i32 = 1;
     pub const PRIVATE: i32 = 2;
     pub const DIRECT: i32 = 3;
+    /// Limited (group-delivery) visibility — serialized as "private" per Mastodon API contract.
+    pub const LIMITED: i32 = 4;
 
     pub fn from_str(s: &str) -> i32 {
         match s { "public" => PUBLIC, "unlisted" => UNLISTED, "private" => PRIVATE, _ => DIRECT }
     }
 
     pub fn to_str(v: i32) -> &'static str {
-        match v { PUBLIC => "public", UNLISTED => "unlisted", PRIVATE => "private", _ => "direct" }
+        // Mastodon masks "limited" (4) as "private" so clients don't need to handle it.
+        match v { PUBLIC => "public", UNLISTED => "unlisted", PRIVATE | LIMITED => "private", _ => "direct" }
     }
 }
 
