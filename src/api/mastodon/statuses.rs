@@ -2632,7 +2632,7 @@ pub async fn revoke_quote(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    if quote.quoted_account_id != auth.account_id {
+    if quote.quoted_account_id != Some(auth.account_id) {
         return Err(AppError::Forbidden);
     }
 

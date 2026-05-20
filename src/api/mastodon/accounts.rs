@@ -1096,6 +1096,11 @@ pub async fn update_credentials(
     let mut source_hide_collections: Option<bool> = None;
     let mut source_quote_policy: Option<String> = None;
     let mut indexable: Option<bool> = None;
+    let mut avatar_description: Option<String> = None;
+    let mut header_description: Option<String> = None;
+    let mut show_featured: Option<bool> = None;
+    let mut show_media: Option<bool> = None;
+    let mut show_media_replies: Option<bool> = None;
     // fields_attributes[N][name] / fields_attributes[N][value]
     let mut fields_map: std::collections::BTreeMap<u32, (String, String)> = std::collections::BTreeMap::new();
     let mut fields_submitted = false;
@@ -1171,6 +1176,24 @@ pub async fn update_credentials(
             "indexable" | "source[indexable]" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 indexable = Some(v == "true" || v == "1");
+            }
+            "avatar_description" => {
+                avatar_description = Some(field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?);
+            }
+            "header_description" => {
+                header_description = Some(field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?);
+            }
+            "show_featured" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                show_featured = Some(v == "true" || v == "1");
+            }
+            "show_media" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                show_media = Some(v == "true" || v == "1");
+            }
+            "show_media_replies" => {
+                let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
+                show_media_replies = Some(v == "true" || v == "1");
             }
             "avatar" => {
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
@@ -1261,6 +1284,26 @@ pub async fn update_credentials(
     }
     if let Some(ix) = indexable {
         sqlx::query!("UPDATE accounts SET indexable = $1 WHERE id = $2", ix, auth.account_id)
+            .execute(&state.db).await?;
+    }
+    if let Some(ref desc) = avatar_description {
+        sqlx::query!("UPDATE accounts SET avatar_description = $1 WHERE id = $2", desc, auth.account_id)
+            .execute(&state.db).await?;
+    }
+    if let Some(ref desc) = header_description {
+        sqlx::query!("UPDATE accounts SET header_description = $1 WHERE id = $2", desc, auth.account_id)
+            .execute(&state.db).await?;
+    }
+    if let Some(sf) = show_featured {
+        sqlx::query!("UPDATE accounts SET show_featured = $1 WHERE id = $2", sf, auth.account_id)
+            .execute(&state.db).await?;
+    }
+    if let Some(sm) = show_media {
+        sqlx::query!("UPDATE accounts SET show_media = $1 WHERE id = $2", sm, auth.account_id)
+            .execute(&state.db).await?;
+    }
+    if let Some(smr) = show_media_replies {
+        sqlx::query!("UPDATE accounts SET show_media_replies = $1 WHERE id = $2", smr, auth.account_id)
             .execute(&state.db).await?;
     }
     if let Some(ref url) = avatar_url {
@@ -2770,7 +2813,6 @@ pub async fn get_profile(
 }
 
 // ── PUT /api/v1/profile (tab display settings) ───────────────────────────
-// show_featured / show_media / show_media_replies stored in DB; for now stub.
 
 pub async fn update_profile_settings(
     Extension(auth): Extension<AuthenticatedUser>,

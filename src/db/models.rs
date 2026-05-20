@@ -114,6 +114,14 @@ pub struct Account {
     pub header_remote_url: String,
     pub avatar_storage_schema_version: Option<i32>,
     pub header_storage_schema_version: Option<i32>,
+    // Added in migration 003 (schema alignment)
+    pub avatar_description: String,
+    pub header_description: String,
+    pub show_featured: bool,
+    pub show_media: bool,
+    pub show_media_replies: bool,
+    pub collections_url: Option<String>,
+    pub feature_approval_policy: i32,
 }
 
 impl Account {
