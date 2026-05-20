@@ -729,6 +729,14 @@ pub struct NotificationGroup {
     pub sample_account_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<Report>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moderation_warning: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<bool>,
 }
 
 // ── Notification Policy ─────────────────────────────────────────────────────

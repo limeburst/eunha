@@ -3772,7 +3772,7 @@ async fn test_status_has_quote_approval_field() {
     assert_eq!(qa["current_user"].as_str(), Some("automatic"));
 }
 
-/// PATCH /api/v1/statuses/:id/interaction_policy persists and returns updated policy.
+/// PUT /api/v1/statuses/:id/interaction_policy persists and returns updated policy.
 #[tokio::test]
 async fn test_update_interaction_policy() {
     let ctx = TestContext::new("interaction-policy").await;
@@ -3784,7 +3784,7 @@ async fn test_update_interaction_policy() {
     assert_eq!(qa["current_user"].as_str(), Some("automatic"));
 
     // Restrict quoting to manual approval only
-    let updated: Value = ctx.api.patch_json(
+    let updated: Value = ctx.api.put_json(
         &format!("/api/v1/statuses/{status_id}/interaction_policy"),
         Some(&ctx.alice_token),
         &json!({
@@ -3799,6 +3799,21 @@ async fn test_update_interaction_policy() {
     assert!(uqa["automatic"].as_array().unwrap().is_empty(), "automatic should be empty after policy update");
     assert!(!uqa["manual"].as_array().unwrap().is_empty(), "manual should be non-empty");
     assert_eq!(uqa["current_user"].as_str(), Some("manual"));
+}
+
+/// PUT /api/v1/statuses/:id/interaction_policy returns 403 when acting on another user's status.
+#[tokio::test]
+async fn test_update_interaction_policy_forbidden_for_other_user() {
+    let ctx = TestContext::new("interaction-policy-forbidden").await;
+    let status = ctx.api.post_status(&ctx.alice_token, "alice's post", "public").await;
+    let status_id = status["id"].as_str().unwrap();
+
+    let resp = ctx.api.put_json(
+        &format!("/api/v1/statuses/{status_id}/interaction_policy"),
+        Some(&ctx.bob_token),
+        &json!({"can_quote": {"always": [], "with_approval": []}}),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 /// POST /api/v1/statuses/:id/unreblog returns 200 even when the status author
@@ -3924,7 +3939,7 @@ async fn test_pending_quote_is_null_in_response() {
     ).await.json().await.unwrap();
     let original_id = original["id"].as_str().unwrap();
 
-    ctx.api.patch_json(
+    ctx.api.put_json(
         &format!("/api/v1/statuses/{original_id}/interaction_policy"),
         Some(&ctx.alice_token),
         &json!({
@@ -3959,7 +3974,7 @@ async fn test_get_quotes_only_returns_accepted() {
     ).await.json().await.unwrap();
     let original_id = original["id"].as_str().unwrap();
 
-    ctx.api.patch_json(
+    ctx.api.put_json(
         &format!("/api/v1/statuses/{original_id}/interaction_policy"),
         Some(&ctx.alice_token),
         &json!({
@@ -3983,6 +3998,47 @@ async fn test_get_quotes_only_returns_accepted() {
     ).await.json().await.unwrap();
     let arr = quotes.as_array().unwrap();
     assert_eq!(arr.len(), 0, "pending quotes must not appear in GET /quotes");
+}
+
+/// GET /api/v1/statuses/:id/quotes does not return rejected quotes.
+#[tokio::test]
+async fn test_get_quotes_excludes_rejected() {
+    let ctx = TestContext::new("quote-list-rejected").await;
+
+    let original: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({"status": "manual-only post", "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let original_id = original["id"].as_str().unwrap();
+
+    // Set manual-only policy
+    ctx.api.put_json(
+        &format!("/api/v1/statuses/{original_id}/interaction_policy"),
+        Some(&ctx.alice_token),
+        &json!({"can_quote": {"always": [], "with_approval": ["https://www.w3.org/ns/activitystreams#Public"]}}),
+    ).await;
+
+    // Bob posts a quote (pending)
+    let quote: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &json!({"status": "pending quote", "quoted_status_id": original_id, "visibility": "public"}),
+    ).await.json().await.unwrap();
+    let quote_id = quote["id"].as_str().unwrap();
+
+    // Alice rejects it
+    ctx.api.post_json(
+        &format!("/api/v1/statuses/{quote_id}/quotes/{quote_id}/revoke"),
+        Some(&ctx.alice_token),
+        &json!({}),
+    ).await;
+
+    let quotes: Value = ctx.api.get(
+        &format!("/api/v1/statuses/{original_id}/quotes"),
+        Some(&ctx.alice_token),
+    ).await.json().await.unwrap();
+    assert_eq!(quotes.as_array().unwrap().len(), 0, "rejected quotes must not appear in GET /quotes");
 }
 
 /// GET /api/v1/statuses/:id/quotes requires authentication.

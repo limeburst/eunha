@@ -25,6 +25,61 @@ use super::{
     },
 };
 
+async fn fetch_reports_map(
+    state: &AppState,
+    report_ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, super::types::Report>> {
+    let mut map = std::collections::HashMap::new();
+    if report_ids.is_empty() {
+        return Ok(map);
+    }
+    let rows = sqlx::query!(
+        r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
+                  CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!",
+                  r.action_taken_at, r.created_at, r.status_ids,
+                  r.target_account_id
+           FROM reports r
+           WHERE r.id = ANY($1::bigint[])"#,
+        report_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let target_ids: Vec<i64> = rows.iter()
+        .map(|r| r.target_account_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let target_accounts: std::collections::HashMap<i64, Account> = if !target_ids.is_empty() {
+        sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &target_ids)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.id, a))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+    for r in rows {
+        let Some(ta) = target_accounts.get(&r.target_account_id) else { continue };
+        map.insert(r.id, super::types::Report {
+            id: r.id.to_string(),
+            action_taken: r.action_taken_at.is_some(),
+            action_taken_at: r.action_taken_at.map(super::convert::mastodon_date),
+            category: r.category,
+            comment: r.comment,
+            forwarded: r.forwarded,
+            created_at: super::convert::mastodon_date(r.created_at),
+            status_ids: r.status_ids.iter().map(|i| i.to_string()).collect(),
+            rule_ids: vec![],
+            collection_ids: vec![],
+            target_account: account_from_db(ta),
+        });
+    }
+    Ok(map)
+}
+
 // ── GET /api/v1/notifications ─────────────────────────────────────────────
 
 pub async fn get_notifications(
@@ -212,53 +267,7 @@ pub async fn get_notifications(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-    let report_map: std::collections::HashMap<i64, super::types::Report> = if !report_ids.is_empty() {
-        let mut map = std::collections::HashMap::new();
-        if let Ok(rows) = sqlx::query!(
-            r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
-                      CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!",
-                      r.action_taken_at, r.created_at, r.status_ids,
-                      r.target_account_id
-               FROM reports r
-               WHERE r.id = ANY($1::bigint[])"#,
-            &report_ids,
-        )
-        .fetch_all(&state.db)
-        .await
-        {
-            let target_ids: Vec<i64> = rows.iter().map(|r| r.target_account_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
-            let target_accounts: std::collections::HashMap<i64, Account> = if !target_ids.is_empty() {
-                sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &target_ids)
-                    .fetch_all(&state.db)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|a| (a.id, a))
-                    .collect()
-            } else {
-                std::collections::HashMap::new()
-            };
-            for r in rows {
-                let Some(ta) = target_accounts.get(&r.target_account_id) else { continue };
-                map.insert(r.id, super::types::Report {
-                    id: r.id.to_string(),
-                    action_taken: r.action_taken_at.is_some(),
-                    action_taken_at: r.action_taken_at.map(super::convert::mastodon_date),
-                    category: r.category,
-                    comment: r.comment,
-                    forwarded: r.forwarded,
-                    created_at: super::convert::mastodon_date(r.created_at),
-                    status_ids: r.status_ids.iter().map(|i| i.to_string()).collect(),
-                    rule_ids: vec![],
-                    collection_ids: vec![],
-                    target_account: account_from_db(ta),
-                });
-            }
-        }
-        map
-    } else {
-        std::collections::HashMap::new()
-    };
+    let report_map = fetch_reports_map(&state, &report_ids).await?;
 
     let mut result = Vec::with_capacity(notifications.len());
     for n in &notifications {
@@ -410,6 +419,18 @@ pub async fn get_notifications_v2(
     let from_account_map: std::collections::HashMap<i64, Account> =
         from_accounts_vec.into_iter().map(|a| (a.id, a)).collect();
 
+    // Batch-fetch reports for admin.report groups
+    let report_ids_v2: Vec<i64> = notifications.iter()
+        .filter_map(|n| if n.r#type == "admin.report" { n.report_id } else { None })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let report_map_v2: std::collections::HashMap<i64, super::types::Report> = if !report_ids_v2.is_empty() {
+        fetch_reports_map(&state, &report_ids_v2).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     // Batch-fetch statuses
     let notif_status_ids: Vec<i64> = notifications.iter()
         .filter_map(|n| n.status_id)
@@ -520,6 +541,8 @@ pub async fn get_notifications_v2(
             }
         });
 
+        let report = n.report_id.and_then(|rid| report_map_v2.get(&rid)).cloned();
+
         let id_str = n.id.to_string();
         groups.push(NotificationGroup {
             group_key: format!("ungrouped-{}", id_str),
@@ -531,6 +554,10 @@ pub async fn get_notifications_v2(
             latest_page_notification_at: super::convert::mastodon_date(n.created_at),
             sample_account_ids: vec![n.from_account_id.to_string()],
             status_id,
+            report,
+            event: None,
+            moderation_warning: None,
+            fallback: None,
         });
     }
 
@@ -563,6 +590,16 @@ pub async fn get_notification_group(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    let report = if n.r#type == "admin.report" {
+        if let Some(rid) = n.report_id {
+            fetch_reports_map(&state, &[rid]).await?.remove(&rid)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let id_str = n.id.to_string();
     Ok(Json(NotificationGroup {
         group_key: format!("ungrouped-{}", id_str),
@@ -574,6 +611,10 @@ pub async fn get_notification_group(
         latest_page_notification_at: super::convert::mastodon_date(n.created_at),
         sample_account_ids: vec![n.from_account_id.to_string()],
         status_id: n.status_id.map(|s| s.to_string()),
+        report,
+        event: None,
+        moderation_warning: None,
+        fallback: None,
     }))
 }
 

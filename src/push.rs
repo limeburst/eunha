@@ -106,12 +106,14 @@ async fn try_deliver(
     // Look up subscriptions for the recipient that have this alert type enabled.
     let (alert_key, alert_default) = match notification_type {
         "follow" | "follow_request" => ("follow", "true"),
-        "favourite" => ("favourite", "true"),
-        "reblog"    => ("reblog",    "true"),
-        "mention"   => ("mention",   "true"),
-        "poll"      => ("poll",      "false"),
-        "status"    => ("status",    "false"),
-        "update"    => ("update",    "false"),
+        "favourite"     => ("favourite",     "true"),
+        "reblog"        => ("reblog",        "true"),
+        "mention"       => ("mention",       "true"),
+        "poll"          => ("poll",          "false"),
+        "status"        => ("status",        "false"),
+        "update"        => ("update",        "false"),
+        "quote"         => ("quote",         "false"),
+        "quoted_update" => ("quoted_update", "false"),
         _ => return Ok(()),
     };
 
