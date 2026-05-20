@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
 
     // Load subscriptions + VAPID key for this account
     let subs = sqlx::query!(
-        r#"SELECT wps.id, wps.endpoint, wps.p256dh, wps.auth,
+        r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth,
                   i.vapid_private_key, i.vapid_public_key
            FROM web_push_subscriptions wps
            JOIN accounts a ON a.id = wps.account_id
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        match send_one(&http, sub.endpoint.as_str(), sub.p256dh.as_str(), sub.auth.as_str(), sub.vapid_private_key.as_str(), &payload).await {
+        match send_one(&http, sub.endpoint.as_str(), sub.key_p256dh.as_str(), sub.key_auth.as_str(), sub.vapid_private_key.as_str(), &payload).await {
             Ok(()) => {
                 println!("  sub {} → OK  ({})", sub.id, truncate(&sub.endpoint, 60));
                 ok += 1;

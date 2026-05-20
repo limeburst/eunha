@@ -29,7 +29,7 @@ pub async fn get_domain_blocks(
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
-        r#"SELECT id, domain FROM user_domain_blocks
+        r#"SELECT id, domain FROM account_domain_blocks
            WHERE account_id = $1
              AND ($2::bigint IS NULL OR id < $2)
              AND ($3::bigint IS NULL OR id > $3)
@@ -73,7 +73,7 @@ pub async fn block_domain(
     auth.require_scope("write:blocks")?;
     let domain = form.domain.to_lowercase();
     sqlx::query!(
-        r#"INSERT INTO user_domain_blocks (account_id, domain) VALUES ($1, $2)
+        r#"INSERT INTO account_domain_blocks (account_id, domain) VALUES ($1, $2)
            ON CONFLICT (account_id, domain) DO NOTHING"#,
         auth.account_id,
         domain,
@@ -130,7 +130,7 @@ pub async fn preview_domain_block(
     let following_count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM follows f
            JOIN accounts a ON a.id = f.target_account_id
-           WHERE f.account_id = $1 AND a.domain = $2 AND f.state = 'accepted'"#,
+           WHERE f.account_id = $1 AND a.domain = $2"#,
         auth.account_id, domain,
     )
     .fetch_one(&state.db)
@@ -140,7 +140,7 @@ pub async fn preview_domain_block(
     let followers_count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM follows f
            JOIN accounts a ON a.id = f.account_id
-           WHERE f.target_account_id = $1 AND a.domain = $2 AND f.state = 'accepted'"#,
+           WHERE f.target_account_id = $1 AND a.domain = $2"#,
         auth.account_id, domain,
     )
     .fetch_one(&state.db)
@@ -162,7 +162,7 @@ pub async fn unblock_domain(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:blocks")?;
     sqlx::query!(
-        "DELETE FROM user_domain_blocks WHERE account_id = $1 AND domain = $2",
+        "DELETE FROM account_domain_blocks WHERE account_id = $1 AND domain = $2",
         auth.account_id,
         form.domain.to_lowercase(),
     )

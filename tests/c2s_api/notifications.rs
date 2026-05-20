@@ -996,6 +996,46 @@ async fn test_notification_group_get() {
     assert!(group["notifications_count"].is_number());
 }
 
+/// Notifications for statuses matching an active keyword filter include a non-empty `filtered` array.
+/// This covers the `notifications.filtered` behaviour added in migration 065.
+#[tokio::test]
+async fn test_notification_filtered_field_set_when_keyword_matches() {
+    let ctx = TestContext::new("notif-filtered-field").await;
+
+    // Alice creates a "notifications" context filter for the word "filtertest".
+    ctx.api.post_json(
+        "/api/v2/filters",
+        Some(&ctx.alice_token),
+        &serde_json::json!({
+            "title": "Notification keyword filter",
+            "context": ["notifications"],
+            "filter_action": "warn",
+            "keywords_attributes": [{"keyword": "filtertest", "whole_word": false}]
+        }),
+    ).await;
+
+    // Bob posts a status containing the filtered word and mentions Alice.
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.bob_token),
+        &serde_json::json!({
+            "status": "@alice filtertest mention",
+            "visibility": "public"
+        }),
+    ).await;
+
+    // Alice should have a mention notification with a non-empty `filtered` array.
+    let notifs: Vec<serde_json::Value> = ctx.api.get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await.json().await.unwrap();
+
+    let mention = notifs.iter().find(|n| n["type"].as_str() == Some("mention"));
+    assert!(mention.is_some(), "alice should have a mention notification");
+
+    let filtered = mention.unwrap()["filtered"].as_array();
+    assert!(filtered.is_some(), "mention notification must have a `filtered` array");
+    assert!(!filtered.unwrap().is_empty(), "`filtered` must be non-empty when keyword matches");
+}
+
 /// GET /api/v2/notifications/:group_key/accounts returns accounts for the group.
 #[tokio::test]
 async fn test_notification_group_accounts() {

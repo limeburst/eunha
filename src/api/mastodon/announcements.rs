@@ -38,7 +38,7 @@ pub async fn get_announcements(
     // Batch-fetch dismissed announcements for the viewer
     let dismissed_set: std::collections::HashSet<i64> = if let Some(vid) = viewer_id {
         sqlx::query_scalar!(
-            "SELECT announcement_id FROM announcement_dismissals WHERE account_id = $1 AND announcement_id = ANY($2::bigint[])",
+            "SELECT announcement_id FROM announcement_mutes WHERE account_id = $1 AND announcement_id = ANY($2::bigint[])",
             vid, &ann_ids,
         )
         .fetch_all(&state.db)
@@ -139,7 +139,7 @@ pub async fn dismiss_announcement(
     }
 
     sqlx::query!(
-        "INSERT INTO announcement_dismissals (announcement_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "INSERT INTO announcement_mutes (announcement_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         id, auth.account_id,
     )
     .execute(&state.db)

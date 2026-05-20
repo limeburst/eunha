@@ -68,24 +68,31 @@ async fn handle_follow(
     // Resolve or fetch the remote actor
     let follower = resolve_or_fetch_remote_account(state, actor_uri).await?;
 
-    let follow_state = if target.locked { "pending" } else { "accepted" };
-
-    sqlx::query!(
-        r#"INSERT INTO follows (account_id, target_account_id, state, uri)
-           VALUES ($1,$2,$3,$4)
-           ON CONFLICT (account_id, target_account_id)
-           DO UPDATE SET state = EXCLUDED.state, uri = EXCLUDED.uri"#,
-        follower,
-        target.id,
-        follow_state,
-        activity_uri,
-    )
-    .execute(&state.db)
-    .await?;
-
-    if follow_state == "accepted" {
-        // Queue Accept activity back to the follower
-        // TODO: queue outgoing Accept via federation worker
+    if target.locked {
+        // Locked account: insert as a pending follow request
+        sqlx::query!(
+            r#"INSERT INTO follow_requests (account_id, target_account_id, uri)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (account_id, target_account_id) DO UPDATE SET uri = EXCLUDED.uri"#,
+            follower,
+            target.id,
+            activity_uri,
+        )
+        .execute(&state.db)
+        .await?;
+    } else {
+        // Unlocked account: insert as an accepted follow directly
+        sqlx::query!(
+            r#"INSERT INTO follows (account_id, target_account_id, uri)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (account_id, target_account_id) DO UPDATE SET uri = EXCLUDED.uri"#,
+            follower,
+            target.id,
+            activity_uri,
+        )
+        .execute(&state.db)
+        .await?;
+        // TODO: queue outgoing Accept activity via federation worker
     }
 
     Ok(())
@@ -101,7 +108,11 @@ async fn handle_undo(
 
     if object_type == Some("Follow") {
         let follow_uri = object.and_then(|o| o.get("id")).and_then(|i| i.as_str()).unwrap_or("");
+        // Remove from both tables (might be accepted or still pending)
         sqlx::query!("DELETE FROM follows WHERE uri = $1", follow_uri)
+            .execute(&state.db)
+            .await?;
+        sqlx::query!("DELETE FROM follow_requests WHERE uri = $1", follow_uri)
             .execute(&state.db)
             .await?;
     }
@@ -148,9 +159,9 @@ async fn handle_create(
         a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
     }).unwrap_or_default();
     let visibility = if to.contains(&"https://www.w3.org/ns/activitystreams#Public") {
-        "public"
+        crate::db::models::vis::PUBLIC
     } else {
-        "unlisted"
+        crate::db::models::vis::UNLISTED
     };
 
     // Resolve in_reply_to
@@ -299,14 +310,25 @@ async fn handle_accept_reject(
 
     if let Some(uri) = follow_uri {
         if activity_type == "Accept" {
-            sqlx::query!(
-                "UPDATE follows SET state = 'accepted' WHERE uri = $1",
+            // Promote follow_request → follows when remote accepts our follow
+            let promoted = sqlx::query!(
+                "DELETE FROM follow_requests WHERE uri = $1 RETURNING account_id, target_account_id",
                 uri
             )
-            .execute(&state.db)
+            .fetch_optional(&state.db)
             .await?;
+            if let Some(row) = promoted {
+                sqlx::query!(
+                    r#"INSERT INTO follows (account_id, target_account_id, uri)
+                       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"#,
+                    row.account_id, row.target_account_id, uri
+                )
+                .execute(&state.db)
+                .await?;
+            }
         } else {
-            sqlx::query!("DELETE FROM follows WHERE uri = $1", uri)
+            // Reject: remove the pending follow request
+            sqlx::query!("DELETE FROM follow_requests WHERE uri = $1", uri)
                 .execute(&state.db)
                 .await?;
         }

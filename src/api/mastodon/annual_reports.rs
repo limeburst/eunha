@@ -16,7 +16,7 @@ use crate::{
 use super::{
     accounts::{
         batch_quote_data, batch_reblog_data, batch_status_cards, batch_status_emojis,
-        batch_status_media, batch_status_mentions, batch_status_polls, batch_status_tags,
+        batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
     },
     convert::{account_from_db, status_from_db},
     types::{Account as ApiAccount, Status as ApiStatus},
@@ -108,7 +108,7 @@ async fn generate_report_data(
         "SELECT id FROM statuses
          WHERE account_id = $1 AND deleted_at IS NULL
            AND reblog_of_id IS NULL
-           AND visibility IN ('public', 'unlisted')
+           AND visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
            AND created_at >= $2 AND created_at < $3
          ORDER BY reblogs_count DESC LIMIT 1",
         account_id, start, end,
@@ -118,7 +118,7 @@ async fn generate_report_data(
         "SELECT id FROM statuses
          WHERE account_id = $1 AND deleted_at IS NULL
            AND reblog_of_id IS NULL
-           AND visibility IN ('public', 'unlisted')
+           AND visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
            AND ($4::bigint IS NULL OR id != $4)
            AND created_at >= $2 AND created_at < $3
          ORDER BY favourites_count DESC LIMIT 1",
@@ -130,7 +130,7 @@ async fn generate_report_data(
         "SELECT id FROM statuses
          WHERE account_id = $1 AND deleted_at IS NULL
            AND reblog_of_id IS NULL
-           AND visibility IN ('public', 'unlisted')
+           AND visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
            AND ($4::bigint IS NULL OR id != $4)
            AND ($5::bigint IS NULL OR id != $5)
            AND created_at >= $2 AND created_at < $3
@@ -149,7 +149,7 @@ async fn generate_report_data(
 
     let followers_in_year: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM follows
-         WHERE target_account_id = $1 AND state = 'accepted'
+         WHERE target_account_id = $1
            AND created_at >= $2 AND created_at < $3",
         account_id, start, end,
     ).fetch_one(&state.db).await?.unwrap_or(0);
@@ -157,7 +157,7 @@ async fn generate_report_data(
     // Top hashtag
     let top_hashtag = sqlx::query!(
         "SELECT t.name, COUNT(*) as count
-         FROM status_tags st
+         FROM statuses_tags st
          JOIN tags t ON t.id = st.tag_id
          JOIN statuses s ON s.id = st.status_id
          WHERE s.account_id = $1 AND s.deleted_at IS NULL
@@ -244,7 +244,7 @@ async fn build_response(
         let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut enrich_ids = all_ids.clone();
         enrich_ids.extend_from_slice(&reblog_ids);
-        let tags_map = batch_status_tags(state, &enrich_ids).await?;
+        let tags_map = batch_statuses_tags(state, &enrich_ids).await?;
         let mentions_map = batch_status_mentions(state, &enrich_ids).await?;
         let all_for_emoji: Vec<DbStatus> = statuses.iter().cloned()
             .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -317,14 +317,14 @@ pub async fn list_annual_reports(
 
     let rows = sqlx::query!(
         "SELECT id, account_id, year, data, schema_version, share_key
-         FROM annual_reports
+         FROM generated_annual_reports
          WHERE account_id = $1 AND viewed_at IS NULL
          ORDER BY year DESC",
         auth.account_id,
     ).fetch_all(&state.db).await?;
 
     let reports: Vec<AnnualReport> = rows.into_iter().map(|r| {
-        db_row_to_report(r.id, r.account_id, r.year, r.data, r.schema_version, r.share_key)
+        db_row_to_report(r.id, r.account_id, r.year, Some(r.data), r.schema_version, r.share_key)
     }).collect();
 
     let resp = build_response(&state, reports, &account, auth.account_id).await?;
@@ -348,13 +348,13 @@ pub async fn get_annual_report(
 
     let row = sqlx::query!(
         "SELECT id, account_id, year, data, schema_version, share_key
-         FROM annual_reports
+         FROM generated_annual_reports
          WHERE account_id = $1 AND year = $2",
         auth.account_id, year,
     ).fetch_optional(&state.db).await?
         .ok_or(AppError::NotFound)?;
 
-    let report = db_row_to_report(row.id, row.account_id, row.year, row.data, row.schema_version, row.share_key);
+    let report = db_row_to_report(row.id, row.account_id, row.year, Some(row.data), row.schema_version, row.share_key);
     let resp = build_response(&state, vec![report], &account, auth.account_id).await?;
     Ok(Json(resp))
 }
@@ -369,7 +369,7 @@ pub async fn read_annual_report(
     auth.require_scope("write:accounts")?;
 
     let updated = sqlx::query_scalar!(
-        "UPDATE annual_reports SET viewed_at = NOW(), updated_at = NOW()
+        "UPDATE generated_annual_reports SET viewed_at = NOW(), updated_at = NOW()
          WHERE account_id = $1 AND year = $2
          RETURNING id",
         auth.account_id, year,
@@ -401,7 +401,7 @@ pub async fn generate_annual_report(
 
     // If already generated, return immediately
     let existing = sqlx::query_scalar!(
-        "SELECT id FROM annual_reports WHERE account_id = $1 AND year = $2 AND data IS NOT NULL",
+        "SELECT id FROM generated_annual_reports WHERE account_id = $1 AND year = $2 AND data IS NOT NULL",
         auth.account_id, year,
     ).fetch_optional(&state.db).await?;
 
@@ -419,7 +419,7 @@ pub async fn generate_annual_report(
 
     // Upsert the report
     sqlx::query!(
-        "INSERT INTO annual_reports (account_id, year, data, schema_version)
+        "INSERT INTO generated_annual_reports (account_id, year, data, schema_version)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (account_id, year) DO UPDATE
          SET data = $3, schema_version = $4, updated_at = NOW()",
@@ -439,12 +439,12 @@ pub async fn get_annual_report_state(
     auth.require_scope("read:accounts")?;
 
     let row = sqlx::query!(
-        "SELECT data FROM annual_reports WHERE account_id = $1 AND year = $2",
+        "SELECT data FROM generated_annual_reports WHERE account_id = $1 AND year = $2",
         auth.account_id, year,
     ).fetch_optional(&state.db).await?;
 
     let state_str = if let Some(r) = row {
-        if r.data.is_some() {
+        if r.data.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
             "available"
         } else {
             "generating"

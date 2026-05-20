@@ -14,7 +14,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_quote_data, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_status_tags},
+    accounts::{batch_quote_data, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags},
     convert::status_from_db,
     types::{PaginationParams, Status},
 };
@@ -56,7 +56,7 @@ pub async fn public_timeline(
             r#"SELECT s.*
                FROM statuses s
                JOIN accounts a ON a.id = s.account_id
-               WHERE s.visibility = 'public'
+               WHERE s.visibility = 0
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
                  AND (NOT s.reply OR s.in_reply_to_id IS NOT NULL)
@@ -70,7 +70,7 @@ pub async fn public_timeline(
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
                  AND ($7::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM user_domain_blocks udb WHERE udb.account_id = $7 AND udb.domain = a.domain
+                     SELECT 1 FROM account_domain_blocks udb WHERE udb.account_id = $7 AND udb.domain = a.domain
                  ))
                  AND ($3::bigint IS NULL OR s.id > $3)
                  AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
@@ -105,7 +105,7 @@ pub async fn public_timeline(
             r#"SELECT s.*
                FROM statuses s
                JOIN accounts a ON a.id = s.account_id
-               WHERE s.visibility = 'public'
+               WHERE s.visibility = 0
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
                  AND (NOT s.reply OR s.in_reply_to_id IS NOT NULL)
@@ -119,7 +119,7 @@ pub async fn public_timeline(
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
                  AND ($8::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM user_domain_blocks udb WHERE udb.account_id = $8 AND udb.domain = a.domain
+                     SELECT 1 FROM account_domain_blocks udb WHERE udb.account_id = $8 AND udb.domain = a.domain
                  ))
                  AND ($3::bigint IS NULL OR s.id < $3)
                  AND ($5::bigint IS NULL OR s.id > $5)
@@ -267,7 +267,7 @@ async fn hydrate_home_statuses(
                WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
            ))
            AND (
-               s.visibility != 'direct'
+               s.visibility != 3
                OR s.account_id = $1
                OR EXISTS (
                    SELECT 1 FROM mentions m
@@ -309,17 +309,17 @@ async fn home_timeline_from_db(
                    SELECT s.id FROM statuses s
                    WHERE s.account_id IN (
                        SELECT target_account_id FROM follows
-                       WHERE account_id = $1 AND state = 'accepted'
+                       WHERE account_id = $1
                        UNION ALL SELECT $1
                    )
                    AND s.deleted_at IS NULL
                    AND ($2::bigint IS NULL OR s.id > $2)
                    UNION
-                   SELECT st.status_id AS id FROM status_tags st
+                   SELECT st.status_id AS id FROM statuses_tags st
                    JOIN tag_follows tf ON tf.tag_id = st.tag_id
                    JOIN statuses s ON s.id = st.status_id
                    WHERE tf.account_id = $1
-                   AND s.visibility = 'public'
+                   AND s.visibility = 0
                    AND s.deleted_at IS NULL
                    AND ($2::bigint IS NULL OR s.id > $2)
                )
@@ -364,7 +364,7 @@ async fn home_timeline_from_db(
                    WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
                ))
                AND (
-                   s.visibility != 'direct'
+                   s.visibility != 3
                    OR s.account_id = $1
                    OR EXISTS (
                        SELECT 1 FROM mentions m
@@ -390,18 +390,18 @@ async fn home_timeline_from_db(
                    SELECT s.id FROM statuses s
                    WHERE s.account_id IN (
                        SELECT target_account_id FROM follows
-                       WHERE account_id = $1 AND state = 'accepted'
+                       WHERE account_id = $1
                        UNION ALL SELECT $1
                    )
                    AND s.deleted_at IS NULL
                    AND ($2::bigint IS NULL OR s.id < $2)
                    AND ($3::bigint IS NULL OR s.id > $3)
                    UNION
-                   SELECT st.status_id AS id FROM status_tags st
+                   SELECT st.status_id AS id FROM statuses_tags st
                    JOIN tag_follows tf ON tf.tag_id = st.tag_id
                    JOIN statuses s ON s.id = st.status_id
                    WHERE tf.account_id = $1
-                   AND s.visibility = 'public'
+                   AND s.visibility = 0
                    AND s.deleted_at IS NULL
                    AND ($2::bigint IS NULL OR s.id < $2)
                    AND ($3::bigint IS NULL OR s.id > $3)
@@ -447,7 +447,7 @@ async fn home_timeline_from_db(
                    WHERE la.account_id = s.account_id AND l.account_id = $1 AND l.exclusive = true
                ))
                AND (
-                   s.visibility != 'direct'
+                   s.visibility != 3
                    OR s.account_id = $1
                    OR EXISTS (
                        SELECT 1 FROM mentions m
@@ -494,7 +494,7 @@ pub async fn list_timeline(
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let replies_policy = list.replies_policy.as_str();
+    let replies_policy = crate::db::models::replies::to_str(list.replies_policy);
 
     // Try Redis feed first; fall back to DB on cold start.
     let mut redis = state.redis.clone();
@@ -518,7 +518,7 @@ pub async fn list_timeline(
             let db = state.db.clone();
             let iid = instance.id;
             let owner_id = auth.account_id;
-            let policy = list.replies_policy.clone();
+            let policy = replies_policy.to_string();
             if feed::sync_fanout() {
                 feed::list_feed_populate(&mut redis2, iid, list_id, owner_id, &policy, &db).await;
             } else {
@@ -611,7 +611,7 @@ async fn list_timeline_from_db(
                    WHERE s2.id = s.in_reply_to_id
                      AND (s2.account_id = $5 OR EXISTS (
                          SELECT 1 FROM follows f
-                         WHERE f.account_id = $5 AND f.target_account_id = s2.account_id AND f.state = 'accepted'
+                         WHERE f.account_id = $5 AND f.target_account_id = s2.account_id
                      ))))",
     };
 
@@ -706,20 +706,20 @@ pub async fn tag_timeline(
     let base_conditions = r#"
                WHERE lower(t.name) = $1
                  AND s.instance_id = $2
-                 AND s.visibility = 'public'
+                 AND s.visibility = 0
                  AND s.deleted_at IS NULL
                  AND ($5::text[] IS NULL OR EXISTS (
-                     SELECT 1 FROM status_tags st2
+                     SELECT 1 FROM statuses_tags st2
                      JOIN tags t2 ON t2.id = st2.tag_id
                      WHERE st2.status_id = s.id AND lower(t2.name) = ANY($5)
                  ))
                  AND ($6::text[] IS NULL OR (
                      SELECT COUNT(DISTINCT lower(t2.name))
-                     FROM status_tags st2 JOIN tags t2 ON t2.id = st2.tag_id
+                     FROM statuses_tags st2 JOIN tags t2 ON t2.id = st2.tag_id
                      WHERE st2.status_id = s.id AND lower(t2.name) = ANY($6)
                  ) = array_length($6, 1))
                  AND ($7::text[] IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM status_tags st2
+                     SELECT 1 FROM statuses_tags st2
                      JOIN tags t2 ON t2.id = st2.tag_id
                      WHERE st2.status_id = s.id AND lower(t2.name) = ANY($7)
                  ))"#;
@@ -729,7 +729,7 @@ pub async fn tag_timeline(
     let statuses: Vec<DbStatus> = if min_id.is_some() {
         let sql = format!(
             r#"SELECT s.* FROM statuses s
-               JOIN status_tags st ON st.status_id = s.id
+               JOIN statuses_tags st ON st.status_id = s.id
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
                  AND ($3::bigint IS NULL OR s.id > $3)
@@ -760,7 +760,7 @@ pub async fn tag_timeline(
     } else {
         let sql = format!(
             r#"SELECT s.* FROM statuses s
-               JOIN status_tags st ON st.status_id = s.id
+               JOIN statuses_tags st ON st.status_id = s.id
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
                  AND ($3::bigint IS NULL OR s.id < $3)
@@ -812,7 +812,8 @@ pub(super) async fn compute_filter_results(
 
     // Load active filters for viewer applicable to this context
     let filters = match sqlx::query!(
-        r#"SELECT cf.id, cf.phrase as title, cf.action as filter_action
+        r#"SELECT cf.id, cf.phrase as title,
+                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "filter_action!"
            FROM custom_filters cf
            WHERE cf.account_id = $1
              AND (cf.expires_at IS NULL OR cf.expires_at > now())
@@ -994,7 +995,7 @@ async fn build_status_list(
     let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
     let mut enrich_ids = all_status_ids.clone();
     enrich_ids.extend_from_slice(&reblog_ids);
-    let tags_map = batch_status_tags(state, &enrich_ids).await?;
+    let tags_map = batch_statuses_tags(state, &enrich_ids).await?;
     let mentions_map = batch_status_mentions(state, &enrich_ids).await?;
     let all_statuses_for_emoji: Vec<DbStatus> = statuses.iter().cloned()
         .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -1092,9 +1093,9 @@ pub async fn link_timeline(
     let statuses = sqlx::query_as!(
         crate::db::models::Status,
         r#"SELECT s.* FROM statuses s
-           JOIN status_preview_cards spc ON spc.status_id = s.id
-           WHERE spc.card_id = $1
-             AND s.visibility = 'public'
+           JOIN preview_cards_statuses spc ON spc.status_id = s.id
+           WHERE spc.preview_card_id = $1
+             AND s.visibility = 0
              AND s.deleted_at IS NULL
              AND ($2::bigint IS NULL OR s.id < $2)
              AND ($3::bigint IS NULL OR s.id > $3)

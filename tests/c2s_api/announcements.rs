@@ -88,7 +88,7 @@ async fn test_announcement_dismiss() {
     // Mastodon hides dismissed announcements unless explicitly requested.
     // Verify the announcement is recorded as dismissed for alice.
     let dismissed = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM announcement_dismissals WHERE announcement_id = $1 AND account_id = $2)",
+        "SELECT EXISTS(SELECT 1 FROM announcement_mutes WHERE announcement_id = $1 AND account_id = $2)",
         ann_id, ctx.alice_id.parse::<i64>().unwrap()
     )
     .fetch_one(&ctx.db)

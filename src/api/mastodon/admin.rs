@@ -588,8 +588,9 @@ pub async fn list_admin_reports(
 
     let rows = sqlx::query!(
         r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
-                  r.comment, r.forwarded, r.category, r.action_taken_at,
-                  r.created_at, r.updated_at
+                  r.comment, r.forwarded, r.action_taken_at,
+                  r.created_at, r.updated_at,
+                  CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
            FROM reports r
            JOIN accounts a ON a.id = r.account_id
            WHERE a.instance_id = $1
@@ -644,8 +645,9 @@ pub async fn get_admin_report(
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
         r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
-                  r.comment, r.forwarded, r.category, r.action_taken_at,
-                  r.created_at, r.updated_at
+                  r.comment, r.forwarded, r.action_taken_at,
+                  r.created_at, r.updated_at,
+                  CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
            FROM reports r
            WHERE r.id = $1"#,
         id,
@@ -684,8 +686,9 @@ pub async fn resolve_report(
     .await?;
     let r = sqlx::query!(
         r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
-                  r.comment, r.forwarded, r.category, r.action_taken_at,
-                  r.created_at, r.updated_at
+                  r.comment, r.forwarded, r.action_taken_at,
+                  r.created_at, r.updated_at,
+                  CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
            FROM reports r
            WHERE r.id = $1"#,
         id,
@@ -1251,7 +1254,7 @@ pub async fn create_admin_custom_emoji(
 pub async fn delete_admin_custom_emoji(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<uuid::Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
@@ -1275,7 +1278,7 @@ pub struct PatchEmojiForm {
 pub async fn update_admin_custom_emoji(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<uuid::Uuid>,
+    Path(id): Path<i64>,
     Json(form): Json<PatchEmojiForm>,
 ) -> AppResult<Json<AdminCustomEmoji>> {
     require_admin(&state, auth.account_id).await?;
@@ -1340,8 +1343,9 @@ pub async fn list_domain_blocks(
 ) -> AppResult<Json<Vec<AdminDomainBlock>>> {
     require_admin(&state, auth.account_id).await?;
     let rows = sqlx::query!(
-        "SELECT id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at
-         FROM domain_blocks ORDER BY domain",
+        r#"SELECT id, domain, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at,
+                  CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'silence' WHEN 2 THEN 'suspend' ELSE 'silence' END AS "severity!"
+           FROM domain_blocks ORDER BY domain"#,
     )
     .fetch_all(&state.db)
     .await?;
@@ -1378,13 +1382,14 @@ pub async fn create_domain_block(
     Json(form): Json<CreateDomainBlockForm>,
 ) -> AppResult<Json<AdminDomainBlock>> {
     require_admin(&state, auth.account_id).await?;
-    let severity = form.severity.as_deref().unwrap_or("silence");
+    let severity = crate::db::models::domain_severity::from_str(form.severity.as_deref().unwrap_or("silence"));
     let row = sqlx::query!(
         r#"INSERT INTO domain_blocks (domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (domain) DO UPDATE SET severity = $2, reject_media = $3, reject_reports = $4,
              private_comment = $5, public_comment = $6, obfuscate = $7, updated_at = now()
-           RETURNING id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at"#,
+           RETURNING id, domain, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at,
+                     CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'silence' WHEN 2 THEN 'suspend' ELSE 'silence' END AS "severity!""#,
         form.domain, severity,
         form.reject_media.unwrap_or(false),
         form.reject_reports.unwrap_or(false),
@@ -1417,8 +1422,9 @@ pub async fn get_admin_domain_block(
 ) -> AppResult<Json<AdminDomainBlock>> {
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
-        "SELECT id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at
-         FROM domain_blocks WHERE id = $1",
+        r#"SELECT id, domain, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at,
+                  CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'silence' WHEN 2 THEN 'suspend' ELSE 'silence' END AS "severity!"
+           FROM domain_blocks WHERE id = $1"#,
         id,
     )
     .fetch_optional(&state.db)
@@ -1447,6 +1453,7 @@ pub async fn update_admin_domain_block(
     Json(form): Json<CreateDomainBlockForm>,
 ) -> AppResult<Json<AdminDomainBlock>> {
     require_admin(&state, auth.account_id).await?;
+    let severity_int: Option<i32> = form.severity.as_deref().map(crate::db::models::domain_severity::from_str);
     let r = sqlx::query!(
         r#"UPDATE domain_blocks SET
                severity       = COALESCE($2, severity),
@@ -1457,9 +1464,10 @@ pub async fn update_admin_domain_block(
                obfuscate      = COALESCE($7, obfuscate),
                updated_at     = now()
            WHERE id = $1
-           RETURNING id, domain, severity, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at"#,
+           RETURNING id, domain, reject_media, reject_reports, private_comment, public_comment, obfuscate, created_at,
+                     CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'silence' WHEN 2 THEN 'suspend' ELSE 'silence' END AS "severity!""#,
         id,
-        form.severity,
+        severity_int,
         form.reject_media,
         form.reject_reports,
         form.private_comment,
@@ -1586,7 +1594,9 @@ pub async fn list_ip_blocks(
 ) -> AppResult<Json<Vec<AdminIpBlock>>> {
     require_admin(&state, auth.account_id).await?;
     let rows = sqlx::query!(
-        "SELECT id, ip, severity, comment, expires_at, created_at FROM admin_ip_blocks ORDER BY created_at DESC"
+        r#"SELECT id, host(ip) as "ip!", comment, expires_at, created_at,
+                  CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'sign_up_requires_approval' WHEN 2 THEN 'sign_up_block' WHEN 3 THEN 'block' ELSE 'noop' END AS "severity!"
+           FROM ip_blocks ORDER BY created_at DESC"#
     )
     .fetch_all(&state.db)
     .await?;
@@ -1594,7 +1604,7 @@ pub async fn list_ip_blocks(
         id: r.id.to_string(),
         ip: r.ip,
         severity: r.severity,
-        comment: r.comment,
+        comment: Some(r.comment),
         expires_at: r.expires_at.map(super::convert::mastodon_date),
         created_at: super::convert::mastodon_date(r.created_at),
     }).collect()))
@@ -1607,7 +1617,9 @@ pub async fn get_ip_block(
 ) -> AppResult<Json<AdminIpBlock>> {
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
-        "SELECT id, ip, severity, comment, expires_at, created_at FROM admin_ip_blocks WHERE id = $1",
+        r#"SELECT id, host(ip) as "ip!", comment, expires_at, created_at,
+                  CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'sign_up_requires_approval' WHEN 2 THEN 'sign_up_block' WHEN 3 THEN 'block' ELSE 'noop' END AS "severity!"
+           FROM ip_blocks WHERE id = $1"#,
         id
     )
     .fetch_optional(&state.db)
@@ -1617,7 +1629,7 @@ pub async fn get_ip_block(
         id: r.id.to_string(),
         ip: r.ip,
         severity: r.severity,
-        comment: r.comment,
+        comment: Some(r.comment),
         expires_at: r.expires_at.map(super::convert::mastodon_date),
         created_at: super::convert::mastodon_date(r.created_at),
     }))
@@ -1629,15 +1641,16 @@ pub async fn create_ip_block(
     Json(form): Json<CreateIpBlockForm>,
 ) -> AppResult<Json<AdminIpBlock>> {
     require_admin(&state, auth.account_id).await?;
-    let severity = form.severity.as_deref().unwrap_or("sign_up_block");
+    let severity = crate::db::models::ip_severity::from_str(form.severity.as_deref().unwrap_or("sign_up_block"));
     let expires_at = form.expires_in
         .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
     let r = sqlx::query!(
-        r#"INSERT INTO admin_ip_blocks (ip, severity, comment, expires_at)
-           VALUES ($1, $2, $3, $4)
+        r#"INSERT INTO ip_blocks (ip, severity, comment, expires_at)
+           VALUES ($1::text::inet, $2, $3, $4)
            ON CONFLICT (ip) DO UPDATE SET severity = $2, comment = $3, expires_at = $4, updated_at = now()
-           RETURNING id, ip, severity, comment, expires_at, created_at"#,
-        form.ip, severity, form.comment, expires_at,
+           RETURNING id, host(ip) as "ip!", comment, expires_at, created_at,
+                     CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'sign_up_requires_approval' WHEN 2 THEN 'sign_up_block' WHEN 3 THEN 'block' ELSE 'noop' END AS "severity!""#,
+        form.ip, severity, form.comment.unwrap_or_default(), expires_at,
     )
     .fetch_one(&state.db)
     .await?;
@@ -1645,7 +1658,7 @@ pub async fn create_ip_block(
         id: r.id.to_string(),
         ip: r.ip,
         severity: r.severity,
-        comment: r.comment,
+        comment: Some(r.comment),
         expires_at: r.expires_at.map(super::convert::mastodon_date),
         created_at: super::convert::mastodon_date(r.created_at),
     }))
@@ -1658,14 +1671,15 @@ pub async fn update_ip_block(
     Json(form): Json<CreateIpBlockForm>,
 ) -> AppResult<Json<AdminIpBlock>> {
     require_admin(&state, auth.account_id).await?;
-    let severity = form.severity.as_deref().unwrap_or("sign_up_block");
+    let severity = crate::db::models::ip_severity::from_str(form.severity.as_deref().unwrap_or("sign_up_block"));
     let expires_at = form.expires_in
         .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
     let r = sqlx::query!(
-        r#"UPDATE admin_ip_blocks SET severity = $2, comment = $3, expires_at = $4, updated_at = now()
+        r#"UPDATE ip_blocks SET severity = $2, comment = $3, expires_at = $4, updated_at = now()
            WHERE id = $1
-           RETURNING id, ip, severity, comment, expires_at, created_at"#,
-        id, severity, form.comment, expires_at,
+           RETURNING id, host(ip) as "ip!", comment, expires_at, created_at,
+                     CASE severity WHEN 0 THEN 'noop' WHEN 1 THEN 'sign_up_requires_approval' WHEN 2 THEN 'sign_up_block' WHEN 3 THEN 'block' ELSE 'noop' END AS "severity!""#,
+        id, severity, form.comment.unwrap_or_default(), expires_at,
     )
     .fetch_optional(&state.db)
     .await?
@@ -1674,7 +1688,7 @@ pub async fn update_ip_block(
         id: r.id.to_string(),
         ip: r.ip,
         severity: r.severity,
-        comment: r.comment,
+        comment: Some(r.comment),
         expires_at: r.expires_at.map(super::convert::mastodon_date),
         created_at: super::convert::mastodon_date(r.created_at),
     }))
@@ -1686,7 +1700,7 @@ pub async fn delete_ip_block(
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     require_admin(&state, auth.account_id).await?;
-    sqlx::query!("DELETE FROM admin_ip_blocks WHERE id = $1", id)
+    sqlx::query!("DELETE FROM ip_blocks WHERE id = $1", id)
         .execute(&state.db)
         .await?;
     Ok(StatusCode::OK)
@@ -1720,7 +1734,7 @@ pub async fn list_email_domain_blocks(
 ) -> AppResult<Json<Vec<AdminEmailDomainBlock>>> {
     require_admin(&state, auth.account_id).await?;
     let rows = sqlx::query!(
-        "SELECT id, domain, created_at FROM admin_email_domain_blocks ORDER BY domain"
+        "SELECT id, domain, created_at FROM email_domain_blocks ORDER BY domain"
     )
     .fetch_all(&state.db)
     .await?;
@@ -1739,7 +1753,7 @@ pub async fn get_email_domain_block(
 ) -> AppResult<Json<AdminEmailDomainBlock>> {
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
-        "SELECT id, domain, created_at FROM admin_email_domain_blocks WHERE id = $1",
+        "SELECT id, domain, created_at FROM email_domain_blocks WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -1760,7 +1774,7 @@ pub async fn create_email_domain_block(
 ) -> AppResult<Json<AdminEmailDomainBlock>> {
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
-        r#"INSERT INTO admin_email_domain_blocks (domain) VALUES ($1)
+        r#"INSERT INTO email_domain_blocks (domain) VALUES ($1)
            ON CONFLICT (domain) DO UPDATE SET updated_at = now()
            RETURNING id, domain, created_at"#,
         form.domain,
@@ -1781,7 +1795,7 @@ pub async fn delete_email_domain_block(
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     require_admin(&state, auth.account_id).await?;
-    sqlx::query!("DELETE FROM admin_email_domain_blocks WHERE id = $1", id)
+    sqlx::query!("DELETE FROM email_domain_blocks WHERE id = $1", id)
         .execute(&state.db)
         .await?;
     Ok(StatusCode::OK)
@@ -2199,31 +2213,41 @@ pub struct UpdateAdminTagForm {
     pub listable: Option<bool>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct AdminTagsParams {
+    #[serde(flatten)]
+    pub pagination: super::types::PaginationParams,
+    pub name: Option<String>,
+}
+
 pub async fn list_admin_tags(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Query(pagination): Query<super::types::PaginationParams>,
+    Query(params): Query<AdminTagsParams>,
 ) -> AppResult<Json<Vec<AdminTag>>> {
     require_admin(&state, auth.account_id).await?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-    let limit = pagination.limit_clamped(100, 100);
-    let max_id = pagination.max_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
-    let since_id = pagination.since_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
-    let min_id = pagination.min_id.as_deref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let limit = params.pagination.limit_clamped(100, 100);
+    let max_id = params.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = params.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = params.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let name_filter = params.name.as_deref().map(|s| s.to_lowercase());
 
     let rows = sqlx::query!(
         r#"SELECT id, name, trendable, usable, listable, reviewed_at
            FROM tags
-           WHERE ($2::uuid IS NULL OR id < $2)
-             AND ($3::uuid IS NULL OR id > $3)
-             AND ($4::uuid IS NULL OR id > $4)
+           WHERE ($2::bigint IS NULL OR id < $2)
+             AND ($3::bigint IS NULL OR id > $3)
+             AND ($4::bigint IS NULL OR id > $4)
+             AND ($5::text IS NULL OR name = $5)
            ORDER BY id DESC
            LIMIT $1"#,
         limit,
         max_id,
         since_id,
         min_id,
+        name_filter,
     )
     .fetch_all(&state.db)
     .await?;
@@ -2243,7 +2267,7 @@ pub async fn get_admin_tag(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Path(id): Path<uuid::Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<AdminTag>> {
     require_admin(&state, auth.account_id).await?;
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
@@ -2269,7 +2293,7 @@ pub async fn update_admin_tag(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Path(id): Path<uuid::Uuid>,
+    Path(id): Path<i64>,
     Json(form): Json<UpdateAdminTagForm>,
 ) -> AppResult<Json<AdminTag>> {
     require_admin(&state, auth.account_id).await?;

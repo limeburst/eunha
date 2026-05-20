@@ -257,3 +257,78 @@ async fn test_conversations_ordered_by_id_desc() {
         "max_id=c2 should exclude c2 itself",
     );
 }
+
+/// Conversation response includes `accounts` (participant list) and `last_status`.
+/// This covers the account_conversations.participant_account_ids and last_status_id
+/// columns added when replacing conversation_participants with account_conversations.
+#[tokio::test]
+async fn test_conversation_includes_accounts_and_last_status() {
+    let ctx = TestContext::new("conv-fields").await;
+
+    let dm = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &serde_json::json!({
+            "status": "@bob test conversation fields",
+            "visibility": "direct"
+        }),
+    ).await.json::<serde_json::Value>().await.unwrap();
+    let dm_id = dm["id"].as_str().unwrap();
+
+    // Bob's conversation list should include the DM with alice as participant and last_status set.
+    let convs: Vec<serde_json::Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!convs.is_empty(), "bob should have at least one conversation");
+
+    let conv = &convs[0];
+
+    // accounts field must contain alice as a participant.
+    let accounts = conv["accounts"].as_array().expect("conversation must have accounts array");
+    assert!(
+        accounts.iter().any(|a| a["id"].as_str() == Some(ctx.alice_id.as_str())),
+        "alice should be listed as a participant in bob's conversation",
+    );
+
+    // last_status must be the DM.
+    let last_status = &conv["last_status"];
+    assert!(last_status.is_object(), "conversation must have a last_status object");
+    assert_eq!(
+        last_status["id"].as_str(),
+        Some(dm_id),
+        "last_status id must match the sent DM",
+    );
+}
+
+/// POST /api/v1/conversations/:id/unread marks conversation unread and returns updated conversation.
+#[tokio::test]
+async fn test_mark_conversation_unread() {
+    let ctx = TestContext::new("conv-unread").await;
+
+    ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &serde_json::json!({"status": "@bob mark unread", "visibility": "direct"}),
+    ).await;
+
+    let convs: Vec<serde_json::Value> = ctx.api.get("/api/v1/conversations", Some(&ctx.bob_token))
+        .await.json().await.unwrap();
+    assert!(!convs.is_empty());
+    let conv_id = convs[0]["id"].as_str().unwrap().to_string();
+
+    // Mark as read first.
+    ctx.api.post_json(
+        &format!("/api/v1/conversations/{conv_id}/read"),
+        Some(&ctx.bob_token),
+        &serde_json::json!({}),
+    ).await;
+
+    // Mark as unread.
+    let unread_resp = ctx.api.post_json(
+        &format!("/api/v1/conversations/{conv_id}/unread"),
+        Some(&ctx.bob_token),
+        &serde_json::json!({}),
+    ).await;
+    assert_eq!(unread_resp.status(), StatusCode::OK);
+    let conv: serde_json::Value = unread_resp.json().await.unwrap();
+    assert_eq!(conv["unread"].as_bool(), Some(true), "conversation should be unread after marking unread");
+}

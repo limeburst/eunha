@@ -103,7 +103,7 @@ async fn run(
     let following: HashSet<i64> = if let Some(aid) = account_id {
         sqlx::query_scalar!(
             "SELECT target_account_id FROM follows
-             WHERE account_id = $1 AND state = 'accepted'",
+             WHERE account_id = $1",
             aid,
         )
         .fetch_all(&state.db)

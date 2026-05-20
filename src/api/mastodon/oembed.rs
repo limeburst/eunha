@@ -45,14 +45,14 @@ pub async fn get_oembed(
         .ok_or(AppError::NotFound)?;
 
     let row = sqlx::query!(
-        r#"SELECT s.id, s.account_id, s.visibility,
+        r#"SELECT s.id, s.account_id,
                   a.username, a.display_name
            FROM statuses s
            JOIN accounts a ON a.id = s.account_id
            WHERE s.id = $1
              AND s.instance_id = $2
              AND s.deleted_at IS NULL
-             AND s.visibility IN ('public', 'unlisted')"#,
+             AND s.visibility IN (0, 1)"#,
         status_id,
         instance.id,
     ).fetch_optional(&state.db).await?.ok_or(AppError::NotFound)?;

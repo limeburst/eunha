@@ -4,8 +4,6 @@ use axum::{
     response::{Html, IntoResponse, Json, Redirect, Response},
 };
 use serde::Deserialize;
-use uuid::Uuid;
-
 use crate::{
     crypto,
     db::models::Instance,
@@ -47,13 +45,11 @@ pub async fn signup_get(
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-/// Validates an invite code and returns its UUID if valid.
-/// On error, returns a locale key suitable for passing to `locale.t()`.
 async fn validate_invite(
     state: &AppState,
     instance: &Instance,
     code: &str,
-) -> Result<uuid::Uuid, &'static str> {
+) -> Result<i64, &'static str> {
     let row = sqlx::query!(
         "SELECT id, uses, max_uses, expires_at FROM invites WHERE code = $1 AND instance_id = $2",
         code,
@@ -96,7 +92,7 @@ pub async fn api_create_account(
     super::oauth::FormOrJson(form): super::oauth::FormOrJson<ApiCreateAccountForm>,
 ) -> AppResult<Json<super::types::Token>> {
     let invite_code = form.invite_code.as_deref().unwrap_or("").trim().to_string();
-    let invite_id: Option<Uuid> = if !invite_code.is_empty() {
+    let invite_id: Option<i64> = if !invite_code.is_empty() {
         Some(validate_invite(&state, &instance, &invite_code).await
             .map_err(|_| AppError::Unprocessable("Invalid or expired invite code".into()))?)
     } else if !instance.registrations_open {
@@ -288,16 +284,16 @@ pub async fn confirm_email(
 
     if let Some(app_id) = pending.app_id {
         if let Ok(Some(app)) = sqlx::query!(
-            "SELECT redirect_uris, scopes FROM oauth_applications WHERE id = $1",
+            "SELECT redirect_uri, scopes FROM oauth_applications WHERE id = $1",
             app_id,
         ).fetch_optional(&state.db).await {
-            let redirect_uri = app.redirect_uris.lines().next().unwrap_or("").to_string();
+            let redirect_uri = app.redirect_uri.lines().next().unwrap_or("").to_string();
             if !redirect_uri.is_empty() && redirect_uri != "urn:ietf:wg:oauth:2.0:oob" {
                 let code = api_generate_token();
                 let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
                 if sqlx::query!(
-                    r#"INSERT INTO oauth_authorization_codes
-                         (application_id, account_id, code, redirect_uri, scopes, expires_at)
+                    r#"INSERT INTO oauth_access_grants
+                         (application_id, account_id, token, redirect_uri, scopes, expires_at)
                        VALUES ($1, $2, $3, $4, $5, $6)"#,
                     app_id, account_id, code, redirect_uri, app.scopes, expires_at,
                 ).execute(&state.db).await.is_ok() {

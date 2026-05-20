@@ -583,9 +583,9 @@ async fn migrate_oauth_applications(
 
         let dst_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO oauth_applications
-                 (instance_id, name, client_id, client_secret, redirect_uris, scopes, website)
+                 (instance_id, name, uid, secret, redirect_uri, scopes, website)
                VALUES ($1, $2, $3, $4, $5, $6, $7)
-               ON CONFLICT (client_id) DO UPDATE SET name = EXCLUDED.name, website = EXCLUDED.website
+               ON CONFLICT (uid) DO UPDATE SET name = EXCLUDED.name, website = EXCLUDED.website
                RETURNING id"#,
         )
         .bind(instance_id)
@@ -627,10 +627,7 @@ async fn migrate_statuses(
 
         let text: Option<String> = row.try_get("text").ok().flatten();
         let spoiler_text: Option<String> = row.try_get("spoiler_text").ok().flatten();
-        let visibility_int: Option<i32> = row.try_get("visibility").ok().flatten();
-        let visibility = match visibility_int.unwrap_or(0) {
-            0 => "public", 1 => "unlisted", 2 => "private", 3 => "direct", _ => "public",
-        };
+        let visibility: i32 = row.try_get::<i32, _>("visibility").unwrap_or(0);
         let language: Option<String> = row.try_get("language").ok().flatten();
         let sensitive: Option<bool> = row.try_get("sensitive").ok().flatten();
         // For local statuses, always build canonical URI/URL from the new instance domain.
@@ -1074,14 +1071,6 @@ async fn migrate_polls(
         else { continue };
 
         let options: Vec<String> = row.try_get::<Vec<String>, _>("options").unwrap_or_default();
-        let tallies: Vec<i64> = row.try_get::<Vec<i64>, _>("cached_tallies").unwrap_or_default();
-        let options_json: serde_json::Value = options.iter().enumerate()
-            .map(|(i, title)| serde_json::json!({
-                "title": title,
-                "votes_count": tallies.get(i).copied().unwrap_or(0),
-            }))
-            .collect::<Vec<_>>()
-            .into();
 
         let multiple: bool = row.try_get("multiple").unwrap_or(false);
         let votes_count: i64 = row.try_get("votes_count").unwrap_or(0);
@@ -1098,7 +1087,7 @@ async fn migrate_polls(
         )
         .bind(account_id)
         .bind(status_id)
-        .bind(&options_json)
+        .bind(&options)
         .bind(votes_count)
         .bind(voters_count)
         .bind(multiple)
@@ -1281,7 +1270,7 @@ async fn migrate_notifications(
 
         sqlx::query(
             r#"INSERT INTO notifications
-                 (account_id, from_account_id, notification_type, status_id, created_at)
+                 (account_id, from_account_id, "type", status_id, created_at)
                VALUES ($1,$2,$3,$4,$5)"#,
         )
         .bind(account_id)
@@ -1499,9 +1488,7 @@ async fn migrate_custom_filters(
         let expires_at = get_ts_opt(&row, "expires_at");
         let phrase: String = row.try_get("phrase").unwrap_or_default();
         let context: Vec<String> = row.try_get("context").unwrap_or_default();
-        let action = match row.try_get::<i32, _>("action").ok().unwrap_or(0) {
-            0 => "warn", 1 => "hide", _ => "warn",
-        };
+        let action: i32 = row.try_get::<i32, _>("action").ok().unwrap_or(0);
         let created_at = get_ts(&row, "created_at")?;
         let updated_at = get_ts(&row, "updated_at")?;
 
@@ -1660,9 +1647,7 @@ async fn migrate_domain_blocks(
 
     for row in &rows {
         let domain: String = row.try_get("domain").unwrap_or_default();
-        let severity = match row.try_get::<i32, _>("severity").ok().unwrap_or(1) {
-            0 => "noop", 1 => "silence", 2 => "suspend", _ => "silence",
-        };
+        let severity: i32 = row.try_get::<i32, _>("severity").ok().unwrap_or(1);
         let reject_media: bool = row.try_get("reject_media").unwrap_or(false);
         let reject_reports: bool = row.try_get("reject_reports").unwrap_or(false);
         let private_comment: Option<String> = row.try_get("private_comment").ok().flatten();
@@ -1751,7 +1736,7 @@ async fn migrate_reports(
 
         let comment: String = row.try_get("comment").unwrap_or_default();
         let forwarded: Option<bool> = row.try_get("forwarded").ok().flatten();
-        let category: String = row.try_get("category").unwrap_or_else(|_| "other".to_string());
+        let category: i32 = row.try_get::<i32, _>("category").ok().unwrap_or(0);
         let action_taken_at = get_ts_opt(&row, "action_taken_at");
         let uri: Option<String> = row.try_get("uri").ok().flatten();
         let created_at = get_ts(&row, "created_at")?;
@@ -1771,7 +1756,7 @@ async fn migrate_reports(
         .bind(&status_ids)
         .bind(&comment)
         .bind(forwarded)
-        .bind(&category)
+        .bind(category)
         .bind(action_taken_at)
         .bind(&uri)
         .bind(created_at)
@@ -1846,16 +1831,7 @@ async fn migrate_account_warnings(
 
         if target_id.is_none() { continue }
 
-        let action = match row.try_get::<i32, _>("action").ok().unwrap_or(0) {
-            0 => "none",
-            1 => "disable",
-            2 => "mark_statuses_as_sensitive",
-            3 => "silence",
-            4 => "suspend",
-            5 => "delete_statuses",
-            6 => "none_and_reject_appeal",
-            _ => "none",
-        };
+        let action: i32 = row.try_get::<i32, _>("action").ok().unwrap_or(0);
 
         let text: String = row.try_get("text").unwrap_or_default();
         let src_status_ids: Vec<i64> = row.try_get("status_ids").unwrap_or_default();
@@ -2036,12 +2012,12 @@ async fn migrate_markers(
         let updated_at = get_ts(&row, "updated_at")?;
 
         sqlx::query(
-            r#"INSERT INTO markers (account_id, timeline, last_read_id, version, updated_at)
+            r#"INSERT INTO markers (account_id, timeline, last_read_id, lock_version, updated_at)
                VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (account_id, timeline)
-               DO UPDATE SET last_read_id = EXCLUDED.last_read_id,
-                             version      = EXCLUDED.version,
-                             updated_at   = EXCLUDED.updated_at"#,
+               DO UPDATE SET last_read_id  = EXCLUDED.last_read_id,
+                             lock_version  = EXCLUDED.lock_version,
+                             updated_at    = EXCLUDED.updated_at"#,
         )
         .bind(account_id)
         .bind(&timeline)
@@ -2231,22 +2207,23 @@ async fn migrate_web_push_subscriptions(
         let created_at = get_ts(&row, "created_at")?;
         let updated_at = get_ts(&row, "updated_at")?;
 
-        let alerts = data.get("alerts").unwrap_or(&serde_json::Value::Null);
-        let policy = data.get("policy").and_then(|v| v.as_str()).unwrap_or("all");
-
-        let alert_follow    = alerts.get("follow")   .and_then(|v| v.as_bool()).unwrap_or(true);
-        let alert_favourite = alerts.get("favourite").and_then(|v| v.as_bool()).unwrap_or(true);
-        let alert_reblog    = alerts.get("reblog")   .and_then(|v| v.as_bool()).unwrap_or(true);
-        let alert_mention   = alerts.get("mention")  .and_then(|v| v.as_bool()).unwrap_or(true);
-        let alert_poll      = alerts.get("poll")     .and_then(|v| v.as_bool()).unwrap_or(false);
-        let alert_status    = alerts.get("status")   .and_then(|v| v.as_bool()).unwrap_or(false);
+        // Ensure data has the expected structure; fall back to all-default alerts.
+        let data = if data.get("alerts").is_some() {
+            data
+        } else {
+            serde_json::json!({
+                "alerts": {
+                    "follow": true, "favourite": true, "reblog": true,
+                    "mention": true, "poll": false, "status": false
+                },
+                "policy": "all"
+            })
+        };
 
         sqlx::query(
             r#"INSERT INTO web_push_subscriptions
-                 (account_id, access_token_id, endpoint, p256dh, auth,
-                  alert_follow, alert_favourite, alert_reblog, alert_mention,
-                  alert_poll, alert_status, policy, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                 (account_id, access_token_id, endpoint, key_p256dh, key_auth, data, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                ON CONFLICT (access_token_id) DO NOTHING"#,
         )
         .bind(account_id)
@@ -2254,13 +2231,7 @@ async fn migrate_web_push_subscriptions(
         .bind(&endpoint)
         .bind(&p256dh)
         .bind(&auth)
-        .bind(alert_follow)
-        .bind(alert_favourite)
-        .bind(alert_reblog)
-        .bind(alert_mention)
-        .bind(alert_poll)
-        .bind(alert_status)
-        .bind(policy)
+        .bind(data)
         .bind(created_at)
         .bind(updated_at)
         .execute(&mut *dst)

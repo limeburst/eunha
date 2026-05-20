@@ -43,7 +43,7 @@ async fn test_poll_get_not_found() {
     let ctx = TestContext::new("poll-get-404").await;
 
     let resp = ctx.api.get(
-        "/api/v1/polls/00000000-0000-0000-0000-000000000001",
+        "/api/v1/polls/999999999",
         Some(&ctx.alice_token),
     ).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);

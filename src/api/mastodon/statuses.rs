@@ -20,7 +20,7 @@ use crate::{
 use super::{
     accounts::{
         batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media,
-        batch_status_mentions, batch_status_polls, batch_status_tags, build_status,
+        batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status,
         fetch_reblog_data, fetch_status_media, spawn_card_fetch,
     },
     convert::{account_from_db, status_from_db},
@@ -193,7 +193,7 @@ pub async fn post_status(
         .await?
         .ok_or_else(|| AppError::Unprocessable("quoted_status_id does not exist".into()))?;
         // Cannot quote direct messages
-        if quoted.visibility == "direct" {
+        if quoted.visibility == 3 {
             return Err(AppError::Unprocessable("cannot quote a direct message".into()));
         }
         // Cannot quote a reblog; must quote the original post directly
@@ -289,6 +289,7 @@ pub async fn post_status(
     };
 
     let is_reply = in_reply_to_id.is_some();
+    let visibility_int = crate::db::models::vis::from_str(&visibility);
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
@@ -301,7 +302,7 @@ pub async fn post_status(
         account.id,
         text,
         form.spoiler_text.unwrap_or_default(),
-        visibility,
+        visibility_int,
         language,
         sensitive,
         in_reply_to_id,
@@ -342,9 +343,9 @@ pub async fn post_status(
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().any(|v| v.as_str() == Some("https://www.w3.org/ns/activitystreams#Public")))
                 .unwrap_or(true); // default: public statuses allow quoting
-            if always_public { "accepted" } else { "pending" }
+            if always_public { crate::db::models::quote_state::ACCEPTED } else { crate::db::models::quote_state::PENDING }
         } else {
-            "accepted"
+            crate::db::models::quote_state::ACCEPTED
         };
 
         let quoted_account_id = quoted_policy.map(|qp| qp.account_id).unwrap_or(account.id);
@@ -365,65 +366,98 @@ pub async fn post_status(
     }
 
     // Store tags and mentions
-    store_status_tags(&state, status.id, account.id, &hashtags).await?;
+    store_statuses_tags(&state, status.id, account.id, &hashtags).await?;
     store_status_mentions(&state, status.id, &resolved).await?;
 
-    // Manage conversation for direct messages
+    // Mastodon assigns a conversation_id to every status. For replies, inherit
+    // the parent's conversation; otherwise create a new one.
+    let conv_id = if let Some(parent_id) = in_reply_to_id {
+        sqlx::query_scalar!(
+            "SELECT conversation_id FROM statuses WHERE id = $1",
+            parent_id
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+    } else {
+        None
+    };
+
+    let conv_id = if let Some(cid) = conv_id {
+        cid
+    } else {
+        sqlx::query_scalar!(
+            "INSERT INTO conversations (instance_id) VALUES ($1) RETURNING id",
+            instance.id
+        )
+        .fetch_one(&state.db)
+        .await?
+    };
+
+    sqlx::query!(
+        "UPDATE statuses SET conversation_id = $1 WHERE id = $2",
+        conv_id, status.id
+    )
+    .execute(&state.db)
+    .await?;
+
+    sqlx::query!(
+        "UPDATE conversations SET updated_at = now() WHERE id = $1",
+        conv_id
+    )
+    .execute(&state.db)
+    .await?;
+
+    // For direct messages, also manage the account_conversations inbox.
     if visibility == "direct" {
-        let conv_id = if let Some(parent_id) = in_reply_to_id {
-            sqlx::query_scalar!(
-                "SELECT conversation_id FROM statuses WHERE id = $1",
-                parent_id
-            )
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
-        } else {
-            None
-        };
 
-        let conv_id = if let Some(cid) = conv_id {
-            cid
-        } else {
-            sqlx::query_scalar!(
-                "INSERT INTO conversations (instance_id) VALUES ($1) RETURNING id",
-                instance.id
-            )
-            .fetch_one(&state.db)
-            .await?
-        };
+        // Build sorted participant ID lists for each party's account_conversations row.
+        // Mastodon convention: participant_account_ids = everyone else in the conversation.
+        let mut mentioned_ids: Vec<i64> = resolved.iter()
+            .map(|(_, m)| m.id)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        mentioned_ids.sort_unstable();
 
+        // Sender sees the mentioned accounts as participants.
         sqlx::query!(
-            "UPDATE statuses SET conversation_id = $1 WHERE id = $2",
-            conv_id, status.id
+            r#"INSERT INTO account_conversations
+                   (account_id, conversation_id, participant_account_ids, status_ids, last_status_id, unread)
+               VALUES ($1, $2, $3, ARRAY[$4::bigint], $4, false)
+               ON CONFLICT (account_id, conversation_id, participant_account_ids) DO UPDATE
+                   SET unread         = false,
+                       last_status_id = EXCLUDED.last_status_id,
+                       status_ids     = array_append(account_conversations.status_ids, EXCLUDED.last_status_id),
+                       lock_version   = account_conversations.lock_version + 1"#,
+            account.id, conv_id, &mentioned_ids, status.id
         )
         .execute(&state.db)
         .await?;
 
-        sqlx::query!(
-            "UPDATE conversations SET updated_at = now() WHERE id = $1",
-            conv_id
-        )
-        .execute(&state.db)
-        .await?;
-
-        sqlx::query!(
-            "INSERT INTO conversation_participants (conversation_id, account_id, unread)
-             VALUES ($1, $2, false)
-             ON CONFLICT (conversation_id, account_id) DO UPDATE SET unread = false",
-            conv_id, account.id
-        )
-        .execute(&state.db)
-        .await?;
-
+        // Each recipient sees the sender (plus other recipients) as participants.
         for (_, mentioned) in &resolved {
+            let mut recipient_participants: Vec<i64> = std::iter::once(account.id)
+                .chain(resolved.iter()
+                    .filter(|(_, m)| m.id != mentioned.id)
+                    .map(|(_, m)| m.id))
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            recipient_participants.sort_unstable();
+
             sqlx::query!(
-                "INSERT INTO conversation_participants (conversation_id, account_id, unread)
-                 VALUES ($1, $2, true)
-                 ON CONFLICT (conversation_id, account_id) DO UPDATE SET unread = true",
-                conv_id, mentioned.id
+                r#"INSERT INTO account_conversations
+                       (account_id, conversation_id, participant_account_ids, status_ids, last_status_id, unread)
+                   VALUES ($1, $2, $3, ARRAY[$4::bigint], $4, true)
+                   ON CONFLICT (account_id, conversation_id, participant_account_ids) DO UPDATE
+                       SET unread         = true,
+                           last_status_id = EXCLUDED.last_status_id,
+                           status_ids     = array_append(account_conversations.status_ids, EXCLUDED.last_status_id),
+                           lock_version   = account_conversations.lock_version + 1"#,
+                mentioned.id, conv_id, &recipient_participants, status.id
             )
             .execute(&state.db)
             .await?;
@@ -464,13 +498,11 @@ pub async fn post_status(
     // Create poll if requested (options already validated above)
     if let Some(ref poll_form) = form.poll {
         let expires_at = poll_form.expires_in.map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
-        let options_json: serde_json::Value = serde_json::Value::Array(
-            poll_form.options.iter().map(|o| serde_json::json!({ "title": o, "votes_count": 0 })).collect()
-        );
+        let poll_options: Vec<String> = poll_form.options.clone();
         sqlx::query!(
             r#"INSERT INTO polls (status_id, account_id, options, multiple, expires_at)
                VALUES ($1, $2, $3, $4, $5)"#,
-            status.id, account.id, options_json,
+            status.id, account.id, &poll_options as &[String],
             poll_form.multiple.unwrap_or(false),
             expires_at,
         )
@@ -564,7 +596,7 @@ pub async fn post_status(
     if visibility == "public" || visibility == "unlisted" {
         if let Ok(followers) = sqlx::query!(
             r#"SELECT account_id FROM follows
-               WHERE target_account_id = $1 AND notify = true AND state = 'accepted'"#,
+               WHERE target_account_id = $1 AND notify = true"#,
             account.id,
         )
         .fetch_all(&state.db)
@@ -588,8 +620,8 @@ pub async fn post_status(
 
     // Fan-out to follower feeds and list feeds in background (non-blocking)
     {
-        let tag_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
-            "SELECT tag_id FROM status_tags WHERE status_id = $1",
+        let tag_ids: Vec<i64> = sqlx::query_scalar!(
+            "SELECT tag_id FROM statuses_tags WHERE status_id = $1",
             status.id
         )
         .fetch_all(&state.db)
@@ -758,14 +790,14 @@ pub async fn get_statuses_batch(
 
     // Batch follow check for private statuses
     let private_author_ids: Vec<i64> = statuses.iter()
-        .filter(|s| s.visibility == "private" && viewer_id != Some(s.account_id))
+        .filter(|s| s.visibility == crate::db::models::vis::PRIVATE && viewer_id != Some(s.account_id))
         .map(|s| s.account_id)
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
     let followed_ids: std::collections::HashSet<i64> = if let (Some(vid), false) = (viewer_id, private_author_ids.is_empty()) {
         sqlx::query_scalar!(
-            "SELECT target_account_id FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[]) AND state = 'accepted'",
+            "SELECT target_account_id FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
             vid, &private_author_ids,
         )
         .fetch_all(&state.db)
@@ -778,7 +810,7 @@ pub async fn get_statuses_batch(
 
     // Batch mention check for direct statuses
     let direct_ids: Vec<i64> = statuses.iter()
-        .filter(|s| s.visibility == "direct" && viewer_id != Some(s.account_id))
+        .filter(|s| s.visibility == crate::db::models::vis::DIRECT && viewer_id != Some(s.account_id))
         .map(|s| s.id)
         .collect();
     let mentioned_status_ids: std::collections::HashSet<i64> = if let (Some(vid), false) = (viewer_id, direct_ids.is_empty()) {
@@ -799,9 +831,9 @@ pub async fn get_statuses_batch(
             if viewer_id != Some(s.account_id) && blocked_account_ids.contains(&s.account_id) {
                 return false;
             }
-            match s.visibility.as_str() {
-                "private" => viewer_id == Some(s.account_id) || followed_ids.contains(&s.account_id),
-                "direct" => viewer_id == Some(s.account_id) || mentioned_status_ids.contains(&s.id),
+            match s.visibility {
+                crate::db::models::vis::PRIVATE => viewer_id == Some(s.account_id) || followed_ids.contains(&s.account_id),
+                crate::db::models::vis::DIRECT => viewer_id == Some(s.account_id) || mentioned_status_ids.contains(&s.id),
                 _ => true,
             }
         })
@@ -829,7 +861,7 @@ pub async fn get_statuses_batch(
     let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
     let mut enrich_ids = all_ids.clone();
     enrich_ids.extend_from_slice(&reblog_ids);
-    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
     let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
     let all_for_emoji: Vec<DbStatus> = visible.iter().cloned()
         .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -919,12 +951,12 @@ pub async fn get_status(
         }
     }
 
-    match status.visibility.as_str() {
-        "private" => {
+    match status.visibility {
+        crate::db::models::vis::PRIVATE => {
             let is_author = viewer_id == Some(status.account_id);
             let is_follower = if let Some(vid) = viewer_id {
                 sqlx::query_scalar!(
-                    "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                    "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2",
                     vid, status.account_id
                 )
                 .fetch_optional(&state.db)
@@ -937,7 +969,7 @@ pub async fn get_status(
                 return Err(AppError::NotFound);
             }
         }
-        "direct" => {
+        crate::db::models::vis::DIRECT => {
             if viewer_id != Some(status.account_id) {
                 let is_mentioned = if let Some(vid) = viewer_id {
                     sqlx::query_scalar!(
@@ -1067,12 +1099,12 @@ pub async fn delete_status(
     sqlx::query!(
         r#"UPDATE featured_tags ft
            SET statuses_count = (
-               SELECT COUNT(*) FROM status_tags st
+               SELECT COUNT(*) FROM statuses_tags st
                JOIN statuses s ON s.id = st.status_id
                WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
            ),
            last_status_at = (
-               SELECT MAX(s.created_at) FROM status_tags st
+               SELECT MAX(s.created_at) FROM statuses_tags st
                JOIN statuses s ON s.id = st.status_id
                WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
            )
@@ -1213,8 +1245,8 @@ pub async fn reblog_status(
     // visibility check: 404 if not visible, 403 if visible but not rebloggable
     check_status_visible(&state, &original, auth.account_id).await?;
     // direct messages are never rebloggable; private statuses only by their author
-    if original.visibility == "direct"
-        || (original.visibility == "private" && original.account_id != auth.account_id)
+    if original.visibility == crate::db::models::vis::DIRECT
+        || (original.visibility == crate::db::models::vis::PRIVATE && original.account_id != auth.account_id)
     {
         return Err(AppError::Forbidden);
     }
@@ -1289,7 +1321,7 @@ pub async fn reblog_status(
         state.streaming.publish(Event::NewStatus {
             instance_id: instance.id,
             author_id: boost_account.id,
-            is_public: original.visibility == "public",
+            is_public: original.visibility == crate::db::models::vis::PUBLIC,
             is_direct: false,
             status_id: boost.id,
             hashtags,
@@ -1323,7 +1355,7 @@ pub async fn get_status_context(
     match viewer_id {
         Some(vid) => check_status_visible(&state, &root, vid).await?,
         None => {
-            if root.visibility != "public" && root.visibility != "unlisted" {
+            if !matches!(root.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
                 return Err(AppError::NotFound);
             }
         }
@@ -1350,20 +1382,15 @@ pub async fn get_status_context(
 
     let descendant_rows = sqlx::query_as::<_, DbStatus>(
         r#"WITH RECURSIVE reply_tree AS (
-             SELECT *, 1::int AS depth FROM statuses
+             SELECT id, 1::int AS depth FROM statuses
              WHERE in_reply_to_id = $1 AND deleted_at IS NULL
              UNION ALL
-             SELECT s.*, r.depth + 1 FROM statuses s
+             SELECT s.id, r.depth + 1 FROM statuses s
                JOIN reply_tree r ON s.in_reply_to_id = r.id
              WHERE s.deleted_at IS NULL AND r.depth < $3
-           )
-           SELECT id, instance_id, account_id, application_id, text, spoiler_text,
-                  in_reply_to_id, in_reply_to_account_id, reblog_of_id, reply,
-                  visibility, language, sensitive, url, uri,
-                  replies_count, reblogs_count, favourites_count, quotes_count,
-                  deleted_at, edited_at, created_at, conversation_id, idempotency_key,
-                  quote_of_id, interaction_policy
-           FROM reply_tree ORDER BY id ASC LIMIT $2"#
+           ),
+           bounded AS (SELECT id FROM reply_tree LIMIT $2)
+           SELECT s.* FROM statuses s JOIN bounded b ON s.id = b.id ORDER BY s.id ASC"#
     )
     .bind(id)
     .bind(descendant_limit)
@@ -1409,7 +1436,7 @@ pub async fn get_status_context(
             if viewer_id.map_or(false, |vid| vid != s.account_id) && blocked_accounts.contains(&s.account_id) {
                 return false;
             }
-            if matches!(s.visibility.as_str(), "private" | "direct") {
+            if matches!(s.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
                 viewer_id.is_some()
             } else {
                 true
@@ -1421,7 +1448,7 @@ pub async fn get_status_context(
             if viewer_id.map_or(false, |vid| vid != s.account_id) && blocked_accounts.contains(&s.account_id) {
                 return false;
             }
-            if matches!(s.visibility.as_str(), "private" | "direct") {
+            if matches!(s.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
                 viewer_id.is_some()
             } else {
                 true
@@ -1433,7 +1460,7 @@ pub async fn get_status_context(
     let anc_owned: Vec<DbStatus> = {
         let mut v = Vec::new();
         for s in &visible_ancestors {
-            if matches!(s.visibility.as_str(), "private" | "direct") {
+            if matches!(s.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
                 if let Some(vid) = viewer_id {
                     if check_status_visible(&state, s, vid).await.is_err() {
                         continue;
@@ -1447,7 +1474,7 @@ pub async fn get_status_context(
     let desc_owned: Vec<DbStatus> = {
         let mut v = Vec::new();
         for s in &visible_descendants {
-            if matches!(s.visibility.as_str(), "private" | "direct") {
+            if matches!(s.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
                 if let Some(vid) = viewer_id {
                     if check_status_visible(&state, s, vid).await.is_err() {
                         continue;
@@ -1500,7 +1527,7 @@ pub async fn get_status_context(
             let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
             let mut enrich_ids = all_ids.clone();
             enrich_ids.extend_from_slice(&reblog_ids);
-            let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+            let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
             let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
             let all_statuses_for_emoji: Vec<DbStatus> = visible.iter().cloned()
                 .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -1719,9 +1746,11 @@ pub async fn mute_status(
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:mutes")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
+    // Every status now has a conversation_id assigned at creation time.
+    let cid = status.conversation_id.ok_or(AppError::NotFound)?;
     sqlx::query!(
-        "INSERT INTO conversation_mutes (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        auth.account_id, id
+        "INSERT INTO conversation_mutes (account_id, conversation_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        auth.account_id, cid
     )
     .execute(&state.db)
     .await?;
@@ -1741,7 +1770,7 @@ pub async fn unmute_status(
     auth.require_scope("write:mutes")?;
     let (status, account) = fetch_status_with_account(&state, id).await?;
     sqlx::query!(
-        "DELETE FROM conversation_mutes WHERE account_id = $1 AND status_id = $2",
+        "DELETE FROM conversation_mutes WHERE account_id = $1 AND conversation_id = (SELECT conversation_id FROM statuses WHERE id = $2)",
         auth.account_id, id
     )
     .execute(&state.db)
@@ -1766,7 +1795,7 @@ pub async fn favourited_by(
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     if let Some(vid) = viewer_id {
         check_status_visible(&state, &status, vid).await?;
-    } else if status.visibility == "private" || status.visibility == "direct" {
+    } else if matches!(status.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
         return Err(AppError::NotFound);
     }
 
@@ -1836,7 +1865,7 @@ pub async fn reblogged_by(
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
     if let Some(vid) = viewer_id {
         check_status_visible(&state, &status, vid).await?;
-    } else if status.visibility == "private" || status.visibility == "direct" {
+    } else if matches!(status.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
         return Err(AppError::NotFound);
     }
 
@@ -1981,7 +2010,7 @@ pub async fn edit_status(
     .execute(&state.db)
     .await?;
 
-    store_status_tags(&state, id, auth.account_id, &hashtags).await?;
+    store_statuses_tags(&state, id, auth.account_id, &hashtags).await?;
     store_status_mentions(&state, id, &resolved).await?;
     spawn_card_fetch(&state, id, new_content);
 
@@ -2022,13 +2051,13 @@ pub async fn edit_status(
     let ctx = build_viewer_context(&state, auth.account_id, id).await?;
     let api_status = build_status(&state, &updated_status, &account, media, reblog, Some(ctx)).await?;
 
-    if matches!(updated_status.visibility.as_str(), "public" | "unlisted" | "private") {
+    if matches!(updated_status.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED | crate::db::models::vis::PRIVATE) {
         if let Ok(payload) = serde_json::to_string(&api_status) {
             let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
             state.streaming.publish(Event::StatusUpdate {
                 instance_id: updated_status.instance_id,
                 author_id: account.id,
-                is_public: updated_status.visibility == "public",
+                is_public: updated_status.visibility == crate::db::models::vis::PUBLIC,
                 status_id: id,
                 hashtags,
                 has_media: !api_status.media_attachments.is_empty(),
@@ -2060,7 +2089,7 @@ pub async fn get_status_history(
     match viewer_id {
         Some(vid) => check_status_visible(&state, &status, vid).await?,
         None => {
-            if status.visibility != "public" && status.visibility != "unlisted" {
+            if !matches!(status.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
                 return Err(AppError::NotFound);
             }
         }
@@ -2144,11 +2173,11 @@ pub async fn get_status_source(
 
     // Mastodon allows any authenticated user who has visibility to the status
     // to read its source — not just the author.
-    match status.visibility.as_str() {
-        "private" => {
+    match status.visibility {
+        crate::db::models::vis::PRIVATE => {
             let is_author = status.account_id == auth.account_id;
             let is_follower = sqlx::query_scalar!(
-                "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2",
                 auth.account_id, status.account_id,
             )
             .fetch_optional(&state.db)
@@ -2158,7 +2187,7 @@ pub async fn get_status_source(
                 return Err(AppError::NotFound);
             }
         }
-        "direct" => {
+        crate::db::models::vis::DIRECT => {
             let is_author = status.account_id == auth.account_id;
             let is_mentioned = sqlx::query_scalar!(
                 "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
@@ -2217,7 +2246,7 @@ pub async fn get_status_card(
     match viewer_id {
         Some(vid) => check_status_visible(&state, &status, vid).await?,
         None => {
-            if status.visibility != "public" && status.visibility != "unlisted" {
+            if !matches!(status.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
                 return Err(AppError::NotFound);
             }
         }
@@ -2305,13 +2334,13 @@ async fn check_status_visible(
     status: &DbStatus,
     viewer_id: i64,
 ) -> AppResult<()> {
-    match status.visibility.as_str() {
-        "private" => {
+    match status.visibility {
+        crate::db::models::vis::PRIVATE => {
             if status.account_id == viewer_id {
                 return Ok(());
             }
             let is_follower = sqlx::query_scalar!(
-                "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2",
                 viewer_id, status.account_id,
             )
             .fetch_optional(&state.db)
@@ -2321,7 +2350,7 @@ async fn check_status_visible(
                 return Err(AppError::NotFound);
             }
         }
-        "direct" => {
+        crate::db::models::vis::DIRECT => {
             if status.account_id != viewer_id {
                 let is_mentioned = sqlx::query_scalar!(
                     "SELECT 1 as e FROM mentions WHERE status_id = $1 AND account_id = $2",
@@ -2411,7 +2440,7 @@ pub(super) async fn batch_viewer_contexts(
     .collect();
 
     let mute_set: HashSet<i64> = sqlx::query_scalar!(
-        "SELECT status_id FROM conversation_mutes WHERE account_id = $1 AND status_id = ANY($2::bigint[])",
+        "SELECT s.id FROM statuses s JOIN conversation_mutes cm ON cm.conversation_id = s.conversation_id WHERE cm.account_id = $1 AND s.id = ANY($2::bigint[])",
         viewer_id, status_ids,
     )
     .fetch_all(&state.db)
@@ -2449,7 +2478,7 @@ pub(super) async fn batch_viewer_contexts(
 
     let viewer_follows_set: HashSet<i64> = if !author_ids.is_empty() {
         sqlx::query_scalar!(
-            "SELECT target_account_id FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[]) AND state = 'accepted'",
+            "SELECT target_account_id FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
             viewer_id, &author_ids,
         )
         .fetch_all(&state.db)
@@ -2463,7 +2492,7 @@ pub(super) async fn batch_viewer_contexts(
 
     let author_follows_set: HashSet<i64> = if !author_ids.is_empty() {
         sqlx::query_scalar!(
-            "SELECT account_id FROM follows WHERE account_id = ANY($1::bigint[]) AND target_account_id = $2 AND state = 'accepted'",
+            "SELECT account_id FROM follows WHERE account_id = ANY($1::bigint[]) AND target_account_id = $2",
             &author_ids, viewer_id,
         )
         .fetch_all(&state.db)
@@ -2533,8 +2562,8 @@ pub async fn get_status_quotes(
         r#"SELECT s.* FROM statuses s
            JOIN quotes q ON q.status_id = s.id AND q.quoted_status_id = $1
            WHERE s.deleted_at IS NULL
-             AND q.state = 'accepted'
-             AND (s.visibility IN ('public', 'unlisted') OR (s.visibility = 'private' AND $6::bool))
+             AND q.state = 1
+             AND (s.visibility IN (0, 1) OR (s.visibility = 2 AND $6::bool))
              AND ($2::bigint IS NULL OR q.id < $2)
              AND ($3::bigint IS NULL OR q.id > $3)
              AND ($4::bigint IS NULL OR q.id > $4)
@@ -2575,7 +2604,7 @@ pub async fn revoke_quote(
     let quote = sqlx::query!(
         r#"SELECT q.id, q.status_id, q.quoted_status_id, q.quoted_account_id, q.state
            FROM quotes q
-           WHERE q.quoted_status_id = $1 AND q.status_id = $2 AND q.state != 'revoked'"#,
+           WHERE q.quoted_status_id = $1 AND q.status_id = $2 AND q.state != 3"#,
         quoted_status_id, quoting_status_id,
     )
     .fetch_optional(&state.db)
@@ -2587,7 +2616,7 @@ pub async fn revoke_quote(
     }
 
     sqlx::query!(
-        "UPDATE quotes SET state = 'revoked' WHERE id = $1",
+        "UPDATE quotes SET state = 3 WHERE id = $1",
         quote.id,
     )
     .execute(&state.db)
@@ -2641,7 +2670,7 @@ pub async fn build_viewer_context(
     .is_some();
 
     let muted = sqlx::query!(
-        "SELECT 1 as e FROM conversation_mutes WHERE account_id = $1 AND status_id = $2",
+        "SELECT 1 as e FROM conversation_mutes cm JOIN statuses s ON s.id = $2 WHERE cm.account_id = $1 AND cm.conversation_id = s.conversation_id",
         viewer_id, status_id
     )
     .fetch_optional(&state.db)
@@ -2667,7 +2696,7 @@ pub async fn build_viewer_context(
     .unwrap_or(0);
 
     let follows_author = sqlx::query!(
-        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2",
         viewer_id, author_id
     )
     .fetch_optional(&state.db)
@@ -2675,7 +2704,7 @@ pub async fn build_viewer_context(
     .is_some();
 
     let author_follows = sqlx::query!(
-        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+        "SELECT 1 as e FROM follows WHERE account_id = $1 AND target_account_id = $2",
         author_id, viewer_id
     )
     .fetch_optional(&state.db)
@@ -2767,8 +2796,8 @@ pub fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (Str
     map
 }
 
-pub async fn store_status_tags(state: &AppState, status_id: i64, account_id: i64, hashtags: &[String]) -> AppResult<()> {
-    sqlx::query!("DELETE FROM status_tags WHERE status_id = $1", status_id)
+pub async fn store_statuses_tags(state: &AppState, status_id: i64, account_id: i64, hashtags: &[String]) -> AppResult<()> {
+    sqlx::query!("DELETE FROM statuses_tags WHERE status_id = $1", status_id)
         .execute(&state.db)
         .await?;
     for tag_name in hashtags {
@@ -2781,7 +2810,7 @@ pub async fn store_status_tags(state: &AppState, status_id: i64, account_id: i64
         .fetch_one(&state.db)
         .await?;
         sqlx::query!(
-            "INSERT INTO status_tags (status_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO statuses_tags (status_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             status_id, tag_id,
         )
         .execute(&state.db)
@@ -2791,12 +2820,12 @@ pub async fn store_status_tags(state: &AppState, status_id: i64, account_id: i64
     sqlx::query!(
         r#"UPDATE featured_tags ft
            SET statuses_count = (
-               SELECT COUNT(*) FROM status_tags st
+               SELECT COUNT(*) FROM statuses_tags st
                JOIN statuses s ON s.id = st.status_id
                WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
            ),
            last_status_at = (
-               SELECT MAX(s.created_at) FROM status_tags st
+               SELECT MAX(s.created_at) FROM statuses_tags st
                JOIN statuses s ON s.id = st.status_id
                WHERE st.tag_id = ft.tag_id AND s.account_id = $1 AND s.deleted_at IS NULL
            )

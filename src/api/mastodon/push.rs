@@ -33,6 +33,22 @@ pub struct PushAlerts {
     pub status: bool,
 }
 
+fn alerts_from_data(data: &serde_json::Value) -> PushAlerts {
+    let a = &data["alerts"];
+    PushAlerts {
+        follow:    a["follow"]   .as_bool().unwrap_or(true),
+        favourite: a["favourite"].as_bool().unwrap_or(true),
+        reblog:    a["reblog"]   .as_bool().unwrap_or(true),
+        mention:   a["mention"]  .as_bool().unwrap_or(true),
+        poll:      a["poll"]     .as_bool().unwrap_or(false),
+        status:    a["status"]   .as_bool().unwrap_or(false),
+    }
+}
+
+fn policy_from_data(data: &serde_json::Value) -> String {
+    data["policy"].as_str().unwrap_or("all").to_string()
+}
+
 // ── POST /api/v1/push/subscription ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -99,37 +115,35 @@ pub async fn create_subscription(
 
     let alerts = &body.data.alerts;
     let policy = body.data.policy.as_deref().unwrap_or("all");
+    let data = serde_json::json!({
+        "alerts": {
+            "follow":    alerts.follow.unwrap_or(true),
+            "favourite": alerts.favourite.unwrap_or(true),
+            "reblog":    alerts.reblog.unwrap_or(true),
+            "mention":   alerts.mention.unwrap_or(true),
+            "poll":      alerts.poll.unwrap_or(false),
+            "status":    alerts.status.unwrap_or(false),
+        },
+        "policy": policy,
+    });
 
     let row = sqlx::query!(
         r#"INSERT INTO web_push_subscriptions
-             (account_id, access_token_id, endpoint, p256dh, auth,
-              alert_follow, alert_favourite, alert_reblog, alert_mention, alert_poll, alert_status, policy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             (account_id, access_token_id, endpoint, key_p256dh, key_auth, data)
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (access_token_id) DO UPDATE SET
-             endpoint        = EXCLUDED.endpoint,
-             p256dh          = EXCLUDED.p256dh,
-             auth            = EXCLUDED.auth,
-             alert_follow    = EXCLUDED.alert_follow,
-             alert_favourite = EXCLUDED.alert_favourite,
-             alert_reblog    = EXCLUDED.alert_reblog,
-             alert_mention   = EXCLUDED.alert_mention,
-             alert_poll      = EXCLUDED.alert_poll,
-             alert_status    = EXCLUDED.alert_status,
-             policy          = EXCLUDED.policy,
-             updated_at      = now()
-           RETURNING id, alert_follow, alert_favourite, alert_reblog, alert_mention, alert_poll, alert_status, policy"#,
+             endpoint   = EXCLUDED.endpoint,
+             key_p256dh = EXCLUDED.key_p256dh,
+             key_auth   = EXCLUDED.key_auth,
+             data       = EXCLUDED.data,
+             updated_at = now()
+           RETURNING id, data as "data: serde_json::Value""#,
         auth.account_id,
         auth.token_id,
         body.subscription.endpoint,
         body.subscription.keys.p256dh,
         body.subscription.keys.auth,
-        alerts.follow.unwrap_or(true),
-        alerts.favourite.unwrap_or(true),
-        alerts.reblog.unwrap_or(true),
-        alerts.mention.unwrap_or(true),
-        alerts.poll.unwrap_or(false),
-        alerts.status.unwrap_or(false),
-        policy,
+        data,
     )
     .fetch_one(&state.db)
     .await?;
@@ -138,15 +152,8 @@ pub async fn create_subscription(
         id: row.id.to_string(),
         endpoint: body.subscription.endpoint,
         standard: false,
-        alerts: PushAlerts {
-            follow: row.alert_follow,
-            favourite: row.alert_favourite,
-            reblog: row.alert_reblog,
-            mention: row.alert_mention,
-            poll: row.alert_poll,
-            status: row.alert_status,
-        },
-        policy: row.policy,
+        alerts: alerts_from_data(&row.data),
+        policy: policy_from_data(&row.data),
         server_key: instance.vapid_public_key,
     }))
 }
@@ -168,8 +175,7 @@ pub async fn get_subscription(
     .await?;
 
     let row = sqlx::query!(
-        r#"SELECT id, endpoint, alert_follow, alert_favourite, alert_reblog,
-                  alert_mention, alert_poll, alert_status, policy
+        r#"SELECT id, endpoint, data as "data: serde_json::Value"
            FROM web_push_subscriptions
            WHERE access_token_id = $1"#,
         auth.token_id,
@@ -182,15 +188,8 @@ pub async fn get_subscription(
         id: row.id.to_string(),
         endpoint: row.endpoint,
         standard: false,
-        alerts: PushAlerts {
-            follow: row.alert_follow,
-            favourite: row.alert_favourite,
-            reblog: row.alert_reblog,
-            mention: row.alert_mention,
-            poll: row.alert_poll,
-            status: row.alert_status,
-        },
-        policy: row.policy,
+        alerts: alerts_from_data(&row.data),
+        policy: policy_from_data(&row.data),
         server_key: instance.vapid_public_key,
     }))
 }
@@ -223,17 +222,20 @@ pub async fn update_subscription(
 
     let row = sqlx::query!(
         r#"UPDATE web_push_subscriptions SET
-             alert_follow    = COALESCE($1, alert_follow),
-             alert_favourite = COALESCE($2, alert_favourite),
-             alert_reblog    = COALESCE($3, alert_reblog),
-             alert_mention   = COALESCE($4, alert_mention),
-             alert_poll      = COALESCE($5, alert_poll),
-             alert_status    = COALESCE($6, alert_status),
-             policy          = $7,
-             updated_at      = now()
+             data = jsonb_build_object(
+               'alerts', jsonb_build_object(
+                 'follow',    COALESCE($1::boolean, (data->'alerts'->>'follow')::boolean, true),
+                 'favourite', COALESCE($2::boolean, (data->'alerts'->>'favourite')::boolean, true),
+                 'reblog',    COALESCE($3::boolean, (data->'alerts'->>'reblog')::boolean, true),
+                 'mention',   COALESCE($4::boolean, (data->'alerts'->>'mention')::boolean, true),
+                 'poll',      COALESCE($5::boolean, (data->'alerts'->>'poll')::boolean, false),
+                 'status',    COALESCE($6::boolean, (data->'alerts'->>'status')::boolean, false)
+               ),
+               'policy', $7::text
+             ),
+             updated_at = now()
            WHERE access_token_id = $8
-           RETURNING id, endpoint, alert_follow, alert_favourite, alert_reblog,
-                     alert_mention, alert_poll, alert_status, policy"#,
+           RETURNING id, endpoint, data as "data: serde_json::Value""#,
         alerts.follow,
         alerts.favourite,
         alerts.reblog,
@@ -251,15 +253,8 @@ pub async fn update_subscription(
         id: row.id.to_string(),
         endpoint: row.endpoint,
         standard: false,
-        alerts: PushAlerts {
-            follow: row.alert_follow,
-            favourite: row.alert_favourite,
-            reblog: row.alert_reblog,
-            mention: row.alert_mention,
-            poll: row.alert_poll,
-            status: row.alert_status,
-        },
-        policy: row.policy,
+        alerts: alerts_from_data(&row.data),
+        policy: policy_from_data(&row.data),
         server_key: instance.vapid_public_key,
     }))
 }

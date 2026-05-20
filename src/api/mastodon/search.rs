@@ -10,7 +10,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_status_tags, build_status, fetch_reblog_data, fetch_status_media},
+    accounts::{batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media},
     convert::{account_from_db, status_from_db},
     types::{SearchResults, Status, Tag},
 };
@@ -130,7 +130,7 @@ pub async fn search(
                 sqlx::query_as!(
                     crate::db::models::Account,
                     r#"SELECT a.* FROM accounts a
-                       JOIN follows f ON f.target_account_id = a.id AND f.state = 'accepted'
+                       JOIN follows f ON f.target_account_id = a.id
                        WHERE a.instance_id = $1
                          AND a.suspended_at IS NULL
                          AND f.account_id = $4
@@ -164,7 +164,7 @@ pub async fn search(
             sqlx::query_as!(
                 crate::db::models::Account,
                 r#"SELECT a.* FROM accounts a
-                   JOIN follows f ON f.target_account_id = a.id AND f.state = 'accepted'
+                   JOIN follows f ON f.target_account_id = a.id
                    WHERE a.instance_id = $1
                      AND a.suspended_at IS NULL
                      AND f.account_id = $4
@@ -207,7 +207,7 @@ pub async fn search(
                JOIN accounts a ON a.id = s.account_id
                WHERE s.instance_id = $1
                  AND s.deleted_at IS NULL
-                 AND (s.visibility IN ('public', 'unlisted') OR s.account_id = $5)
+                 AND (s.visibility IN (0, 1) OR s.account_id = $5)
                  AND a.suspended_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
@@ -237,7 +237,7 @@ pub async fn search(
         let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut enrich_ids = all_ids.clone();
         enrich_ids.extend_from_slice(&reblog_ids);
-        let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+        let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
         let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
         let all_statuses_for_emoji: Vec<crate::db::models::Status> = rows.iter().cloned()
             .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))

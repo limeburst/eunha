@@ -14,8 +14,8 @@ use crate::{
 use super::{
     accounts::{
         batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media,
-        batch_status_mentions, batch_status_polls, batch_status_tags,
-        build_status, fetch_account, fetch_reblog_data, fetch_status_media,
+        batch_status_mentions, batch_status_polls, batch_statuses_tags,
+        build_status, fetch_account, fetch_status_media,
     },
     convert::{account_from_db, status_from_db},
     statuses::{batch_viewer_contexts, build_viewer_context},
@@ -23,8 +23,10 @@ use super::{
 };
 
 struct ConvRow {
-    id: i64,
+    conversation_id: i64,
     unread: bool,
+    participant_account_ids: Vec<i64>,
+    last_status_id: Option<i64>,
 }
 
 // ── GET /api/v1/conversations ─────────────────────────────────────────────
@@ -45,12 +47,11 @@ pub async fn get_conversations(
     let rows: Vec<ConvRow> = if min_id.is_some() {
         sqlx::query_as!(
             ConvRow,
-            r#"SELECT c.id, cp.unread
-               FROM conversations c
-               JOIN conversation_participants cp ON cp.conversation_id = c.id
-               WHERE cp.account_id = $1
-                 AND ($2::bigint IS NULL OR c.id > $2)
-               ORDER BY c.id ASC
+            r#"SELECT ac.conversation_id, ac.unread, ac.participant_account_ids, ac.last_status_id
+               FROM account_conversations ac
+               WHERE ac.account_id = $1
+                 AND ($2::bigint IS NULL OR ac.conversation_id > $2)
+               ORDER BY ac.conversation_id ASC
                LIMIT $3"#,
             auth.account_id,
             min_id,
@@ -61,13 +62,12 @@ pub async fn get_conversations(
     } else {
         sqlx::query_as!(
             ConvRow,
-            r#"SELECT c.id, cp.unread
-               FROM conversations c
-               JOIN conversation_participants cp ON cp.conversation_id = c.id
-               WHERE cp.account_id = $1
-                 AND ($2::bigint IS NULL OR c.id < $2)
-                 AND ($4::bigint IS NULL OR c.id > $4)
-               ORDER BY c.id DESC
+            r#"SELECT ac.conversation_id, ac.unread, ac.participant_account_ids, ac.last_status_id
+               FROM account_conversations ac
+               WHERE ac.account_id = $1
+                 AND ($2::bigint IS NULL OR ac.conversation_id < $2)
+                 AND ($4::bigint IS NULL OR ac.conversation_id > $4)
+               ORDER BY ac.conversation_id DESC
                LIMIT $3"#,
             auth.account_id,
             max_id,
@@ -82,27 +82,14 @@ pub async fn get_conversations(
         return Ok((HeaderMap::new(), Json(vec![])));
     }
 
-    let conv_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-
-    // Batch fetch participant links then accounts
-    struct PartLink { conversation_id: i64, account_id: i64 }
-    let part_links = sqlx::query_as!(
-        PartLink,
-        r#"SELECT conversation_id, account_id FROM conversation_participants
-           WHERE conversation_id = ANY($1::bigint[]) AND account_id != $2"#,
-        &conv_ids,
-        auth.account_id,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    let all_participant_ids: Vec<i64> = part_links.iter()
-        .map(|r| r.account_id)
+    // Collect all unique participant account IDs across all conversations
+    let all_participant_ids: Vec<i64> = rows.iter()
+        .flat_map(|r| r.participant_account_ids.iter().copied())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
 
-    let participant_accounts_vec: Vec<Account> = if !all_participant_ids.is_empty() {
+    let participant_accounts: Vec<Account> = if !all_participant_ids.is_empty() {
         sqlx::query_as!(
             Account,
             "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
@@ -114,28 +101,23 @@ pub async fn get_conversations(
         vec![]
     };
     let participant_acct_map: std::collections::HashMap<i64, Account> =
-        participant_accounts_vec.into_iter().map(|a| (a.id, a)).collect();
-    let mut participants_by_conv: std::collections::HashMap<i64, Vec<&Account>> =
-        std::collections::HashMap::new();
-    for link in &part_links {
-        if let Some(acct) = participant_acct_map.get(&link.account_id) {
-            participants_by_conv.entry(link.conversation_id).or_default().push(acct);
-        }
-    }
+        participant_accounts.into_iter().map(|a| (a.id, a)).collect();
 
-    // Batch fetch last status per conversation via DISTINCT ON
-    let last_statuses: Vec<crate::db::models::Status> = sqlx::query_as!(
-        crate::db::models::Status,
-        r#"SELECT DISTINCT ON (conversation_id) *
-           FROM statuses
-           WHERE conversation_id = ANY($1::bigint[]) AND deleted_at IS NULL
-           ORDER BY conversation_id, id DESC"#,
-        &conv_ids,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    // Fetch last statuses by ID (already known from last_status_id)
+    let last_status_ids: Vec<i64> = rows.iter().filter_map(|r| r.last_status_id).collect();
+    let last_statuses: Vec<crate::db::models::Status> = if !last_status_ids.is_empty() {
+        sqlx::query_as!(
+            crate::db::models::Status,
+            "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
+            &last_status_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
 
-    // Batch enrich all last statuses
+    // Batch enrich last statuses
     let status_ids: Vec<i64> = last_statuses.iter().map(|s| s.id).collect();
     let mut enriched_map: std::collections::HashMap<i64, super::types::Status> =
         std::collections::HashMap::new();
@@ -146,7 +128,7 @@ pub async fn get_conversations(
         let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut enrich_ids = status_ids.clone();
         enrich_ids.extend_from_slice(&reblog_ids);
-        let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+        let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
         let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
         let all_for_emoji: Vec<crate::db::models::Status> = last_statuses.iter().cloned()
             .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -202,12 +184,13 @@ pub async fn get_conversations(
     let mut result = Vec::with_capacity(rows.len());
     for row in &rows {
         result.push(Conversation {
-            id: row.id.to_string(),
+            id: row.conversation_id.to_string(),
             unread: row.unread,
-            accounts: participants_by_conv.get(&row.id)
-                .map(|v| v.iter().map(|a| account_from_db(a)).collect())
-                .unwrap_or_default(),
-            last_status: enriched_map.remove(&row.id),
+            accounts: row.participant_account_ids.iter()
+                .filter_map(|id| participant_acct_map.get(id))
+                .map(account_from_db)
+                .collect(),
+            last_status: enriched_map.remove(&row.conversation_id),
         });
     }
 
@@ -233,7 +216,7 @@ pub async fn delete_conversation(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:conversations")?;
     let deleted = sqlx::query!(
-        "DELETE FROM conversation_participants WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
+        "DELETE FROM account_conversations WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
         id,
         auth.account_id,
     )
@@ -255,53 +238,23 @@ pub async fn mark_conversation_unread(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
     auth.require_scope("write:conversations")?;
-    let updated = sqlx::query!(
-        "UPDATE conversation_participants SET unread = true WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
+
+    struct Updated { participant_account_ids: Vec<i64>, last_status_id: Option<i64> }
+    let updated = sqlx::query_as!(
+        Updated,
+        "UPDATE account_conversations SET unread = true WHERE conversation_id = $1 AND account_id = $2 RETURNING participant_account_ids, last_status_id",
         id,
         auth.account_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if updated.is_none() {
+    let Some(row) = updated else {
         return Err(AppError::NotFound);
-    }
-
-    let participants = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN conversation_participants cp ON cp.account_id = a.id
-           WHERE cp.conversation_id = $1 AND a.id != $2"#,
-        id,
-        auth.account_id,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    let last = sqlx::query_as!(
-        crate::db::models::Status,
-        "SELECT * FROM statuses WHERE conversation_id = $1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-        id,
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    let last_status = if let Some(s) = last {
-        let saccount = fetch_account(&state, s.account_id).await?;
-        let media = fetch_status_media(&state, s.id).await?;
-        let reblog = fetch_reblog_data(&state, &s).await?;
-        let ctx = build_viewer_context(&state, auth.account_id, s.id).await?;
-        Some(build_status(&state, &s, &saccount, media, reblog, Some(ctx)).await?)
-    } else {
-        None
     };
 
-    Ok(Json(Conversation {
-        id: id.to_string(),
-        unread: true,
-        accounts: participants.iter().map(account_from_db).collect(),
-        last_status,
-    }))
+    let conv = build_conversation_response(&state, auth.account_id, id, true, row.participant_account_ids, row.last_status_id).await?;
+    Ok(Json(conv))
 }
 
 // ── POST /api/v1/conversations/:id/read ──────────────────────────────────
@@ -312,51 +265,73 @@ pub async fn mark_conversation_read(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
     auth.require_scope("write:conversations")?;
-    let updated = sqlx::query!(
-        "UPDATE conversation_participants SET unread = false WHERE conversation_id = $1 AND account_id = $2 RETURNING conversation_id",
+
+    struct Updated { participant_account_ids: Vec<i64>, last_status_id: Option<i64> }
+    let updated = sqlx::query_as!(
+        Updated,
+        "UPDATE account_conversations SET unread = false WHERE conversation_id = $1 AND account_id = $2 RETURNING participant_account_ids, last_status_id",
         id,
         auth.account_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if updated.is_none() {
+    let Some(row) = updated else {
         return Err(AppError::NotFound);
-    }
+    };
 
-    let participants = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN conversation_participants cp ON cp.account_id = a.id
-           WHERE cp.conversation_id = $1 AND a.id != $2"#,
-        id,
-        auth.account_id,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let conv = build_conversation_response(&state, auth.account_id, id, false, row.participant_account_ids, row.last_status_id).await?;
+    Ok(Json(conv))
+}
 
-    let last = sqlx::query_as!(
-        crate::db::models::Status,
-        "SELECT * FROM statuses WHERE conversation_id = $1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1",
-        id,
-    )
-    .fetch_optional(&state.db)
-    .await?;
+// ── Shared helper ─────────────────────────────────────────────────────────
 
-    let last_status = if let Some(s) = last {
-        let saccount = fetch_account(&state, s.account_id).await?;
-        let media = fetch_status_media(&state, s.id).await?;
-        let reblog = fetch_reblog_data(&state, &s).await?;
-        let ctx = build_viewer_context(&state, auth.account_id, s.id).await?;
-        Some(build_status(&state, &s, &saccount, media, reblog, Some(ctx)).await?)
+async fn build_conversation_response(
+    state: &AppState,
+    viewer_account_id: i64,
+    conversation_id: i64,
+    unread: bool,
+    participant_account_ids: Vec<i64>,
+    last_status_id: Option<i64>,
+) -> AppResult<Conversation> {
+    let participants: Vec<Account> = if !participant_account_ids.is_empty() {
+        sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+            &participant_account_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
+
+    let last_status = if let Some(sid) = last_status_id {
+        let s = sqlx::query_as!(
+            crate::db::models::Status,
+            "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+            sid,
+        )
+        .fetch_optional(&state.db)
+        .await?;
+
+        if let Some(s) = s {
+            let saccount = fetch_account(state, s.account_id).await?;
+            let media = fetch_status_media(state, s.id).await?;
+            let reblog = super::accounts::fetch_reblog_data(state, &s).await?;
+            let ctx = build_viewer_context(state, viewer_account_id, s.id).await?;
+            Some(build_status(state, &s, &saccount, media, reblog, Some(ctx)).await?)
+        } else {
+            None
+        }
     } else {
         None
     };
 
-    Ok(Json(Conversation {
-        id: id.to_string(),
-        unread: false,
+    Ok(Conversation {
+        id: conversation_id.to_string(),
+        unread,
         accounts: participants.iter().map(account_from_db).collect(),
         last_status,
-    }))
+    })
 }

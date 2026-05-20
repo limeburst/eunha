@@ -25,7 +25,9 @@ async fn fetch_filter(
     account_id: i64,
 ) -> AppResult<Filter> {
     let f = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1 AND account_id = $2",
+        r#"SELECT id, phrase, context, expires_at,
+                  CASE action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
+           FROM custom_filters WHERE id = $1 AND account_id = $2"#,
         filter_id, account_id,
     )
     .fetch_optional(&state.db)
@@ -75,7 +77,9 @@ pub async fn get_filters_v2(
 ) -> AppResult<Json<Vec<Filter>>> {
     auth.require_scope("read:filters")?;
     let filters = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE account_id = $1 ORDER BY id",
+        r#"SELECT id, phrase, context, expires_at,
+                  CASE action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
+           FROM custom_filters WHERE account_id = $1 ORDER BY id"#,
         auth.account_id,
     )
     .fetch_all(&state.db)
@@ -167,7 +171,7 @@ pub async fn create_filter_v2(
     Json(form): Json<CreateFilterForm>,
 ) -> AppResult<(StatusCode, Json<Filter>)> {
     auth.require_scope("write:filters")?;
-    let action = form.filter_action.as_deref().unwrap_or("warn");
+    let action = crate::db::models::filter_action::from_str(form.filter_action.as_deref().unwrap_or("warn"));
     let filter_id = sqlx::query_scalar!(
         r#"INSERT INTO custom_filters (account_id, phrase, context, action, expires_at)
            VALUES ($1, $2, $3, $4,
@@ -216,7 +220,7 @@ pub async fn update_filter_v2(
     Json(form): Json<CreateFilterForm>,
 ) -> AppResult<Json<Filter>> {
     auth.require_scope("write:filters")?;
-    let action = form.filter_action.as_deref().unwrap_or("warn");
+    let action = crate::db::models::filter_action::from_str(form.filter_action.as_deref().unwrap_or("warn"));
     let updated = sqlx::query_scalar!(
         r#"UPDATE custom_filters
            SET phrase = $3,
@@ -607,7 +611,8 @@ pub async fn get_filters_v1(
 ) -> AppResult<Json<Vec<FilterV1>>> {
     auth.require_scope("read:filters")?;
     let filters = sqlx::query!(
-        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at, cf.action,
+        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at,
+                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!",
                   COALESCE(
                     (SELECT whole_word FROM custom_filter_keywords
                      WHERE custom_filter_id = cf.id ORDER BY id LIMIT 1),
@@ -645,7 +650,8 @@ pub async fn get_filter_v1(
 ) -> AppResult<Json<FilterV1>> {
     auth.require_scope("read:filters")?;
     let f = sqlx::query!(
-        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at, cf.action,
+        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at,
+                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!",
                   COALESCE(
                     (SELECT whole_word FROM custom_filter_keywords
                      WHERE custom_filter_id = cf.id ORDER BY id LIMIT 1),
@@ -686,7 +692,9 @@ pub async fn create_filter_v1(
     Json(form): Json<CreateFilterV1Form>,
 ) -> AppResult<(StatusCode, Json<FilterV1>)> {
     auth.require_scope("write:filters")?;
-    let action = if form.irreversible == Some(true) { "hide" } else { "warn" };
+    let action = crate::db::models::filter_action::from_str(
+        if form.irreversible == Some(true) { "hide" } else { "warn" }
+    );
     let filter_id = sqlx::query_scalar!(
         r#"INSERT INTO custom_filters (account_id, phrase, context, action, expires_at)
            VALUES ($1, $2, $3, $4,
@@ -712,7 +720,9 @@ pub async fn create_filter_v1(
     .await?;
 
     let f = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1",
+        r#"SELECT id, phrase, context, expires_at,
+                  CASE action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
+           FROM custom_filters WHERE id = $1"#,
         filter_id,
     )
     .fetch_one(&state.db)
@@ -738,7 +748,9 @@ pub async fn update_filter_v1(
     Json(form): Json<CreateFilterV1Form>,
 ) -> AppResult<Json<FilterV1>> {
     auth.require_scope("write:filters")?;
-    let action = if form.irreversible == Some(true) { "hide" } else { "warn" };
+    let action = crate::db::models::filter_action::from_str(
+        if form.irreversible == Some(true) { "hide" } else { "warn" }
+    );
     let updated = sqlx::query_scalar!(
         r#"UPDATE custom_filters
            SET phrase = $3, context = $4, action = $5,
@@ -766,7 +778,9 @@ pub async fn update_filter_v1(
     .await?;
 
     let f = sqlx::query!(
-        "SELECT id, phrase, context, expires_at, action FROM custom_filters WHERE id = $1",
+        r#"SELECT id, phrase, context, expires_at,
+                  CASE action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
+           FROM custom_filters WHERE id = $1"#,
         id,
     )
     .fetch_one(&state.db)

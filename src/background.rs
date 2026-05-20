@@ -100,7 +100,7 @@ async fn publish_one(
 
     use crate::api::mastodon::statuses::{
         extract_hashtags, extract_mention_handles, resolve_mention_accounts,
-        build_mention_map, store_status_tags, store_status_mentions,
+        build_mention_map, store_statuses_tags, store_status_mentions,
     };
     use crate::api::mastodon::formatting::render_content;
 
@@ -113,6 +113,7 @@ async fn publish_one(
     let status_id = crate::snowflake::next_id();
     let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status_id);
 
+    let visibility_int = crate::db::models::vis::from_str(&visibility);
     let status = sqlx::query_as!(
         crate::db::models::Status,
         r#"INSERT INTO statuses
@@ -120,13 +121,13 @@ async fn publish_one(
               language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, uri, url)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
            RETURNING *"#,
-        status_id, instance.id, account.id, text, spoiler_text, &visibility,
+        status_id, instance.id, account.id, text, spoiler_text, visibility_int,
         language, sensitive, in_reply_to_id, in_reply_to_account_id, is_reply, uri,
     )
     .fetch_one(&state.db)
     .await?;
 
-    store_status_tags(state, status.id, account.id, &hashtags).await?;
+    store_statuses_tags(state, status.id, account.id, &hashtags).await?;
     store_status_mentions(state, status.id, &resolved).await?;
 
     // Update statuses_count and last_status_at (same as post_status)
@@ -171,15 +172,13 @@ async fn publish_one(
                 let expires_in = poll.get("expires_in").and_then(|v| v.as_i64());
                 let multiple = poll.get("multiple").and_then(|v| v.as_bool()).unwrap_or(false);
                 let expires_at = expires_in.map(|s| chrono::Utc::now() + chrono::Duration::seconds(s));
-                let opts_json = serde_json::Value::Array(
-                    options.iter()
-                        .filter_map(|o| o.as_str())
-                        .map(|o| serde_json::json!({ "title": o, "votes_count": 0 }))
-                        .collect(),
-                );
+                let opts: Vec<String> = options.iter()
+                    .filter_map(|o| o.as_str())
+                    .map(|o| o.to_string())
+                    .collect();
                 sqlx::query!(
                     "INSERT INTO polls (status_id, account_id, options, multiple, expires_at) VALUES ($1,$2,$3,$4,$5)",
-                    status.id, account.id, opts_json, multiple, expires_at,
+                    status.id, account.id, &opts as &[String], multiple, expires_at,
                 )
                 .execute(&state.db)
                 .await?;
@@ -213,8 +212,8 @@ async fn publish_one(
     }
 
     // Fan-out to follower home feeds and list feeds
-    let tag_ids: Vec<uuid::Uuid> = sqlx::query_scalar!(
-        "SELECT tag_id FROM status_tags WHERE status_id = $1",
+    let tag_ids: Vec<i64> = sqlx::query_scalar!(
+        "SELECT tag_id FROM statuses_tags WHERE status_id = $1",
         status.id,
     )
     .fetch_all(&state.db)

@@ -143,16 +143,16 @@ pub async fn feed_populate(
                SELECT s.id FROM statuses s
                WHERE s.account_id IN (
                    SELECT target_account_id FROM follows
-                   WHERE account_id = $1 AND state = 'accepted'
+                   WHERE account_id = $1
                    UNION ALL SELECT $1
                )
                AND s.deleted_at IS NULL
                UNION
-               SELECT st.status_id FROM status_tags st
+               SELECT st.status_id FROM statuses_tags st
                JOIN tag_follows tf ON tf.tag_id = st.tag_id
                JOIN statuses s ON s.id = st.status_id
                WHERE tf.account_id = $1
-               AND s.visibility = 'public'
+               AND s.visibility = 0
                AND s.deleted_at IS NULL
            )
            SELECT id FROM candidate_ids ORDER BY id DESC LIMIT $2"#,
@@ -186,10 +186,10 @@ pub async fn fanout_new_status(
     instance_id: Uuid,
     author_id: i64,
     status_id: i64,
-    tag_ids: &[Uuid],
+    tag_ids: &[i64],
 ) {
     let follower_ids: Vec<i64> = sqlx::query_scalar!(
-        "SELECT account_id FROM follows WHERE target_account_id = $1 AND state = 'accepted'",
+        "SELECT account_id FROM follows WHERE target_account_id = $1",
         author_id,
     )
     .fetch_all(db)
@@ -199,15 +199,15 @@ pub async fn fanout_new_status(
     let hashtag_recipients: Vec<i64> = if !tag_ids.is_empty() {
         sqlx::query_scalar!(
             r#"SELECT DISTINCT tf.account_id FROM tag_follows tf
-               WHERE tf.tag_id = ANY($1::uuid[])
+               WHERE tf.tag_id = ANY($1::bigint[])
                AND tf.account_id != $2
                AND NOT EXISTS (
                    SELECT 1 FROM follows
                    WHERE account_id = tf.account_id
                    AND target_account_id = $2
-                   AND state = 'accepted'
+
                )"#,
-            tag_ids as &[Uuid],
+            tag_ids as &[i64],
             author_id,
         )
         .fetch_all(db)
@@ -265,7 +265,7 @@ pub async fn fanout_remove_status(
     status_id: i64,
 ) {
     let follower_ids: Vec<i64> = sqlx::query_scalar!(
-        "SELECT account_id FROM follows WHERE target_account_id = $1 AND state = 'accepted'",
+        "SELECT account_id FROM follows WHERE target_account_id = $1",
         author_id,
     )
     .fetch_all(db)
@@ -390,7 +390,7 @@ pub async fn list_feed_populate(
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
                  AND s.deleted_at IS NULL
-                 AND s.visibility != 'direct'
+                 AND s.visibility != 3
                  AND (s.in_reply_to_id IS NULL
                       OR s.in_reply_to_account_id = s.account_id
                       OR s.in_reply_to_account_id = $2)
@@ -408,7 +408,7 @@ pub async fn list_feed_populate(
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
                  AND s.deleted_at IS NULL
-                 AND s.visibility != 'direct'
+                 AND s.visibility != 3
                  AND (s.in_reply_to_id IS NULL
                       OR s.in_reply_to_account_id = $2
                       OR EXISTS (
@@ -430,14 +430,14 @@ pub async fn list_feed_populate(
                JOIN list_accounts la ON la.account_id = s.account_id
                WHERE la.list_id = $1
                  AND s.deleted_at IS NULL
-                 AND s.visibility != 'direct'
+                 AND s.visibility != 3
                  AND (s.in_reply_to_id IS NULL OR EXISTS (
                      SELECT 1 FROM statuses s2
                      WHERE s2.id = s.in_reply_to_id
                        AND (s2.account_id = $2 OR EXISTS (
                            SELECT 1 FROM follows f
                            WHERE f.account_id = $2 AND f.target_account_id = s2.account_id
-                             AND f.state = 'accepted'
+                            
                        ))
                  ))
                ORDER BY s.id DESC LIMIT $3"#,
@@ -479,7 +479,8 @@ pub async fn fanout_to_lists(
 
     // All lists that include this author (with owner + policy info).
     let lists = sqlx::query!(
-        r#"SELECT l.id, l.account_id, l.replies_policy
+        r#"SELECT l.id, l.account_id,
+                  CASE l.replies_policy WHEN 0 THEN 'followed' WHEN 1 THEN 'list' WHEN 2 THEN 'none' ELSE 'list' END AS "replies_policy!"
            FROM lists l
            JOIN list_accounts la ON la.list_id = l.id
            WHERE la.account_id = $1"#,
@@ -534,7 +535,7 @@ pub async fn fanout_to_lists(
                     .unwrap_or(None)
                     .is_some(),
                     _ => sqlx::query_scalar!(
-                        "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                        "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2",
                         list.account_id,
                         reply_author,
                     )
@@ -623,7 +624,7 @@ pub async fn backfill_list_member(
     let recent: Vec<i64> = match replies_policy {
         "none" => sqlx::query_scalar!(
             r#"SELECT id FROM statuses
-               WHERE account_id = $1 AND deleted_at IS NULL AND visibility != 'direct'
+               WHERE account_id = $1 AND deleted_at IS NULL AND visibility != 3 /* vis::DIRECT */
                  AND (in_reply_to_id IS NULL
                       OR in_reply_to_account_id = $1
                       OR in_reply_to_account_id = $2)
@@ -636,7 +637,7 @@ pub async fn backfill_list_member(
         .unwrap_or_default(),
         "list" => sqlx::query_scalar!(
             r#"SELECT s.id FROM statuses s
-               WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 'direct'
+               WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 3
                  AND (s.in_reply_to_id IS NULL
                       OR s.in_reply_to_account_id = $3
                       OR EXISTS (
@@ -654,14 +655,14 @@ pub async fn backfill_list_member(
         .unwrap_or_default(),
         _ => sqlx::query_scalar!(
             r#"SELECT s.id FROM statuses s
-               WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 'direct'
+               WHERE s.account_id = $1 AND s.deleted_at IS NULL AND s.visibility != 3
                  AND (s.in_reply_to_id IS NULL OR EXISTS (
                      SELECT 1 FROM statuses s2
                      WHERE s2.id = s.in_reply_to_id
                        AND (s2.account_id = $2 OR EXISTS (
                            SELECT 1 FROM follows f
                            WHERE f.account_id = $2 AND f.target_account_id = s2.account_id
-                             AND f.state = 'accepted'
+                            
                        ))
                  ))
                ORDER BY s.id DESC LIMIT 20"#,

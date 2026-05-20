@@ -44,7 +44,7 @@ pub async fn verify_credentials(
     );
 
     let follow_requests: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM follows WHERE target_account_id = $1 AND state = 'pending'",
+        "SELECT COUNT(*) FROM follow_requests WHERE target_account_id = $1",
         account.id
     )
     .fetch_one(&state.db)
@@ -254,7 +254,7 @@ pub async fn get_account_statuses(
     let is_follower = if !is_self {
         if let Some(vid) = viewer_id {
             sqlx::query_scalar!(
-                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted')",
+                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2)",
                 vid, account.id,
             )
             .fetch_one(&state.db)
@@ -274,9 +274,9 @@ pub async fn get_account_statuses(
                JOIN status_pins sp ON sp.status_id = s.id
                WHERE sp.account_id = $1 AND s.deleted_at IS NULL
                  AND (
-                   s.visibility IN ('public', 'unlisted')
+                   s.visibility IN (0, 1)
                    OR ($2::boolean = true)
-                   OR ($3::boolean = true AND s.visibility = 'private')
+                   OR ($3::boolean = true AND s.visibility = 2)
                  )
                ORDER BY sp.id DESC"#,
             account.id,
@@ -300,7 +300,7 @@ pub async fn get_account_statuses(
         let pin_reblog_ids: Vec<i64> = pin_reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut pin_enrich_ids = pin_status_ids.clone();
         pin_enrich_ids.extend_from_slice(&pin_reblog_ids);
-        let pin_tags_map = batch_status_tags(&state, &pin_enrich_ids).await?;
+        let pin_tags_map = batch_statuses_tags(&state, &pin_enrich_ids).await?;
         let pin_mentions_map = batch_status_mentions(&state, &pin_enrich_ids).await?;
         let all_pin_statuses: Vec<crate::db::models::Status> = pinned_statuses.iter().cloned()
             .chain(pin_reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -356,9 +356,9 @@ pub async fn get_account_statuses(
                  AND ($3::boolean IS NOT TRUE OR reblog_of_id IS NULL)
                  AND ($4::boolean IS NOT TRUE OR in_reply_to_id IS NULL OR in_reply_to_account_id = $1)
                  AND (
-                   visibility IN ('public', 'unlisted')
+                   visibility IN (0, 1)
                    OR ($5::boolean = true)
-                   OR ($6::boolean = true AND visibility = 'private')
+                   OR ($6::boolean = true AND visibility = 2)
                  )
                  AND (
                    text != ''
@@ -370,7 +370,7 @@ pub async fn get_account_statuses(
                    (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
                  )
                  AND ($9::text IS NULL OR EXISTS (
-                   SELECT 1 FROM status_tags st
+                   SELECT 1 FROM statuses_tags st
                    JOIN tags t ON t.id = st.tag_id
                    WHERE st.status_id = statuses.id AND t.name = $9
                  ))
@@ -399,9 +399,9 @@ pub async fn get_account_statuses(
                  AND ($4::boolean IS NOT TRUE OR reblog_of_id IS NULL)
                  AND ($5::boolean IS NOT TRUE OR in_reply_to_id IS NULL OR in_reply_to_account_id = $1)
                  AND (
-                   visibility IN ('public', 'unlisted')
+                   visibility IN (0, 1)
                    OR ($6::boolean = true)
-                   OR ($7::boolean = true AND visibility = 'private')
+                   OR ($7::boolean = true AND visibility = 2)
                  )
                  AND (
                    text != ''
@@ -413,7 +413,7 @@ pub async fn get_account_statuses(
                    (reblog_of_id IS NOT NULL AND EXISTS (SELECT 1 FROM media_attachments WHERE status_id = reblog_of_id))
                  )
                  AND ($10::text IS NULL OR EXISTS (
-                   SELECT 1 FROM status_tags st
+                   SELECT 1 FROM statuses_tags st
                    JOIN tags t ON t.id = st.tag_id
                    WHERE st.status_id = statuses.id AND t.name = $10
                  ))
@@ -459,7 +459,7 @@ pub async fn get_account_statuses(
     let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
     let mut enrich_ids = all_status_ids.clone();
     enrich_ids.extend_from_slice(&reblog_ids);
-    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
     let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
     let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses.iter().cloned()
         .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -578,16 +578,15 @@ pub async fn follow_account(
         return build_relationship(&state, auth.account_id, target_id).await.map(Json);
     }
 
-    // Check if follow already exists
+    // Check if accepted follow already exists — update settings only
     let existing = sqlx::query!(
-        "SELECT state FROM follows WHERE account_id = $1 AND target_account_id = $2",
+        "SELECT 1 as exists FROM follows WHERE account_id = $1 AND target_account_id = $2",
         auth.account_id, target_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
     if existing.is_some() {
-        // Already following — update settings only, no counts or notifications
         sqlx::query!(
             "UPDATE follows SET show_reblogs = $3, notify = $4, languages = $5
              WHERE account_id = $1 AND target_account_id = $2",
@@ -598,72 +597,80 @@ pub async fn follow_account(
         return build_relationship(&state, auth.account_id, target_id).await.map(Json);
     }
 
+    // Check if a pending follow request already exists
+    let pending = sqlx::query!(
+        "SELECT 1 as exists FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
+        auth.account_id, target_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    if pending.is_some() {
+        return build_relationship(&state, auth.account_id, target_id).await.map(Json);
+    }
+
     let target = fetch_account(&state, target_id).await?;
-    let state_val = if target.locked { "pending" } else { "accepted" };
+
+    if target.locked {
+        sqlx::query!(
+            r#"INSERT INTO follow_requests (account_id, target_account_id, show_reblogs, notify, languages)
+               VALUES ($1, $2, $3, $4, $5)"#,
+            auth.account_id, target_id, show_reblogs, notify, &languages,
+        )
+        .execute(&state.db)
+        .await?;
+        let requester = fetch_account(&state, auth.account_id).await?;
+        push::create_and_push(
+            &state, target_id, auth.account_id, "follow_request", None,
+            format!("{} wants to follow you", requester.display_name),
+            requester.acct().clone(), requester.avatar.clone().unwrap_or_default(),
+        ).await;
+        return build_relationship(&state, auth.account_id, target_id).await.map(Json);
+    }
 
     sqlx::query!(
-        r#"INSERT INTO follows (account_id, target_account_id, state, show_reblogs, notify, languages)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-        auth.account_id,
-        target_id,
-        state_val,
-        show_reblogs,
-        notify,
-        &languages,
+        r#"INSERT INTO follows (account_id, target_account_id, show_reblogs, notify, languages)
+           VALUES ($1, $2, $3, $4, $5)"#,
+        auth.account_id, target_id, show_reblogs, notify, &languages,
     )
     .execute(&state.db)
     .await?;
 
-    if state_val == "accepted" {
-        sqlx::query!(
-            "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
-            target_id
-        )
-        .execute(&state.db)
-        .await?;
-        sqlx::query!(
-            "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
-            auth.account_id
-        )
-        .execute(&state.db)
-        .await?;
+    sqlx::query!(
+        "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
+        target_id
+    )
+    .execute(&state.db)
+    .await?;
+    sqlx::query!(
+        "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
+        auth.account_id
+    )
+    .execute(&state.db)
+    .await?;
 
-        let follower = fetch_account(&state, auth.account_id).await?;
-        push::create_and_push(
-            &state,
-            target_id,
-            auth.account_id,
-            "follow",
-            None,
-            format!("{} followed you", follower.display_name),
-            follower.acct().clone(),
-            follower.avatar.clone().unwrap_or_default(),
-        ).await;
+    let follower = fetch_account(&state, auth.account_id).await?;
+    push::create_and_push(
+        &state,
+        target_id,
+        auth.account_id,
+        "follow",
+        None,
+        format!("{} followed you", follower.display_name),
+        follower.acct().clone(),
+        follower.avatar.clone().unwrap_or_default(),
+    ).await;
 
-        // Backfill the new follower's feed with recent statuses from the followed account
-        let mut redis = state.redis.clone();
-        let db = state.db.clone();
-        let iid = instance.id;
-        let follower_id = auth.account_id;
-        if feed::sync_fanout() {
-            feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
-        } else {
-            tokio::spawn(async move {
-                feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
-            });
-        }
+    let mut redis = state.redis.clone();
+    let db = state.db.clone();
+    let iid = instance.id;
+    let follower_id = auth.account_id;
+    if feed::sync_fanout() {
+        feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
     } else {
-        let requester = fetch_account(&state, auth.account_id).await?;
-        push::create_and_push(
-            &state,
-            target_id,
-            auth.account_id,
-            "follow_request",
-            None,
-            format!("{} wants to follow you", requester.display_name),
-            requester.acct().clone(),
-            requester.avatar.clone().unwrap_or_default(),
-        ).await;
+        tokio::spawn(async move {
+            feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
+        });
     }
 
     build_relationship(&state, auth.account_id, target_id).await.map(Json)
@@ -677,29 +684,36 @@ pub async fn unfollow_account(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
-    let deleted = sqlx::query!(
-        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 RETURNING state",
+    // Delete accepted follow (and update counts)
+    let deleted_accepted = sqlx::query_scalar!(
+        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 RETURNING 1",
         auth.account_id,
         target_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if let Some(row) = deleted {
-        if row.state == "accepted" {
-            sqlx::query!(
-                "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
-                target_id
-            )
-            .execute(&state.db)
-            .await?;
-            sqlx::query!(
-                "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
-                auth.account_id
-            )
-            .execute(&state.db)
-            .await?;
-        }
+    if deleted_accepted.is_some() {
+        sqlx::query!(
+            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            target_id
+        )
+        .execute(&state.db)
+        .await?;
+        sqlx::query!(
+            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            auth.account_id
+        )
+        .execute(&state.db)
+        .await?;
+    } else {
+        // Delete pending follow request if present
+        sqlx::query!(
+            "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
+            auth.account_id, target_id,
+        )
+        .execute(&state.db)
+        .await?;
     }
 
     build_relationship(&state, auth.account_id, target_id).await.map(Json)
@@ -743,7 +757,7 @@ pub async fn get_account_pins(
     let is_follower = if !is_self {
         if let Some(vid) = viewer_id {
             sqlx::query_scalar!(
-                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted')",
+                "SELECT EXISTS(SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2)",
                 vid, account.id,
             ).fetch_one(&state.db).await?.unwrap_or(false)
         } else { false }
@@ -755,9 +769,9 @@ pub async fn get_account_pins(
            JOIN status_pins sp ON sp.status_id = s.id
            WHERE sp.account_id = $1 AND s.deleted_at IS NULL
              AND (
-               s.visibility IN ('public', 'unlisted')
+               s.visibility IN (0, 1)
                OR ($2::boolean = true)
-               OR ($3::boolean = true AND s.visibility = 'private')
+               OR ($3::boolean = true AND s.visibility = 2)
              )
            ORDER BY sp.id DESC"#,
         account.id, is_self, is_follower,
@@ -787,7 +801,7 @@ pub async fn get_account_pins(
     let pin_reblog_ids: Vec<i64> = pin_reblog_map.values().map(|(rs, _, _)| rs.id).collect();
     let mut pin_enrich_ids = pin_status_ids.clone();
     pin_enrich_ids.extend_from_slice(&pin_reblog_ids);
-    let pin_tags_map = batch_status_tags(&state, &pin_enrich_ids).await?;
+    let pin_tags_map = batch_statuses_tags(&state, &pin_enrich_ids).await?;
     let pin_mentions_map = batch_status_mentions(&state, &pin_enrich_ids).await?;
     let all_pin_statuses: Vec<crate::db::models::Status> = pinned_statuses.iter().cloned()
         .chain(pin_reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -862,7 +876,7 @@ pub async fn get_account_followers(
         Account,
         r#"SELECT a.* FROM accounts a
            JOIN follows f ON f.account_id = a.id
-           WHERE f.target_account_id = $1 AND f.state = 'accepted'
+           WHERE f.target_account_id = $1
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
              AND ($6::bigint IS NULL OR a.id > $6)
@@ -920,7 +934,7 @@ pub async fn get_account_following(
         Account,
         r#"SELECT a.* FROM accounts a
            JOIN follows f ON f.target_account_id = a.id
-           WHERE f.account_id = $1 AND f.state = 'accepted'
+           WHERE f.account_id = $1
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
              AND ($6::bigint IS NULL OR a.id > $6)
@@ -974,7 +988,7 @@ pub async fn search_accounts(
                 Account,
                 r#"SELECT a.* FROM accounts a
                    JOIN follows f ON f.target_account_id = a.id
-                   WHERE f.account_id = $1 AND f.state = 'accepted'
+                   WHERE f.account_id = $1
                      AND a.suspended_at IS NULL
                      AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
                    ORDER BY a.username LIMIT $3"#,
@@ -1196,13 +1210,21 @@ pub async fn update_credentials(
             .execute(&state.db).await?;
         // Auto-approve pending follow requests when account becomes unlocked
         if !l {
+            // Promote all pending follow requests to accepted follows
             let pending = sqlx::query!(
-                "UPDATE follows SET state = 'accepted' WHERE target_account_id = $1 AND state = 'pending' RETURNING account_id",
+                "DELETE FROM follow_requests WHERE target_account_id = $1 RETURNING account_id",
                 auth.account_id,
             )
             .fetch_all(&state.db)
             .await?;
             for row in &pending {
+                let _ = sqlx::query!(
+                    r#"INSERT INTO follows (account_id, target_account_id)
+                       VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
+                    row.account_id, auth.account_id
+                )
+                .execute(&state.db)
+                .await;
                 let _ = sqlx::query!(
                     "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
                     auth.account_id
@@ -1317,7 +1339,7 @@ pub async fn update_credentials(
     let fields = super::convert::fields_from_db(&account.fields);
     let mut api_account = account_from_db(&account);
     let follow_requests_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM follows WHERE target_account_id = $1 AND state = 'pending'",
+        "SELECT COUNT(*) FROM follow_requests WHERE target_account_id = $1",
         auth.account_id,
     )
     .fetch_one(&state.db)
@@ -1423,9 +1445,9 @@ pub async fn block_account(
     .execute(&state.db)
     .await?;
 
-    // Remove any follow relationship in both directions and update counts
+    // Remove accepted follows in both directions and update counts
     let deleted = sqlx::query!(
-        "DELETE FROM follows WHERE ((account_id = $1 AND target_account_id = $2) OR (account_id = $2 AND target_account_id = $1)) AND state = 'accepted' RETURNING account_id, target_account_id",
+        "DELETE FROM follows WHERE (account_id = $1 AND target_account_id = $2) OR (account_id = $2 AND target_account_id = $1) RETURNING account_id, target_account_id",
         auth.account_id, target_id
     )
     .fetch_all(&state.db)
@@ -1440,9 +1462,9 @@ pub async fn block_account(
             row.target_account_id,
         ).execute(&state.db).await;
     }
-    // Also delete any pending follow requests
+    // Also delete any pending follow requests in both directions
     sqlx::query!(
-        "DELETE FROM follows WHERE (account_id = $1 AND target_account_id = $2) OR (account_id = $2 AND target_account_id = $1)",
+        "DELETE FROM follow_requests WHERE (account_id = $1 AND target_account_id = $2) OR (account_id = $2 AND target_account_id = $1)",
         auth.account_id, target_id
     )
     .execute(&state.db)
@@ -1597,8 +1619,8 @@ pub async fn get_follow_requests(
     let accounts = sqlx::query_as!(
         Account,
         r#"SELECT a.* FROM accounts a
-           JOIN follows f ON f.account_id = a.id
-           WHERE f.target_account_id = $1 AND f.state = 'pending'
+           JOIN follow_requests f ON f.account_id = a.id
+           WHERE f.target_account_id = $1
              AND ($2::bigint IS NULL OR a.id < $2)
              AND ($3::bigint IS NULL OR a.id > $3)
              AND ($5::bigint IS NULL OR a.id > $5)
@@ -1631,14 +1653,22 @@ pub async fn authorize_follow_request(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
-    let updated = sqlx::query!(
-        "UPDATE follows SET state = 'accepted' WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
+    // Move from follow_requests to follows (atomic: delete pending, insert accepted)
+    let deleted = sqlx::query!(
+        "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2 RETURNING account_id",
         requester_id, auth.account_id
     )
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
 
-    if updated.rows_affected() > 0 {
+    if deleted.is_some() {
+        sqlx::query!(
+            r#"INSERT INTO follows (account_id, target_account_id)
+               VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
+            requester_id, auth.account_id
+        )
+        .execute(&state.db)
+        .await?;
         sqlx::query!(
             "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
             auth.account_id
@@ -1690,7 +1720,7 @@ pub async fn reject_follow_request(
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
     sqlx::query!(
-        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
+        "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
         requester_id, auth.account_id
     )
     .execute(&state.db)
@@ -1849,7 +1879,7 @@ pub async fn batch_quote_data(
     let qs_ids: Vec<i64> = quoted_statuses.iter().map(|s| s.id).collect();
     let (media_map, tags_map, mentions_map, emojis_map, polls_map, cards_map, ctxs) = if !qs_ids.is_empty() {
         let media = batch_status_media(state, &qs_ids).await?;
-        let tags = batch_status_tags(state, &qs_ids).await?;
+        let tags = batch_statuses_tags(state, &qs_ids).await?;
         let mentions = batch_status_mentions(state, &qs_ids).await?;
         let emojis = batch_status_emojis(state, &quoted_statuses).await?;
         let polls = batch_status_polls(state, &qs_ids, viewer_id).await?;
@@ -1874,7 +1904,7 @@ pub async fn batch_quote_data(
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
-        rows.into_iter().map(|r| (r.status_id, r.state)).collect()
+        rows.into_iter().map(|r| (r.status_id, crate::db::models::quote_state::to_str(r.state).to_owned())).collect()
     } else {
         HashMap::new()
     };
@@ -1968,10 +1998,7 @@ pub async fn fetch_status_poll(
     let now = chrono::Utc::now();
     let expired = row.expires_at.map_or(false, |t| t < now);
 
-    let option_titles: Vec<String> = row.options
-        .as_array()
-        .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())
-        .unwrap_or_default();
+    let option_titles: Vec<String> = row.options;
 
     // Compute per-option vote counts live from poll_votes.
     let per_option = sqlx::query!(
@@ -2078,32 +2105,53 @@ pub async fn fetch_reblog_data(
 }
 
 async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids: &[i64]) -> AppResult<Vec<Relationship>> {
-    struct FollowRow { state: String, show_reblogs: bool, notify: bool, languages: Option<Vec<String>> }
+    struct FollowRow { show_reblogs: bool, notify: bool, languages: Option<Vec<String>> }
     struct MuteRow { hide_notifications: bool, expires_at: Option<chrono::DateTime<chrono::Utc>> }
 
+    // Accepted follows (outgoing)
     let follows_out = sqlx::query!(
-        "SELECT target_account_id, state, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
+        "SELECT target_account_id, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
         source_id, target_ids,
     )
     .fetch_all(&state.db)
     .await?;
     let follows_out_map: std::collections::HashMap<i64, _> = follows_out.into_iter()
         .map(|r| (r.target_account_id, FollowRow {
-            state: r.state,
             show_reblogs: r.show_reblogs,
             notify: r.notify,
             languages: if r.languages.is_empty() { None } else { Some(r.languages) },
         }))
         .collect();
 
-    let follows_in = sqlx::query!(
-        "SELECT account_id, state FROM follows WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])",
+    // Pending follow requests (outgoing)
+    let follow_requests_out: std::collections::HashSet<i64> = sqlx::query_scalar!(
+        "SELECT target_account_id FROM follow_requests WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
         source_id, target_ids,
     )
     .fetch_all(&state.db)
-    .await?;
-    let followed_by_set: std::collections::HashSet<i64> = follows_in.iter().filter(|r| r.state == "accepted").map(|r| r.account_id).collect();
-    let requested_by_set: std::collections::HashSet<i64> = follows_in.iter().filter(|r| r.state == "pending").map(|r| r.account_id).collect();
+    .await?
+    .into_iter()
+    .collect();
+
+    // Accepted follows (incoming)
+    let followed_by_set: std::collections::HashSet<i64> = sqlx::query_scalar!(
+        "SELECT account_id FROM follows WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+
+    // Pending follow requests (incoming)
+    let requested_by_set: std::collections::HashSet<i64> = sqlx::query_scalar!(
+        "SELECT account_id FROM follow_requests WHERE target_account_id = $1 AND account_id = ANY($2::bigint[])",
+        source_id, target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
 
     let blocks_out: std::collections::HashSet<i64> = sqlx::query_scalar!(
         "SELECT target_account_id FROM blocks WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
@@ -2148,7 +2196,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
         Default::default()
     } else {
         sqlx::query_scalar!(
-            "SELECT domain FROM user_domain_blocks WHERE account_id = $1 AND domain = ANY($2)",
+            "SELECT domain FROM account_domain_blocks WHERE account_id = $1 AND domain = ANY($2)",
             source_id, &domains_to_check,
         )
         .fetch_all(&state.db)
@@ -2184,7 +2232,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
         let domain_blocking = domain.map_or(false, |d| domain_blocked_set.contains(&d));
         results.push(Relationship {
             id: target_id.to_string(),
-            following: follow.map_or(false, |f| f.state == "accepted"),
+            following: follow.is_some(),
             showing_reblogs: follow.map_or(false, |f| f.show_reblogs),
             notifying: follow.map_or(false, |f| f.notify),
             languages: follow.and_then(|f| f.languages.clone()),
@@ -2194,7 +2242,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
             muting: mute.is_some(),
             muting_notifications: mute.map_or(false, |m| m.hide_notifications),
             muting_expires_at: mute.and_then(|m| m.expires_at).map(super::convert::mastodon_date),
-            requested: follow.map_or(false, |f| f.state == "pending"),
+            requested: follow_requests_out.contains(&target_id),
             requested_by: requested_by_set.contains(&target_id),
             domain_blocking,
             endorsed: endorsed_set.contains(&target_id),
@@ -2205,15 +2253,25 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
 }
 
 async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) -> AppResult<Relationship> {
+    // Check accepted follow (source → target)
     let follow = sqlx::query!(
-        "SELECT state, show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = $2",
+        "SELECT show_reblogs, notify, languages FROM follows WHERE account_id = $1 AND target_account_id = $2",
         source_id, target_id
     )
     .fetch_optional(&state.db)
     .await?;
 
+    // Check pending follow request (source → target)
+    let requested = sqlx::query!(
+        "SELECT 1 as exists FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
+        source_id, target_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+
     let followed_by = sqlx::query!(
-        "SELECT 1 as exists FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+        "SELECT 1 as exists FROM follows WHERE account_id = $1 AND target_account_id = $2",
         target_id, source_id
     )
     .fetch_optional(&state.db)
@@ -2237,7 +2295,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
     .is_some();
 
     let requested_by = sqlx::query!(
-        "SELECT 1 as exists FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'pending'",
+        "SELECT 1 as exists FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
         target_id, source_id
     )
     .fetch_optional(&state.db)
@@ -2262,7 +2320,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
 
     let domain_blocking = if let Some(domain) = target_domain {
         sqlx::query!(
-            "SELECT 1 as exists FROM user_domain_blocks WHERE account_id = $1 AND domain = $2",
+            "SELECT 1 as exists FROM account_domain_blocks WHERE account_id = $1 AND domain = $2",
             source_id, domain
         )
         .fetch_optional(&state.db)
@@ -2288,7 +2346,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
 
     Ok(Relationship {
         id: target_id.to_string(),
-        following: follow.as_ref().map_or(false, |f| f.state == "accepted"),
+        following: follow.is_some(),
         showing_reblogs,
         notifying,
         languages,
@@ -2298,7 +2356,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
         muting: muting.is_some(),
         muting_notifications: muting.map_or(false, |m| m.hide_notifications),
         muting_expires_at,
-        requested: follow.as_ref().map_or(false, |f| f.state == "pending"),
+        requested,
         requested_by,
         domain_blocking,
         endorsed: sqlx::query!(
@@ -2328,7 +2386,7 @@ pub async fn get_suggestions(
         r#"SELECT a.* FROM accounts a
            JOIN follows f ON f.account_id = a.id
            WHERE f.target_account_id = $1
-             AND f.state = 'accepted'
+            
              AND a.instance_id = $2
              AND a.domain IS NULL
              AND NOT EXISTS (
@@ -2356,7 +2414,7 @@ pub async fn dismiss_suggestion(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:accounts")?;
     sqlx::query!(
-        r#"INSERT INTO suggestion_dismissals (account_id, target_account_id)
+        r#"INSERT INTO follow_recommendation_mutes (account_id, target_account_id)
            VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
         auth.account_id, account_id,
     )
@@ -2381,7 +2439,7 @@ pub async fn get_suggestions_v2(
         r#"SELECT a.* FROM accounts a
            JOIN follows f ON f.account_id = a.id
            WHERE f.target_account_id = $1
-             AND f.state = 'accepted'
+            
              AND a.instance_id = $2
              AND a.domain IS NULL
              AND NOT EXISTS (
@@ -2389,7 +2447,7 @@ pub async fn get_suggestions_v2(
                WHERE f2.account_id = $1 AND f2.target_account_id = a.id
              )
              AND NOT EXISTS (
-               SELECT 1 FROM suggestion_dismissals sd
+               SELECT 1 FROM follow_recommendation_mutes sd
                WHERE sd.account_id = $1 AND sd.target_account_id = a.id
              )
            ORDER BY f.created_at DESC
@@ -2562,7 +2620,7 @@ pub async fn remove_from_followers(
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
     let deleted = sqlx::query!(
-        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted' RETURNING 1 as exists",
+        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 RETURNING 1 as exists",
         requester_id,
         auth.account_id,
     )
@@ -2800,8 +2858,8 @@ pub async fn get_familiar_followers(
         let accounts = sqlx::query_as!(
             crate::db::models::Account,
             r#"SELECT a.* FROM accounts a
-               JOIN follows f1 ON f1.account_id = a.id AND f1.target_account_id = $1 AND f1.state = 'accepted'
-               JOIN follows f2 ON f2.account_id = $2 AND f2.target_account_id = a.id AND f2.state = 'accepted'
+               JOIN follows f1 ON f1.account_id = a.id AND f1.target_account_id = $1
+               JOIN follows f2 ON f2.account_id = $2 AND f2.target_account_id = a.id
                LIMIT 10"#,
             target_id,
             auth.account_id,
@@ -2917,7 +2975,8 @@ pub async fn get_account_lists(
 ) -> AppResult<Json<Vec<super::types::List>>> {
     auth.require_scope("read:lists")?;
     let rows = sqlx::query!(
-        r#"SELECT l.id, l.title, l.replies_policy, l.exclusive
+        r#"SELECT l.id, l.title, l.exclusive,
+                  CASE l.replies_policy WHEN 0 THEN 'followed' WHEN 1 THEN 'list' WHEN 2 THEN 'none' ELSE 'list' END AS "replies_policy!"
            FROM lists l
            JOIN list_accounts la ON la.list_id = l.id
            WHERE l.account_id = $1 AND la.account_id = $2
@@ -2943,14 +3002,14 @@ pub async fn get_account_lists(
 
 // ── Tag / mention fetchers ─────────────────────────────────────────────────
 
-pub async fn fetch_status_tags(
+pub async fn fetch_statuses_tags(
     state: &AppState,
     status_id: i64,
 ) -> AppResult<Vec<super::types::StatusTag>> {
     let rows = sqlx::query!(
         r#"SELECT t.name, i.domain
            FROM tags t
-           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            JOIN instances i ON i.id = s.instance_id
            WHERE st.status_id = $1"#,
@@ -2991,7 +3050,7 @@ pub async fn fetch_status_mentions(
     }).collect())
 }
 
-pub async fn batch_status_tags(
+pub async fn batch_statuses_tags(
     state: &AppState,
     status_ids: &[i64],
 ) -> AppResult<std::collections::HashMap<i64, Vec<super::types::StatusTag>>> {
@@ -3001,7 +3060,7 @@ pub async fn batch_status_tags(
     let rows = sqlx::query!(
         r#"SELECT st.status_id, t.name, i.domain
            FROM tags t
-           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            JOIN instances i ON i.id = s.instance_id
            WHERE st.status_id = ANY($1::bigint[])"#,
@@ -3155,34 +3214,34 @@ pub async fn batch_status_polls(
         return Ok(HashMap::new());
     }
 
-    let poll_ids: Vec<uuid::Uuid> = rows.iter().map(|r| r.id).collect();
+    let poll_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
 
     // Batch-fetch per-option vote counts live from poll_votes.
-    struct OptionCount { poll_id: uuid::Uuid, choice: i32, cnt: i64 }
+    struct OptionCount { poll_id: i64, choice: i32, cnt: i64 }
     let option_counts: Vec<OptionCount> = sqlx::query_as!(
         OptionCount,
-        "SELECT poll_id, choice, COUNT(*)::bigint AS \"cnt!\" FROM poll_votes WHERE poll_id = ANY($1::uuid[]) GROUP BY poll_id, choice",
+        "SELECT poll_id, choice, COUNT(*)::bigint AS \"cnt!\" FROM poll_votes WHERE poll_id = ANY($1::bigint[]) GROUP BY poll_id, choice",
         &poll_ids,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let mut counts_by_poll_option: HashMap<(uuid::Uuid, i32), i64> = HashMap::new();
+    let mut counts_by_poll_option: HashMap<(i64, i32), i64> = HashMap::new();
     for c in option_counts {
         counts_by_poll_option.insert((c.poll_id, c.choice), c.cnt);
     }
 
     // Batch-fetch total votes and unique voters per poll.
-    struct PollTotals { poll_id: uuid::Uuid, votes: i64, voters: i64 }
+    struct PollTotals { poll_id: i64, votes: i64, voters: i64 }
     let totals: Vec<PollTotals> = sqlx::query_as!(
         PollTotals,
-        r#"SELECT poll_id, COUNT(*)::bigint AS "votes!", COUNT(DISTINCT account_id)::bigint AS "voters!" FROM poll_votes WHERE poll_id = ANY($1::uuid[]) GROUP BY poll_id"#,
+        r#"SELECT poll_id, COUNT(*)::bigint AS "votes!", COUNT(DISTINCT account_id)::bigint AS "voters!" FROM poll_votes WHERE poll_id = ANY($1::bigint[]) GROUP BY poll_id"#,
         &poll_ids,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let mut totals_map: HashMap<uuid::Uuid, (i64, i64)> = HashMap::new();
+    let mut totals_map: HashMap<i64, (i64, i64)> = HashMap::new();
     for t in totals {
         totals_map.insert(t.poll_id, (t.votes, t.voters));
     }
@@ -3190,7 +3249,7 @@ pub async fn batch_status_polls(
     // Batch-fetch the viewer's own votes.
     let vote_rows = if let Some(vid) = viewer_id {
         sqlx::query!(
-            "SELECT poll_id, choice FROM poll_votes WHERE poll_id = ANY($1::uuid[]) AND account_id = $2 ORDER BY poll_id, choice",
+            "SELECT poll_id, choice FROM poll_votes WHERE poll_id = ANY($1::bigint[]) AND account_id = $2 ORDER BY poll_id, choice",
             &poll_ids, vid,
         )
         .fetch_all(&state.db)
@@ -3199,7 +3258,7 @@ pub async fn batch_status_polls(
         vec![]
     };
 
-    let mut votes_by_poll: HashMap<uuid::Uuid, Vec<i32>> = HashMap::new();
+    let mut votes_by_poll: HashMap<i64, Vec<i32>> = HashMap::new();
     for v in vote_rows {
         votes_by_poll.entry(v.poll_id).or_default().push(v.choice);
     }
@@ -3208,10 +3267,7 @@ pub async fn batch_status_polls(
     let mut result = HashMap::new();
     for row in rows {
         let expired = row.expires_at.map_or(false, |t| t < now);
-        let option_titles: Vec<String> = row.options
-            .as_array()
-            .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())
-            .unwrap_or_default();
+        let option_titles: Vec<String> = row.options;
         let options: Vec<super::types::PollOption> = option_titles.iter().enumerate().map(|(i, title)| {
             let cnt = *counts_by_poll_option.get(&(row.id, i as i32)).unwrap_or(&0);
             super::types::PollOption { title: title.clone(), votes_count: Some(cnt) }
@@ -3264,8 +3320,8 @@ pub async fn batch_status_cards(
                   pc.image_url, pc.author_name, pc.author_url,
                   pc.provider_name, pc.provider_url, pc.html, pc.width, pc.height,
                   pc.embed_url, pc.blurhash
-           FROM status_preview_cards spc
-           JOIN preview_cards pc ON pc.id = spc.card_id
+           FROM preview_cards_statuses spc
+           JOIN preview_cards pc ON pc.id = spc.preview_card_id
            WHERE spc.status_id = ANY($1::bigint[])"#,
         status_ids,
     )
@@ -3337,7 +3393,7 @@ pub async fn build_status_with_app(
         s, account, media, reblog, viewer_ctx, application, &mentions, &reblog_mentions,
     );
     let id: i64 = api.id.parse().unwrap_or(0);
-    api.tags = fetch_status_tags(state, id).await?;
+    api.tags = fetch_statuses_tags(state, id).await?;
     api.mentions = mentions;
     api.emojis = status_emojis;
     api.poll = fetch_status_poll(state, id, viewer_account_id).await?;
@@ -3351,7 +3407,7 @@ pub async fn build_status_with_app(
     }
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
-        rb.tags = fetch_status_tags(state, rid).await?;
+        rb.tags = fetch_statuses_tags(state, rid).await?;
         rb.mentions = reblog_mentions;
         rb.emojis = reblog_emojis;
         rb.poll = fetch_status_poll(state, rid, None).await?;
@@ -3472,7 +3528,7 @@ pub(super) async fn fetch_status_card(
                   pc.provider_name, pc.provider_url, pc.html, pc.width, pc.height,
                   pc.embed_url, pc.blurhash
            FROM preview_cards pc
-           JOIN status_preview_cards spc ON spc.card_id = pc.id
+           JOIN preview_cards_statuses spc ON spc.preview_card_id = pc.id
            WHERE spc.status_id = $1
            LIMIT 1"#,
         status_id,
@@ -3519,7 +3575,7 @@ pub fn spawn_card_fetch(state: &AppState, status_id: i64, content: String) {
             return;
         };
         let _ = sqlx::query!(
-            "INSERT INTO status_preview_cards (status_id, card_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO preview_cards_statuses (status_id, preview_card_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             status_id,
             card_id,
         )

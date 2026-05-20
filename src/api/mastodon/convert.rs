@@ -142,7 +142,7 @@ fn build_quote_approval(
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
         .unwrap_or_else(|| {
-            if matches!(s.visibility.as_str(), "public" | "unlisted") {
+            if matches!(s.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
                 vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
             } else {
                 vec![]
@@ -162,10 +162,7 @@ fn build_quote_approval(
         None => "unknown".to_string(),
         Some(ctx) => {
             let public_uri = "https://www.w3.org/ns/activitystreams#Public";
-            // Author can always quote their own post
-            if ctx.account_id == s.account_id {
-                "automatic".to_string()
-            } else if always_uris.iter().any(|u| u == public_uri) {
+            if always_uris.iter().any(|u| u == public_uri) {
                 "automatic".to_string()
             } else if always_uris.iter().any(|u| u.ends_with("/followers")) && ctx.follows_author {
                 "automatic".to_string()
@@ -249,7 +246,7 @@ pub fn status_from_db_with_app(
         in_reply_to_account_id: s.in_reply_to_account_id.map(|i| i.to_string()),
         sensitive,
         spoiler_text: s.spoiler_text.clone(),
-        visibility: s.visibility.clone(),
+        visibility: crate::db::models::vis::to_str(s.visibility).to_owned(),
         language: s.language.clone(),
         uri: s.uri.clone().unwrap_or_else(|| s.id.to_string()),
         url: {

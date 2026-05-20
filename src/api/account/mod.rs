@@ -7,7 +7,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::{
     crypto::{generate_token, hash_password, verify_password},
@@ -35,7 +34,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 // ── Session lookup ─────────────────────────────────────────────────────────────
 
 struct AccountSession {
-    user_id: Uuid,
+    user_id: i64,
     username: String,
 }
 

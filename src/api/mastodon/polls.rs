@@ -2,7 +2,6 @@ use axum::{
     extract::{Extension, Json, Path, State},
 };
 use serde::Deserialize;
-use uuid::Uuid;
 
 use crate::{
     db::models,
@@ -16,7 +15,7 @@ use super::types::{Poll, PollOption};
 
 pub async fn get_poll(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Poll>> {
     let poll = fetch_poll(&state, id).await?;
@@ -33,7 +32,7 @@ pub struct PollVoteForm {
 
 pub async fn vote_poll(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<PollVoteForm>,
 ) -> AppResult<Json<Poll>> {
@@ -61,7 +60,7 @@ pub async fn vote_poll(
         return Err(AppError::Unprocessable("Already voted".into()));
     }
 
-    let option_count = poll.options.as_array().map(|a| a.len()).unwrap_or(0) as i32;
+    let option_count = poll.options.len() as i32;
     if !poll.multiple && form.choices.len() > 1 {
         return Err(AppError::Unprocessable("Multiple choices not allowed".into()));
     }
@@ -91,7 +90,7 @@ pub async fn vote_poll(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-async fn fetch_poll(state: &AppState, id: Uuid) -> AppResult<models::Poll> {
+async fn fetch_poll(state: &AppState, id: i64) -> AppResult<models::Poll> {
     sqlx::query_as!(
         models::Poll,
         "SELECT * FROM polls WHERE id = $1",
@@ -103,10 +102,7 @@ async fn fetch_poll(state: &AppState, id: Uuid) -> AppResult<models::Poll> {
 }
 
 async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i64>) -> AppResult<Poll> {
-    let option_titles: Vec<String> = poll.options
-        .as_array()
-        .map(|arr| arr.iter().map(|o| o["title"].as_str().unwrap_or("").to_string()).collect())
-        .unwrap_or_default();
+    let option_titles: Vec<String> = poll.options.clone();
 
     // Compute per-option vote counts from the actual poll_votes table
     let per_option_counts = sqlx::query!(

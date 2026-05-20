@@ -4,7 +4,6 @@ use axum::{
     middleware::Next,
     response::{Html, IntoResponse, Response},
 };
-use uuid::Uuid;
 
 use crate::{db, error::AppError, state::AppState, db::models::Instance, templates};
 
@@ -66,7 +65,7 @@ fn rebuild_url(req: &Request, new_host: &str) -> String {
 #[derive(Clone)]
 pub struct AuthenticatedUser {
     pub account_id: i64,
-    pub token_id: Uuid,
+    pub token_id: i64,
     pub scopes: Vec<String>,
     pub application_id: Option<i64>,
 }

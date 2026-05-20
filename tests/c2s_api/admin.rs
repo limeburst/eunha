@@ -735,7 +735,7 @@ async fn test_admin_list_tags() {
 
     ctx.api.post_status(&ctx.alice_token, "Post with #admintag1", "public").await;
 
-    let resp = ctx.api.get("/api/v1/admin/tags", Some(&ctx.alice_token)).await;
+    let resp = ctx.api.get("/api/v1/admin/tags?name=admintag1", Some(&ctx.alice_token)).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let tags: Vec<Value> = resp.json().await.unwrap();
     assert!(tags.iter().any(|t| t["name"].as_str() == Some("admintag1")),
@@ -756,7 +756,7 @@ async fn test_admin_update_tag() {
 
     ctx.api.post_status(&ctx.alice_token, "Post with #updatabletag", "public").await;
 
-    let tags: Vec<Value> = ctx.api.get("/api/v1/admin/tags", Some(&ctx.alice_token))
+    let tags: Vec<Value> = ctx.api.get("/api/v1/admin/tags?name=updatabletag", Some(&ctx.alice_token))
         .await.json().await.unwrap();
     let tag = tags.iter().find(|t| t["name"].as_str() == Some("updatabletag"))
         .expect("tag not found in admin list");

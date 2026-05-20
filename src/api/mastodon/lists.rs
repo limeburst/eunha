@@ -73,6 +73,7 @@ pub async fn create_list(
             format!("Replies policy is not included in the list: {replies_policy}"),
         ));
     }
+    let replies_policy_int = models::replies::from_str(replies_policy);
     let list = sqlx::query_as!(
         models::List,
         r#"INSERT INTO lists (account_id, title, replies_policy, exclusive)
@@ -80,7 +81,7 @@ pub async fn create_list(
            RETURNING *"#,
         auth.account_id,
         form.title,
-        replies_policy,
+        replies_policy_int,
         form.exclusive.unwrap_or(false),
     )
     .fetch_one(&state.db)
@@ -106,7 +107,7 @@ pub async fn update_list(
            WHERE id = $4 AND account_id = $5
            RETURNING *"#,
         form.title,
-        form.replies_policy.as_deref().unwrap_or("list"),
+        models::replies::from_str(form.replies_policy.as_deref().unwrap_or("list")),
         form.exclusive.unwrap_or(false),
         id,
         auth.account_id,
@@ -212,7 +213,7 @@ pub async fn add_list_accounts(
     for id_str in &form.account_ids {
         if let Ok(account_id) = id_str.parse::<i64>() {
             let is_followed = sqlx::query_scalar!(
-                "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+                "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2",
                 auth.account_id, account_id,
             )
             .fetch_optional(&state.db)
@@ -232,7 +233,7 @@ pub async fn add_list_accounts(
                 let db = state.db.clone();
                 let iid = instance.id;
                 let owner_id = auth.account_id;
-                let policy = list.replies_policy.clone();
+                let policy = models::replies::to_str(list.replies_policy).to_owned();
                 if feed::sync_fanout() {
                     feed::backfill_list_member(&mut redis, &db, iid, id, account_id, owner_id, &policy).await;
                 } else {
@@ -289,7 +290,7 @@ fn list_from_db(l: &models::List) -> List {
     List {
         id: l.id.to_string(),
         title: l.title.clone(),
-        replies_policy: l.replies_policy.clone(),
+        replies_policy: models::replies::to_str(l.replies_policy).to_owned(),
         exclusive: l.exclusive,
     }
 }

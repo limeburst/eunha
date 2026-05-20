@@ -59,7 +59,7 @@ pub async fn get_outbox(
            LEFT JOIN statuses q ON q.id = s.quote_of_id AND q.deleted_at IS NULL
            WHERE s.account_id = $1
              AND s.deleted_at IS NULL
-             AND s.visibility IN ('public', 'unlisted')
+             AND s.visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
              AND ($2::bigint IS NULL OR s.id < $2)
              AND ($3::bigint IS NULL OR s.id > $3)
            ORDER BY s.id DESC
@@ -128,7 +128,7 @@ pub async fn get_outbox(
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
                 .unwrap_or_else(|| {
-                    if matches!(s.visibility.as_str(), "public" | "unlisted") {
+                    if matches!(s.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
                         vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
                     } else {
                         vec![]

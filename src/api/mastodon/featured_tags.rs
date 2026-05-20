@@ -200,7 +200,7 @@ pub async fn featured_tag_suggestions(
     let rows = sqlx::query!(
         r#"SELECT t.id, t.name
            FROM tags t
-           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            WHERE s.account_id = $1 AND s.deleted_at IS NULL
            GROUP BY t.id, t.name

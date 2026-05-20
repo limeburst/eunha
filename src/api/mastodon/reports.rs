@@ -76,6 +76,7 @@ pub async fn file_report(
     let comment = form.comment.unwrap_or_default();
     let forwarded = form.forward.unwrap_or(false);
     let category = form.category.unwrap_or_else(|| "other".into());
+    let category_int = crate::db::models::report_category::from_str(&category);
 
     let report = sqlx::query!(
         r#"INSERT INTO reports (account_id, target_account_id, status_ids, comment, forwarded, category)
@@ -86,7 +87,7 @@ pub async fn file_report(
         &status_ids,
         comment,
         forwarded,
-        category,
+        category_int,
     )
     .fetch_one(&state.db)
     .await?;

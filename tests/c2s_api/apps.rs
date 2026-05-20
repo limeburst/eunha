@@ -287,7 +287,7 @@ async fn test_authorization_code_grant() {
 
     // Look up the DB application_id by client_id.
     let app_id: i64 = sqlx::query_scalar!(
-        "SELECT id FROM oauth_applications WHERE client_id = $1",
+        "SELECT id FROM oauth_applications WHERE uid = $1",
         client_id,
     )
     .fetch_one(&ctx.db)
@@ -298,8 +298,8 @@ async fn test_authorization_code_grant() {
     let code = "test-auth-code-12345";
 
     sqlx::query!(
-        r#"INSERT INTO oauth_authorization_codes
-             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+        r#"INSERT INTO oauth_access_grants
+             (application_id, account_id, token, redirect_uri, scopes, expires_at)
            VALUES ($1, $2, $3, $4, $5, now() + interval '10 minutes')"#,
         app_id,
         alice_id,
@@ -348,7 +348,7 @@ async fn test_authorization_code_expired_returns_401() {
     let client_secret = app["client_secret"].as_str().unwrap();
 
     let app_id: i64 = sqlx::query_scalar!(
-        "SELECT id FROM oauth_applications WHERE client_id = $1",
+        "SELECT id FROM oauth_applications WHERE uid = $1",
         client_id,
     )
     .fetch_one(&ctx.db)
@@ -357,8 +357,8 @@ async fn test_authorization_code_expired_returns_401() {
 
     let expired_code = format!("expired-code-{}", uuid::Uuid::new_v4());
     sqlx::query!(
-        r#"INSERT INTO oauth_authorization_codes
-             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+        r#"INSERT INTO oauth_access_grants
+             (application_id, account_id, token, redirect_uri, scopes, expires_at)
            VALUES ($1, $2, $3, $4, $5, now() - interval '1 minute')"#,
         app_id,
         ctx.alice_id.parse::<i64>().unwrap(),

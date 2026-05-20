@@ -5,8 +5,6 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
 use crate::{
     error::{AppError, AppResult},
     middleware::{AuthenticatedUser, ResolvedInstance},
@@ -112,7 +110,7 @@ pub async fn delete_invite(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     auth.require_scope("write:accounts")?;
     let deleted = sqlx::query!(

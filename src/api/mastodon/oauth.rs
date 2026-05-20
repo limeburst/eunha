@@ -100,7 +100,7 @@ pub async fn register_app(
     let app = sqlx::query_as!(
         OauthApplication,
         r#"INSERT INTO oauth_applications
-             (instance_id, name, client_id, client_secret, redirect_uris, scopes, website)
+             (instance_id, name, uid, secret, redirect_uri, scopes, website)
            VALUES ($1,$2,$3,$4,$5,$6,$7)
            RETURNING *"#,
         instance.id,
@@ -118,8 +118,8 @@ pub async fn register_app(
 }
 
 fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
-    let uris: Vec<String> = app.redirect_uris.lines().map(str::to_owned).collect();
-    let redirect_uri = uris.first().cloned().unwrap_or_else(|| app.redirect_uris.clone());
+    let uris: Vec<String> = app.redirect_uri.lines().map(str::to_owned).collect();
+    let redirect_uri = uris.first().cloned().unwrap_or_else(|| app.redirect_uri.clone());
     CredentialApplication {
         id: app.id.to_string(),
         name: app.name.clone(),
@@ -127,8 +127,8 @@ fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
         scopes: normalize_scopes(&app.scopes).split_whitespace().map(str::to_owned).collect(),
         redirect_uri,
         redirect_uris: uris,
-        client_id: app.client_id.clone(),
-        client_secret: app.client_secret.clone(),
+        client_id: app.uid.clone(),
+        client_secret: app.secret.clone(),
         vapid_key: None,
     }
 }
@@ -161,7 +161,7 @@ pub async fn issue_token(
     // Verify client credentials
     let app = sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        "SELECT * FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
         form.client_id,
         instance.id,
     )
@@ -172,7 +172,7 @@ pub async fn issue_token(
         AppError::Unauthorized
     })?;
 
-    if app.client_secret != form.client_secret {
+    if app.secret != form.client_secret {
         tracing::warn!(client_id = %form.client_id, "client_secret mismatch");
         return Err(AppError::Unauthorized);
     }
@@ -183,8 +183,8 @@ pub async fn issue_token(
         "authorization_code" => {
             let code_str = form.code.as_deref().ok_or(AppError::Unprocessable("missing code".into()))?;
             let code = sqlx::query!(
-                r#"DELETE FROM oauth_authorization_codes
-                   WHERE code = $1 AND application_id = $2 AND expires_at > now()
+                r#"DELETE FROM oauth_access_grants
+                   WHERE token = $1 AND application_id = $2 AND expires_at > now()
                    RETURNING account_id, scopes"#,
                 code_str,
                 app.id,
@@ -336,17 +336,17 @@ pub async fn elk_login(
     .await?;
 
     let app = match existing {
-        Some(a) if a.redirect_uris == redirect_uri => a,
+        Some(a) if a.redirect_uri == redirect_uri => a,
         Some(a) => {
             // Origin changed (or old entry used /signin/callback) — update in place.
             sqlx::query!(
-                "UPDATE oauth_applications SET redirect_uris = $1 WHERE id = $2",
+                "UPDATE oauth_applications SET redirect_uri = $1 WHERE id = $2",
                 redirect_uri,
                 a.id,
             )
             .execute(&state.db)
             .await?;
-            OauthApplication { redirect_uris: redirect_uri.clone(), ..a }
+            OauthApplication { redirect_uri: redirect_uri.clone(), ..a }
         }
         None => {
             let client_id = generate_token(32);
@@ -354,7 +354,7 @@ pub async fn elk_login(
             sqlx::query_as!(
                 OauthApplication,
                 r#"INSERT INTO oauth_applications
-                     (instance_id, name, client_id, client_secret, redirect_uris, scopes)
+                     (instance_id, name, uid, secret, redirect_uri, scopes)
                    VALUES ($1, 'Elk', $2, $3, $4, $5)
                    RETURNING *"#,
                 instance.id,
@@ -375,7 +375,7 @@ pub async fn elk_login(
 
     let mut url = format!(
         "https://{}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}",
-        instance.domain, app.client_id, encoded_redirect, encoded_scope,
+        instance.domain, app.uid, encoded_redirect, encoded_scope,
     );
     if force {
         url.push_str("&force_login=true");
@@ -432,8 +432,8 @@ pub async fn elk_oauth_callback(
     };
 
     let code_row = sqlx::query!(
-        r#"DELETE FROM oauth_authorization_codes
-           WHERE code = $1 AND application_id = $2 AND expires_at > now()
+        r#"DELETE FROM oauth_access_grants
+           WHERE token = $1 AND application_id = $2 AND expires_at > now()
            RETURNING account_id, scopes"#,
         code,
         app.id,
@@ -507,7 +507,7 @@ pub async fn authorize_form(
 ) -> Response {
     let app = match sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        "SELECT * FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
         params.client_id,
         instance.id,
     )
@@ -577,7 +577,7 @@ pub async fn authorize_submit(
 ) -> Response {
     let locale = crate::locale::Locale::detect(form.lang.as_deref(), None);
     let app_name = sqlx::query_scalar!(
-        "SELECT name FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        "SELECT name FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
         form.client_id,
         instance.id,
     )
@@ -627,7 +627,7 @@ async fn do_authorize(
 ) -> Result<String, String> {
     let app = sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE client_id = $1 AND instance_id = $2",
+        "SELECT * FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
         form.client_id,
         instance.id,
     )
@@ -659,8 +659,8 @@ async fn do_authorize(
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
 
     sqlx::query!(
-        r#"INSERT INTO oauth_authorization_codes
-             (application_id, account_id, code, redirect_uri, scopes, expires_at)
+        r#"INSERT INTO oauth_access_grants
+             (application_id, account_id, token, redirect_uri, scopes, expires_at)
            VALUES ($1, $2, $3, $4, $5, $6)"#,
         app.id,
         user.account_id,

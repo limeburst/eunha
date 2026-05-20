@@ -18,9 +18,9 @@ use super::types::{Tag, TagHistory};
 /// Returns 7 days of daily use/account counts for the given tags, newest day first.
 pub(super) async fn fetch_tags_histories(
     db: &sqlx::PgPool,
-    tag_ids: &[Uuid],
+    tag_ids: &[i64],
     instance_id: Uuid,
-) -> HashMap<Uuid, Vec<TagHistory>> {
+) -> HashMap<i64, Vec<TagHistory>> {
     if tag_ids.is_empty() {
         return HashMap::new();
     }
@@ -30,15 +30,15 @@ pub(super) async fn fetch_tags_histories(
                   date_trunc('day', s.created_at)::date AS day,
                   COUNT(*)::bigint AS uses,
                   COUNT(DISTINCT s.account_id)::bigint AS accounts
-           FROM status_tags st
+           FROM statuses_tags st
            JOIN statuses s ON s.id = st.status_id
-           WHERE st.tag_id = ANY($1::uuid[])
+           WHERE st.tag_id = ANY($1::bigint[])
              AND s.instance_id = $2
              AND s.deleted_at IS NULL
-             AND s.visibility = 'public'
+             AND s.visibility = 0
              AND s.created_at >= $3
            GROUP BY st.tag_id, date_trunc('day', s.created_at)::date"#,
-        tag_ids as &[Uuid],
+        tag_ids as &[i64],
         instance_id,
         cutoff,
     )
@@ -47,7 +47,7 @@ pub(super) async fn fetch_tags_histories(
     .unwrap_or_default();
 
     // Build tag_id → NaiveDate → (uses, accounts)
-    let mut raw: HashMap<Uuid, HashMap<chrono::NaiveDate, (i64, i64)>> = HashMap::new();
+    let mut raw: HashMap<i64, HashMap<chrono::NaiveDate, (i64, i64)>> = HashMap::new();
     for r in rows {
         if let Some(day) = r.day {
             raw.entry(r.tag_id).or_default().insert(
@@ -82,7 +82,7 @@ pub(super) async fn fetch_tags_histories(
 
 pub(super) async fn fetch_tag_history(
     db: &sqlx::PgPool,
-    tag_id: Uuid,
+    tag_id: i64,
     instance_id: Uuid,
 ) -> Vec<TagHistory> {
     fetch_tags_histories(db, &[tag_id], instance_id)
@@ -203,7 +203,7 @@ pub async fn list_followed_tags(
     let first_follow_id = rows.first().map(|r| r.follow_id.to_string());
     let last_follow_id = rows.last().map(|r| r.follow_id.to_string());
 
-    let tag_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let tag_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let histories = fetch_tags_histories(&state.db, &tag_ids, instance.id).await;
 
     let result: Vec<Tag> = rows

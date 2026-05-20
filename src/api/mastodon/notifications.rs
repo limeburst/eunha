@@ -15,7 +15,7 @@ use crate::{
 use super::{
     accounts::{
         batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media,
-        batch_status_mentions, batch_status_polls, batch_status_tags, build_status,
+        batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status,
         fetch_reblog_data, fetch_status_media,
     },
     convert::{account_from_db, status_from_db},
@@ -48,8 +48,8 @@ pub async fn get_notifications(
             r#"SELECT * FROM notifications
                WHERE account_id = $1
                  AND ($2::bigint IS NULL OR id > $2)
-                 AND ($5::text[] IS NULL OR notification_type = ANY($5))
-                 AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+                 AND ($5::text[] IS NULL OR "type" = ANY($5))
+                 AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
                  AND ($7::bigint IS NULL OR from_account_id = $7)
                  AND NOT EXISTS (
                      SELECT 1 FROM mutes m
@@ -75,8 +75,8 @@ pub async fn get_notifications(
                WHERE account_id = $1
                  AND ($2::bigint IS NULL OR id < $2)
                  AND ($3::bigint IS NULL OR id > $3)
-                 AND ($5::text[] IS NULL OR notification_type = ANY($5))
-                 AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+                 AND ($5::text[] IS NULL OR "type" = ANY($5))
+                 AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
                  AND ($7::bigint IS NULL OR from_account_id = $7)
                  AND NOT EXISTS (
                      SELECT 1 FROM mutes m
@@ -153,7 +153,7 @@ pub async fn get_notifications(
         let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut enrich_ids = all_ids.clone();
         enrich_ids.extend_from_slice(&reblog_ids);
-        let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+        let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
         let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
         let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses.iter().cloned()
             .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -208,7 +208,7 @@ pub async fn get_notifications(
 
     // Batch-fetch reports for admin.report notifications
     let report_ids: Vec<i64> = notifications.iter()
-        .filter_map(|n| if n.notification_type == "admin.report" { n.report_id } else { None })
+        .filter_map(|n| if n.r#type == "admin.report" { n.report_id } else { None })
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -216,7 +216,8 @@ pub async fn get_notifications(
         let mut map = std::collections::HashMap::new();
         if let Ok(rows) = sqlx::query!(
             r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
-                      r.category, r.action_taken_at, r.created_at, r.status_ids,
+                      CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!",
+                      r.action_taken_at, r.created_at, r.status_ids,
                       r.target_account_id
                FROM reports r
                WHERE r.id = ANY($1::bigint[])"#,
@@ -264,15 +265,16 @@ pub async fn get_notifications(
         let Some(account) = from_account_map.get(&n.from_account_id) else { continue };
         let status = n.status_id.and_then(|sid| status_api_map.get(&sid)).cloned();
         let report = n.report_id.and_then(|rid| report_map.get(&rid)).cloned();
+        let filtered = status.as_ref().and_then(|s| s.filtered.clone());
         result.push(Notification {
             id: n.id.to_string(),
-            notification_type: n.notification_type.clone(),
+            notification_type: n.r#type.clone(),
             created_at: super::convert::mastodon_date(n.created_at),
             group_key: format!("ungrouped-{}", n.id),
             account: account_from_db(account),
             status,
             report,
-            filtered: None,
+            filtered,
             event: None,
             moderation_warning: None,
             fallback: None,
@@ -370,8 +372,8 @@ pub async fn get_notifications_v2(
            WHERE account_id = $1
              AND ($2::bigint IS NULL OR id < $2)
              AND ($3::bigint IS NULL OR id > $3)
-             AND ($5::text[] IS NULL OR notification_type = ANY($5))
-             AND ($6::text[] IS NULL OR NOT (notification_type = ANY($6)))
+             AND ($5::text[] IS NULL OR "type" = ANY($5))
+             AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
              AND ($7::bigint IS NULL OR from_account_id = $7)
              AND NOT EXISTS (
                  SELECT 1 FROM mutes m
@@ -445,7 +447,7 @@ pub async fn get_notifications_v2(
         let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut enrich_ids = all_ids.clone();
         enrich_ids.extend_from_slice(&reblog_ids);
-        let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+        let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
         let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
         let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses.iter().cloned()
             .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -522,7 +524,7 @@ pub async fn get_notifications_v2(
         groups.push(NotificationGroup {
             group_key: format!("ungrouped-{}", id_str),
             notifications_count: 1,
-            notification_type: n.notification_type.clone(),
+            notification_type: n.r#type.clone(),
             most_recent_notification_id: id_str.clone(),
             page_max_id: id_str.clone(),
             page_min_id: id_str.clone(),
@@ -565,7 +567,7 @@ pub async fn get_notification_group(
     Ok(Json(NotificationGroup {
         group_key: format!("ungrouped-{}", id_str),
         notifications_count: 1,
-        notification_type: n.notification_type,
+        notification_type: n.r#type,
         most_recent_notification_id: id_str.clone(),
         page_max_id: id_str.clone(),
         page_min_id: id_str.clone(),
@@ -640,9 +642,9 @@ pub async fn get_notifications_unread_count(
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("read:notifications")?;
 
-    // Find last read ID from markers (empty string means never read)
-    let last_read_id: Option<String> = sqlx::query_scalar!(
-        "SELECT NULLIF(last_read_id, '') FROM markers WHERE account_id = $1 AND timeline = 'notifications'",
+    // Find last read ID from markers (0 means never read)
+    let last_read_id: Option<i64> = sqlx::query_scalar!(
+        "SELECT NULLIF(last_read_id, 0) FROM markers WHERE account_id = $1 AND timeline = 'notifications'",
         auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -650,10 +652,9 @@ pub async fn get_notifications_unread_count(
     .flatten();
 
     let count: i64 = if let Some(last_id) = last_read_id {
-        let last_id_int: i64 = last_id.parse().unwrap_or(0);
         sqlx::query_scalar!(
             "SELECT COUNT(*) FROM notifications WHERE account_id = $1 AND id > $2",
-            auth.account_id, last_id_int,
+            auth.account_id, last_id,
         )
         .fetch_one(&state.db)
         .await?
@@ -931,7 +932,7 @@ pub async fn get_notification_requests(
         let ls_reblog_ids: Vec<i64> = ls_reblog_map.values().map(|(rs, _, _)| rs.id).collect();
         let mut ls_enrich_ids = last_status_ids.clone();
         ls_enrich_ids.extend_from_slice(&ls_reblog_ids);
-        let ls_tags_map = batch_status_tags(&state, &ls_enrich_ids).await?;
+        let ls_tags_map = batch_statuses_tags(&state, &ls_enrich_ids).await?;
         let ls_mentions_map = batch_status_mentions(&state, &ls_enrich_ids).await?;
         let ls_all_for_emoji: Vec<crate::db::models::Status> = ls_statuses.iter().cloned()
             .chain(ls_reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -1019,6 +1020,32 @@ pub async fn get_notification_requests(
             attribution_domains: vec![],
             created_at: r.account_created_at,
             updated_at: r.account_updated_at,
+            actor_type: None,
+            also_known_as: vec![],
+            featured_collection_url: None,
+            followers_url: String::new(),
+            following_url: String::new(),
+            last_webfingered_at: None,
+            memorial: false,
+            moved_to_account_id: None,
+            protocol: 0,
+            requested_review_at: None,
+            reviewed_at: None,
+            suspension_origin: None,
+            trendable: None,
+            id_scheme: None,
+            avatar_file_name: None,
+            avatar_content_type: None,
+            avatar_file_size: None,
+            avatar_updated_at: None,
+            header_file_name: None,
+            header_content_type: None,
+            header_file_size: None,
+            header_updated_at: None,
+            avatar_remote_url: None,
+            header_remote_url: String::new(),
+            avatar_storage_schema_version: None,
+            header_storage_schema_version: None,
         };
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
         result.push(NotificationRequest {
@@ -1185,6 +1212,32 @@ pub async fn get_notification_request(
         attribution_domains: vec![],
         created_at: r.account_created_at,
         updated_at: r.account_updated_at,
+        actor_type: None,
+        also_known_as: vec![],
+        featured_collection_url: None,
+        followers_url: String::new(),
+        following_url: String::new(),
+        last_webfingered_at: None,
+        memorial: false,
+        moved_to_account_id: None,
+        protocol: 0,
+        requested_review_at: None,
+        reviewed_at: None,
+        suspension_origin: None,
+        trendable: None,
+        id_scheme: None,
+        avatar_file_name: None,
+        avatar_content_type: None,
+        avatar_file_size: None,
+        avatar_updated_at: None,
+        header_file_name: None,
+        header_content_type: None,
+        header_file_size: None,
+        header_updated_at: None,
+        avatar_remote_url: None,
+        header_remote_url: String::new(),
+        avatar_storage_schema_version: None,
+        header_storage_schema_version: None,
     };
     let last_status = fetch_last_status(&state, r.last_status_id).await;
     Ok(Json(NotificationRequest {
@@ -1285,11 +1338,12 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         None
     };
 
-    let report = if n.notification_type == "admin.report" {
+    let report = if n.r#type == "admin.report" {
         if let Some(rid) = n.report_id {
             sqlx::query!(
                 r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
-                          r.category, r.action_taken_at, r.created_at, r.status_ids,
+                          CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!",
+                          r.action_taken_at, r.created_at, r.status_ids,
                           r.target_account_id
                    FROM reports r WHERE r.id = $1"#,
                 rid,
@@ -1327,7 +1381,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
 
     Ok(Notification {
         id: n.id.to_string(),
-        notification_type: n.notification_type.clone(),
+        notification_type: n.r#type.clone(),
         created_at: super::convert::mastodon_date(n.created_at),
         group_key: format!("ungrouped-{}", n.id),
         account: account_from_db(&from_account),

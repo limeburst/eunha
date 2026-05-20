@@ -104,24 +104,26 @@ async fn try_deliver(
     body: &str,
 ) -> anyhow::Result<()> {
     // Look up subscriptions for the recipient that have this alert type enabled.
-    let alert_col = match notification_type {
-        "follow" | "follow_request" => "alert_follow",
-        "favourite" => "alert_favourite",
-        "reblog" => "alert_reblog",
-        "mention" => "alert_mention",
-        "poll" => "alert_poll",
-        "status" => "alert_status",
+    let (alert_key, alert_default) = match notification_type {
+        "follow" | "follow_request" => ("follow", "true"),
+        "favourite" => ("favourite", "true"),
+        "reblog"    => ("reblog",    "true"),
+        "mention"   => ("mention",   "true"),
+        "poll"      => ("poll",      "false"),
+        "status"    => ("status",    "false"),
         _ => return Ok(()),
     };
 
     let subs_query = format!(
-        r#"SELECT wps.id, wps.endpoint, wps.p256dh, wps.auth,
+        r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth,
                   i.vapid_private_key, i.vapid_public_key
            FROM web_push_subscriptions wps
            JOIN accounts a ON a.id = wps.account_id
            JOIN instances i ON i.id = a.instance_id
            WHERE wps.account_id = $1
-             AND wps.{alert_col} = true"#
+             AND COALESCE((wps.data->'alerts'->>'{}')::boolean, {})"#,
+        alert_key,
+        alert_default,
     );
 
     let rows = sqlx::query_as::<_, (i64, String, String, String, String, String)>(
@@ -270,18 +272,10 @@ pub async fn create_and_push(
         return;
     }
 
-    // Don't notify if the recipient has muted the conversation thread
+    // Don't notify if the recipient has muted the conversation
     if let Some(sid) = status_id {
-        let thread_muted = sqlx::query_scalar!(
-            r#"WITH RECURSIVE thread AS (
-                   SELECT id, in_reply_to_id FROM statuses WHERE id = $2
-                   UNION ALL
-                   SELECT s.id, s.in_reply_to_id FROM statuses s JOIN thread t ON s.id = t.in_reply_to_id
-               )
-               SELECT 1 FROM conversation_mutes cm
-               JOIN thread t ON t.id = cm.status_id
-               WHERE cm.account_id = $1
-               LIMIT 1"#,
+        let conversation_muted = sqlx::query_scalar!(
+            "SELECT 1 FROM conversation_mutes cm JOIN statuses s ON s.id = $2 WHERE cm.account_id = $1 AND cm.conversation_id = s.conversation_id LIMIT 1",
             recipient_id, sid,
         )
         .fetch_optional(&db)
@@ -289,7 +283,7 @@ pub async fn create_and_push(
         .ok()
         .flatten()
         .is_some();
-        if thread_muted {
+        if conversation_muted {
             return;
         }
     }
@@ -304,7 +298,7 @@ pub async fn create_and_push(
     let existing = sqlx::query_scalar!(
         r#"SELECT 1 FROM notifications
            WHERE account_id = $1 AND from_account_id = $2
-             AND notification_type = $3
+             AND "type" = $3
              AND (status_id = $4 OR ($4::bigint IS NULL AND status_id IS NULL))
            LIMIT 1"#,
         recipient_id,
@@ -320,7 +314,7 @@ pub async fn create_and_push(
     }
 
     let row = sqlx::query!(
-        r#"INSERT INTO notifications (account_id, from_account_id, notification_type, status_id)
+        r#"INSERT INTO notifications (account_id, from_account_id, "type", status_id)
            VALUES ($1, $2, $3, $4)
            RETURNING id"#,
         recipient_id,
@@ -443,7 +437,7 @@ pub async fn notify_admins(
 
         let row = if let Some(rid) = report_id {
             sqlx::query_scalar!(
-                r#"INSERT INTO notifications (account_id, from_account_id, notification_type, report_id)
+                r#"INSERT INTO notifications (account_id, from_account_id, "type", report_id)
                    VALUES ($1, $2, $3, $4)
                    RETURNING id"#,
                 admin_id, from_account_id, notification_type, rid,
@@ -452,7 +446,7 @@ pub async fn notify_admins(
             .await
         } else {
             sqlx::query_scalar!(
-                r#"INSERT INTO notifications (account_id, from_account_id, notification_type)
+                r#"INSERT INTO notifications (account_id, from_account_id, "type")
                    VALUES ($1, $2, $3)
                    RETURNING id"#,
                 admin_id, from_account_id, notification_type,
@@ -510,8 +504,9 @@ async fn build_admin_notification_payload(
 
     let report_json = if let Some(rid) = report_id {
         sqlx::query!(
-            r#"SELECT r.id, r.comment, r.forwarded, r.category, r.action_taken_at, r.created_at,
-                      r.status_ids, a.id AS ta_id, a.username AS ta_username
+            r#"SELECT r.id, r.comment, r.forwarded, r.action_taken_at, r.created_at,
+                      r.status_ids, a.id AS ta_id, a.username AS ta_username,
+                      CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
                FROM reports r
                JOIN accounts a ON a.id = r.target_account_id
                WHERE r.id = $1"#,
@@ -597,7 +592,7 @@ async fn should_filter_notification(
     // filter_not_following: sender is not followed by recipient
     if policy.notif_filter_not_following {
         let follows = sqlx::query_scalar!(
-            "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+            "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2",
             recipient_id, from_account_id,
         )
         .fetch_optional(db)
@@ -613,7 +608,7 @@ async fn should_filter_notification(
     // filter_not_followers: sender does not follow recipient
     if policy.notif_filter_not_followers {
         let is_follower = sqlx::query_scalar!(
-            "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2 AND state = 'accepted'",
+            "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2",
             from_account_id, recipient_id,
         )
         .fetch_optional(db)
@@ -648,7 +643,7 @@ async fn should_filter_notification(
             let is_private_unsolicited = sqlx::query_scalar!(
                 r#"SELECT 1 FROM statuses s
                    WHERE s.id = $1
-                     AND s.visibility = 'direct'
+                     AND s.visibility = 3 /* vis::DIRECT */
                      AND (s.in_reply_to_id IS NULL OR NOT EXISTS (
                        SELECT 1 FROM statuses parent
                        WHERE parent.id = s.in_reply_to_id

@@ -419,8 +419,8 @@ pub async fn seed_account_and_token(
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
              (id, instance_id, username, display_name, note, note_text,
-              url, uri, public_key, inbox_url, outbox_url, discoverable)
-           VALUES ($1,$2,$3,$3,'','', $4,$5,'test-public-key',$5||'/inbox',$5||'/outbox', true)
+              url, uri, public_key, inbox_url, outbox_url, shared_inbox_url, discoverable)
+           VALUES ($1,$2,$3,$3,'','', $4,$5,'test-public-key',$5||'/inbox',$5||'/outbox',''::text, true)
            RETURNING id"#,
         eunha::snowflake::next_id(),
         instance_id,
@@ -449,7 +449,7 @@ pub async fn seed_account_and_token(
 
     let app_id: i64 = sqlx::query_scalar!(
         r#"INSERT INTO oauth_applications
-             (instance_id, name, client_id, client_secret, redirect_uris, scopes)
+             (instance_id, name, uid, secret, redirect_uri, scopes)
            VALUES ($1,'test',gen_random_uuid()::text,gen_random_uuid()::text,'urn:ietf:wg:oauth:2.0:oob','read write follow')
            RETURNING id"#,
         instance_id,

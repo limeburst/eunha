@@ -10,7 +10,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_status_tags},
+    accounts::{batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags},
     convert::status_from_db,
     types::{Status, Tag},
 };
@@ -36,11 +36,11 @@ pub async fn trending_tags(
     let rows = sqlx::query!(
         r#"SELECT t.id, t.name, COUNT(st.status_id) AS uses
            FROM tags t
-           JOIN status_tags st ON st.tag_id = t.id
+           JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            WHERE s.instance_id = $1
              AND s.deleted_at IS NULL
-             AND s.visibility = 'public'
+             AND s.visibility = 0
              AND s.created_at > now() - interval '7 days'
            GROUP BY t.id, t.name
            ORDER BY uses DESC, t.name ASC
@@ -50,7 +50,7 @@ pub async fn trending_tags(
     .fetch_all(&state.db)
     .await?;
 
-    let tag_ids: Vec<uuid::Uuid> = rows.iter().map(|r| r.id).collect();
+    let tag_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let histories = super::tags::fetch_tags_histories(&state.db, &tag_ids, instance.id).await;
 
     let tags: Vec<Tag> = rows
@@ -88,7 +88,7 @@ pub async fn trending_statuses(
            JOIN accounts a ON a.id = s.account_id
            WHERE s.instance_id = $1
              AND s.deleted_at IS NULL
-             AND s.visibility = 'public'
+             AND s.visibility = 0
              AND s.reblog_of_id IS NULL
              AND s.created_at > now() - interval '2 days'
              AND a.suspended_at IS NULL
@@ -121,7 +121,7 @@ pub async fn trending_statuses(
     let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
     let mut enrich_ids = all_ids.clone();
     enrich_ids.extend_from_slice(&reblog_ids);
-    let tags_map = batch_status_tags(&state, &enrich_ids).await?;
+    let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
     let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
     let all_statuses_for_emoji: Vec<crate::db::models::Status> = rows.iter().cloned()
         .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
@@ -193,10 +193,10 @@ pub async fn trending_links(
                   pc.html, pc.width, pc.height, pc.image_url, pc.embed_url, pc.blurhash,
                   COUNT(s.id) AS uses
            FROM preview_cards pc
-           JOIN status_preview_cards spc ON spc.card_id = pc.id
+           JOIN preview_cards_statuses spc ON spc.preview_card_id = pc.id
            JOIN statuses s ON s.id = spc.status_id
            WHERE s.deleted_at IS NULL
-             AND s.visibility = 'public'
+             AND s.visibility = 0
              AND s.created_at > now() - interval '7 days'
            GROUP BY pc.url, pc.title, pc.description, pc.card_type,
                     pc.author_name, pc.author_url, pc.provider_name, pc.provider_url,
