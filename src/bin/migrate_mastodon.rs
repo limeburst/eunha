@@ -736,8 +736,8 @@ async fn migrate_follows(
         let notify: bool = row.try_get("notify").unwrap_or(false);
 
         sqlx::query(
-            r#"INSERT INTO follows (account_id, target_account_id, state, uri, created_at, show_reblogs, notify)
-               VALUES ($1,$2,'accepted',$3,$4,$5,$6)
+            r#"INSERT INTO follows (account_id, target_account_id, uri, created_at, show_reblogs, notify)
+               VALUES ($1,$2,$3,$4,$5,$6)
                ON CONFLICT DO NOTHING"#,
         )
         .bind(account_id)
@@ -1053,7 +1053,7 @@ async fn migrate_polls(
     dst: &mut PgConnection,
     account_map: &HashMap<i64, i64>,
     status_map: &HashMap<i64, i64>,
-) -> Result<HashMap<i64, Uuid>> {
+) -> Result<HashMap<i64, i64>> {
     let rows = sqlx::query(
         "SELECT id, account_id, status_id, options, cached_tallies, multiple, votes_count, voters_count, expires_at, created_at FROM polls",
     )
@@ -1078,7 +1078,7 @@ async fn migrate_polls(
         let expires_at = get_ts_opt(&row, "expires_at");
         let created_at = get_ts(&row, "created_at")?;
 
-        let new_id: Option<Uuid> = sqlx::query_scalar(
+        let new_id: Option<i64> = sqlx::query_scalar(
             r#"INSERT INTO polls
                  (account_id, status_id, options, votes_count, voters_count, multiple, expires_at, created_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -1100,7 +1100,7 @@ async fn migrate_polls(
             map.insert(src_id, new_id);
         } else {
             // Already exists — recover ID for poll_votes mapping
-            if let Ok(existing_id) = sqlx::query_scalar::<_, Uuid>(
+            if let Ok(existing_id) = sqlx::query_scalar::<_, i64>(
                 "SELECT id FROM polls WHERE status_id = $1",
             )
             .bind(status_id)
@@ -1118,7 +1118,7 @@ async fn migrate_poll_votes(
     src: &PgPool,
     dst: &mut PgConnection,
     account_map: &HashMap<i64, i64>,
-    poll_map: &HashMap<i64, Uuid>,
+    poll_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, poll_id, choice, created_at FROM poll_votes")
         .fetch_all(src)
@@ -1152,19 +1152,19 @@ async fn migrate_tags(
     src: &PgPool,
     dst: &mut PgConnection,
     status_map: &HashMap<i64, i64>,
-) -> Result<HashMap<i64, Uuid>> {
+) -> Result<HashMap<i64, i64>> {
     let tag_rows = sqlx::query("SELECT id, name, created_at FROM tags")
         .fetch_all(src)
         .await?;
 
-    let mut tag_id_map: HashMap<i64, Uuid> = HashMap::new();
+    let mut tag_id_map: HashMap<i64, i64> = HashMap::new();
 
     for row in &tag_rows {
         let src_id: i64 = row.get("id");
         let name: String = row.try_get("name").unwrap_or_default();
         let created_at = get_ts(&row, "created_at")?;
 
-        let new_id: Uuid = sqlx::query_scalar(
+        let new_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO tags (name, created_at)
                VALUES (lower($1), $2)
                ON CONFLICT (name) DO UPDATE SET updated_at = now()
@@ -1189,7 +1189,7 @@ async fn migrate_tags(
         else { continue };
 
         sqlx::query(
-            r#"INSERT INTO status_tags (status_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING"#,
+            r#"INSERT INTO statuses_tags (status_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING"#,
         )
         .bind(status_id)
         .bind(tag_id)
@@ -1306,8 +1306,8 @@ async fn migrate_follow_requests(
         let created_at = get_ts(&row, "created_at")?;
 
         sqlx::query(
-            r#"INSERT INTO follows (account_id, target_account_id, state, uri, created_at)
-               VALUES ($1,$2,'pending',$3,$4)
+            r#"INSERT INTO follow_requests (account_id, target_account_id, uri, created_at)
+               VALUES ($1,$2,$3,$4)
                ON CONFLICT DO NOTHING"#,
         )
         .bind(account_id)
@@ -1409,9 +1409,7 @@ async fn migrate_lists(
         let Some(&account_id) = account_map.get(&src_account) else { continue };
 
         let title: String = row.try_get("title").unwrap_or_default();
-        let replies_policy = match row.try_get::<i32, _>("replies_policy").ok().unwrap_or(1) {
-            0 => "followed", 1 => "list", 2 => "none", _ => "list",
-        };
+        let replies_policy: i32 = row.try_get("replies_policy").ok().unwrap_or(1);
         let exclusive: bool = row.try_get("exclusive").unwrap_or(false);
         let created_at = get_ts(&row, "created_at")?;
         let updated_at = get_ts(&row, "updated_at")?;
@@ -1588,9 +1586,9 @@ async fn migrate_featured_tags(
     let eunha_tags = sqlx::query("SELECT name, id FROM tags")
         .fetch_all(&mut *dst)
         .await?;
-    let eunha_tag_by_name: HashMap<String, Uuid> = eunha_tags
+    let eunha_tag_by_name: HashMap<String, i64> = eunha_tags
         .iter()
-        .map(|r| (r.get::<String, _>("name").to_lowercase(), r.get::<Uuid, _>("id")))
+        .map(|r| (r.get::<String, _>("name").to_lowercase(), r.get::<i64, _>("id")))
         .collect();
 
     let rows = sqlx::query(
@@ -2021,7 +2019,7 @@ async fn migrate_markers(
         )
         .bind(account_id)
         .bind(&timeline)
-        .bind(last_read_id.to_string())
+        .bind(last_read_id)
         .bind(version)
         .bind(updated_at)
         .execute(&mut *dst)
@@ -2037,7 +2035,7 @@ async fn migrate_tag_follows(
     src: &PgPool,
     dst: &mut PgConnection,
     account_map: &HashMap<i64, i64>,
-    tag_map: &HashMap<i64, Uuid>,
+    tag_map: &HashMap<i64, i64>,
 ) -> Result<()> {
     let rows = sqlx::query("SELECT account_id, tag_id, created_at FROM tag_follows")
         .fetch_all(src)
@@ -2085,7 +2083,7 @@ async fn migrate_user_domain_blocks(
         let created_at = get_ts(&row, "created_at")?;
 
         sqlx::query(
-            r#"INSERT INTO user_domain_blocks (account_id, domain, created_at)
+            r#"INSERT INTO account_domain_blocks (account_id, domain, created_at)
                VALUES ($1, $2, $3)
                ON CONFLICT (account_id, domain) DO NOTHING"#,
         )
@@ -2185,7 +2183,7 @@ async fn migrate_web_push_subscriptions(
         let application_id: Option<i64> = src_app_id.and_then(|id| app_map.get(&id)).copied();
 
         // Upsert the mastodon access token into eunha so the FK can be satisfied.
-        let token_id: Uuid = sqlx::query_scalar(
+        let token_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO oauth_access_tokens (account_id, application_id, token, scopes, revoked_at, created_at)
                VALUES ($1, $2, $3, $4, $5, $6)
                ON CONFLICT (token) DO UPDATE SET account_id = EXCLUDED.account_id, application_id = EXCLUDED.application_id

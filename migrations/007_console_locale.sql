@@ -1,1 +1,0 @@
-ALTER TABLE console_users ADD COLUMN locale TEXT NOT NULL DEFAULT 'en';
