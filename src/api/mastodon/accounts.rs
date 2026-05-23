@@ -1863,24 +1863,40 @@ pub async fn get_follow_requests(
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN follow_requests f ON f.account_id = a.id
+    // Paginate by follow_request.id (matching Mastodon's FollowRequest.paginate_by_max_id)
+    let rows = sqlx::query!(
+        r#"SELECT f.id AS req_id, f.account_id FROM follow_requests f
            WHERE f.target_account_id = $1
-             AND ($2::bigint IS NULL OR a.id < $2)
-             AND ($3::bigint IS NULL OR a.id > $3)
-             AND ($5::bigint IS NULL OR a.id > $5)
-           ORDER BY a.id DESC LIMIT $4"#,
+             AND ($2::bigint IS NULL OR f.id < $2)
+             AND ($3::bigint IS NULL OR f.id > $3)
+             AND ($5::bigint IS NULL OR f.id > $5)
+           ORDER BY f.id DESC LIMIT $4"#,
         auth.account_id, max_id, since_id, limit, min_id
     )
     .fetch_all(&state.db)
     .await?;
 
-    let api_accounts = batch_accounts_to_api(&state, &accounts).await;
-    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+    let first_req_id = rows.first().map(|r| r.req_id.to_string());
+    let last_req_id = rows.last().map(|r| r.req_id.to_string());
+    let account_ids: Vec<i64> = rows.iter().map(|r| r.account_id).collect();
+
+    let accounts = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+        &account_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let account_map: std::collections::HashMap<i64, Account> =
+        accounts.into_iter().map(|a| (a.id, a)).collect();
+    let accounts_ordered: Vec<Account> = account_ids.iter()
+        .filter_map(|id| account_map.get(id).cloned())
+        .collect();
+
+    let api_accounts = batch_accounts_to_api(&state, &accounts_ordered).await;
+    let link = first_req_id.zip(last_req_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
