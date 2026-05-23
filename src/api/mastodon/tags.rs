@@ -259,13 +259,21 @@ pub async fn follow_tag(
 
     let history = fetch_tag_history(&state.db, tag_id, instance.id).await;
 
+    let featuring = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM featured_tags WHERE account_id = $1 AND tag_id = $2)",
+        auth.account_id, tag_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+
     Ok(Json(Tag {
         id: tag_id.to_string(),
         url: tag_url(domain, &name),
         name,
         history,
         following: Some(true),
-        featuring: Some(false),
+        featuring: Some(featuring),
     }))
 }
 
@@ -297,12 +305,20 @@ pub async fn unfollow_tag(
 
     let history = fetch_tag_history(&state.db, tag_id, instance.id).await;
 
+    let featuring = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM featured_tags WHERE account_id = $1 AND tag_id = $2)",
+        auth.account_id, tag_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+
     Ok(Json(Tag {
         id: tag_id.to_string(),
         url: tag_url(domain, &name),
         name,
         history,
         following: Some(false),
-        featuring: Some(false),
+        featuring: Some(featuring),
     }))
 }
