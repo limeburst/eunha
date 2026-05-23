@@ -104,30 +104,8 @@ async fn fetch_poll(state: &AppState, id: i64) -> AppResult<models::Poll> {
 async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i64>) -> AppResult<Poll> {
     let option_titles: Vec<String> = poll.options.clone();
 
-    // Compute per-option vote counts from the actual poll_votes table
-    let per_option_counts = sqlx::query!(
-        "SELECT choice, COUNT(*) as cnt FROM poll_votes WHERE poll_id = $1 GROUP BY choice",
-        poll.id,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    let options: Vec<PollOption> = option_titles.iter().enumerate().map(|(i, title)| {
-        let cnt = per_option_counts.iter()
-            .find(|r| r.choice == i as i32)
-            .and_then(|r| r.cnt)
-            .unwrap_or(0);
-        PollOption { title: title.clone(), votes_count: Some(cnt) }
-    }).collect();
-
-    // voters_count = distinct voters (each voter counted once regardless of multiple-choice)
-    let voters_count = sqlx::query_scalar!(
-        "SELECT COUNT(DISTINCT account_id) FROM poll_votes WHERE poll_id = $1",
-        poll.id,
-    )
-    .fetch_one(&state.db)
-    .await?
-    .unwrap_or(0);
+    let expired = poll.expires_at.map(|e| e < chrono::Utc::now()).unwrap_or(false);
+    let viewer_is_owner = viewer_id.map(|vid| vid == poll.account_id).unwrap_or(false);
 
     let (voted, own_votes) = if let Some(vid) = viewer_id {
         let votes = sqlx::query!(
@@ -137,7 +115,8 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i
         .fetch_all(&state.db)
         .await?;
         if votes.is_empty() {
-            (Some(false), None)
+            // Poll owner counts as having voted (matches Mastodon's voted? logic)
+            (Some(viewer_is_owner), if viewer_is_owner { Some(vec![]) } else { None })
         } else {
             let choices: Vec<i32> = votes.iter().map(|v| v.choice).collect();
             (Some(true), Some(choices))
@@ -146,6 +125,41 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i
         (None, None)
     };
 
+    // Per Mastodon: option vote counts are hidden until expired or the viewer has voted/owns the poll
+    let show_results = expired || voted.unwrap_or(false);
+
+    let per_option_counts = if show_results {
+        sqlx::query!(
+            "SELECT choice, COUNT(*) as cnt FROM poll_votes WHERE poll_id = $1 GROUP BY choice",
+            poll.id,
+        )
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        vec![]
+    };
+
+    let options: Vec<PollOption> = option_titles.iter().enumerate().map(|(i, title)| {
+        let votes_count = if show_results {
+            let cnt = per_option_counts.iter()
+                .find(|r| r.choice == i as i32)
+                .and_then(|r| r.cnt)
+                .unwrap_or(0);
+            Some(cnt)
+        } else {
+            None
+        };
+        PollOption { title: title.clone(), votes_count }
+    }).collect();
+
+    let voters_count = sqlx::query_scalar!(
+        "SELECT COUNT(DISTINCT account_id) FROM poll_votes WHERE poll_id = $1",
+        poll.id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+
     let votes_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM poll_votes WHERE poll_id = $1",
         poll.id,
@@ -153,8 +167,6 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i
     .fetch_one(&state.db)
     .await?
     .unwrap_or(0);
-
-    let expired = poll.expires_at.map(|e| e < chrono::Utc::now()).unwrap_or(false);
 
     Ok(Poll {
         id: poll.id.to_string(),
