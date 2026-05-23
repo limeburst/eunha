@@ -532,5 +532,7 @@ async fn fetch_contact_account(state: &AppState, instance_id: uuid::Uuid) -> Opt
     .await
     .ok()
     .flatten()?;
-    Some(super::convert::account_from_db(&account))
+    let mut api = super::convert::account_from_db(&account);
+    api.emojis = super::accounts::fetch_account_emojis(state, &account).await;
+    Some(api)
 }

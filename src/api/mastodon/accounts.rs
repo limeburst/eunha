@@ -3166,7 +3166,8 @@ pub async fn fetch_statuses_tags(
            JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            JOIN instances i ON i.id = s.instance_id
-           WHERE st.status_id = $1"#,
+           WHERE st.status_id = $1
+           ORDER BY t.name ASC"#,
         status_id,
     )
     .fetch_all(&state.db)
@@ -3188,7 +3189,8 @@ pub async fn fetch_status_mentions(
         r#"SELECT a.id as account_id, a.username, a.domain, a.url
            FROM accounts a
            JOIN mentions m ON m.account_id = a.id
-           WHERE m.status_id = $1"#,
+           WHERE m.status_id = $1
+           ORDER BY m.id ASC"#,
         status_id,
     )
     .fetch_all(&state.db)
@@ -3217,7 +3219,8 @@ pub async fn batch_statuses_tags(
            JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
            JOIN instances i ON i.id = s.instance_id
-           WHERE st.status_id = ANY($1::bigint[])"#,
+           WHERE st.status_id = ANY($1::bigint[])
+           ORDER BY t.name ASC"#,
         status_ids,
     )
     .fetch_all(&state.db)
@@ -3244,7 +3247,8 @@ pub async fn batch_status_mentions(
         r#"SELECT m.status_id, a.id as account_id, a.username, a.domain, a.url
            FROM accounts a
            JOIN mentions m ON m.account_id = a.id
-           WHERE m.status_id = ANY($1::bigint[])"#,
+           WHERE m.status_id = ANY($1::bigint[])
+           ORDER BY m.id ASC"#,
         status_ids,
     )
     .fetch_all(&state.db)
