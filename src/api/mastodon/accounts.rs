@@ -1682,9 +1682,23 @@ pub async fn get_mutes(
     .map(|r| (r.target_account_id, r.expires_at))
     .collect();
     let mute_emojis_map = batch_account_emojis(&state, &accounts).await;
+    let local_mute_ids: Vec<i64> = accounts.iter().filter(|a| a.domain.is_none()).map(|a| a.id).collect();
+    let mute_roles_map: std::collections::HashMap<i64, Vec<super::types::AccountRole>> = if !local_mute_ids.is_empty() {
+        sqlx::query!("SELECT account_id, role FROM users WHERE account_id = ANY($1::bigint[])", &local_mute_ids)
+            .fetch_all(&state.db).await.unwrap_or_default()
+            .into_iter().map(|r| {
+                let roles = match r.role.as_str() {
+                    "admin" => vec![super::types::AccountRole { id: "1".into(), name: "Admin".into(), color: "#6364ff".into() }],
+                    "moderator" => vec![super::types::AccountRole { id: "2".into(), name: "Moderator".into(), color: "#6364ff".into() }],
+                    _ => vec![],
+                };
+                (r.account_id, roles)
+            }).collect()
+    } else { std::collections::HashMap::new() };
     let api_accounts: Vec<ApiAccount> = accounts.iter().map(|a| {
         let mut api = account_from_db(a);
         api.emojis = mute_emojis_map.get(&a.id).cloned().unwrap_or_default();
+        api.roles = mute_roles_map.get(&a.id).cloned().unwrap_or_default();
         if let Some(expires_at) = mute_expiries.get(&a.id).and_then(|e| *e) {
             api.mute_expires_at = Some(super::convert::mastodon_date(expires_at));
         }
