@@ -408,6 +408,8 @@ pub struct CustomEmoji {
     pub visible_in_picker: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub featured: Option<bool>,
 }
 
 // ── Poll ───────────────────────────────────────────────────────────────────
@@ -457,6 +459,8 @@ pub struct PreviewCard {
     pub blurhash: Option<String>,
     pub published_at: Option<String>,
     pub authors: Vec<PreviewCardAuthor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_attribution: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

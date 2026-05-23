@@ -30,6 +30,7 @@ pub async fn list_custom_emojis(
             static_url: r.static_image_url.unwrap_or(r.image_url),
             visible_in_picker: r.visible_in_picker,
             category: None,
+            featured: None,
         })
         .collect();
 

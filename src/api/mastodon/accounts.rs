@@ -3260,6 +3260,7 @@ pub async fn batch_status_emojis(
                 static_url: r.static_image_url.unwrap_or(r.image_url),
                 visible_in_picker: r.visible_in_picker,
                 category: None,
+                featured: None,
             }))
             .collect();
 
@@ -3436,6 +3437,7 @@ pub async fn batch_status_cards(
             blurhash: r.blurhash,
             published_at: None,
             authors: vec![],
+            missing_attribution: None,
         });
     }
     Ok(result)
@@ -3549,6 +3551,7 @@ async fn fetch_status_emojis(
         static_url: r.static_image_url.unwrap_or(r.image_url),
         visible_in_picker: r.visible_in_picker,
         category: None,
+        featured: None,
     }).collect()
 }
 
@@ -3601,6 +3604,7 @@ pub async fn fetch_account_emojis(
         static_url: r.static_image_url.unwrap_or(r.image_url),
         visible_in_picker: r.visible_in_picker,
         category: None,
+        featured: None,
     }).collect()
 }
 
@@ -3644,6 +3648,7 @@ pub(super) async fn fetch_status_card(
         blurhash: r.blurhash,
         published_at: None,
         authors: vec![],
+        missing_attribution: None,
     })
 }
 

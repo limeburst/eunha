@@ -227,6 +227,7 @@ pub async fn trending_links(
         published_at: None,
         authors: vec![],
         image_description: String::new(),
+        missing_attribution: None,
     }).collect();
 
     Ok(Json(cards))
