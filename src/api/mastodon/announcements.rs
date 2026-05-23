@@ -6,7 +6,7 @@ use axum::{
 
 use crate::{
     error::AppResult,
-    middleware::{AuthenticatedUser, ResolvedInstance},
+    middleware::AuthenticatedUser,
     state::AppState,
 };
 use super::types::{Announcement, AnnouncementReaction};
@@ -15,7 +15,6 @@ use super::types::{Announcement, AnnouncementReaction};
 
 pub async fn get_announcements(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<Announcement>>> {
     let viewer_id = auth.map(|Extension(a)| a.account_id);
@@ -24,11 +23,9 @@ pub async fn get_announcements(
         r#"SELECT id, text, published, all_day, starts_at, ends_at,
                   published_at, created_at, updated_at
            FROM announcements
-           WHERE instance_id = $1
-             AND published = true
+           WHERE published = true
              AND (ends_at IS NULL OR ends_at > now())
            ORDER BY published_at DESC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?;

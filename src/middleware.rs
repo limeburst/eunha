@@ -1,64 +1,24 @@
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
     middleware::Next,
-    response::{Html, IntoResponse, Response},
+    response::Response,
 };
 
-use crate::{db, error::AppError, state::AppState, db::models::Instance, templates};
+use crate::{config::InstanceConfig, error::AppError, state::AppState};
 
-/// Resolved instance, injected into request extensions by [`resolve_instance`].
+/// Resolved instance config, injected into request extensions by [`resolve_instance`].
 #[derive(Clone)]
-pub struct ResolvedInstance(pub Instance);
+pub struct ResolvedInstance(pub InstanceConfig);
 
-/// Extracts the `Host` header, strips the port, and looks up the instance.
-/// Returns 404 if the domain is not configured.
+/// Injects the single-tenant instance config into every request's extensions.
 pub async fn resolve_instance(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    let host = req
-        .headers()
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
-
-    if host == state.config.console_domain {
-        return Ok(next.run(req).await);
-    }
-
-    match db::get_instance_by_domain(&state.db, &host).await {
-        Ok(instance) => {
-            // If the request arrived on the eunha.social subdomain but the
-            // instance has a canonical custom domain, redirect there permanently.
-            if host == instance.domain {
-                if let Some(ref custom) = instance.custom_domain {
-                    let location = rebuild_url(&req, custom);
-                    return Ok((
-                        StatusCode::MOVED_PERMANENTLY,
-                        [(axum::http::header::LOCATION, location)],
-                    )
-                        .into_response());
-                }
-            }
-            req.extensions_mut().insert(ResolvedInstance(instance));
-            Ok(next.run(req).await)
-        }
-        Err(AppError::NotFound) => Ok(unknown_host_page(&host).into_response()),
-        Err(e) => Err(e),
-    }
-}
-
-/// Reconstruct the request URL swapping in a different host.
-fn rebuild_url(req: &Request, new_host: &str) -> String {
-    let uri = req.uri();
-    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
-    format!("https://{new_host}{path_and_query}")
+    req.extensions_mut()
+        .insert(ResolvedInstance((*state.instance).clone()));
+    Ok(next.run(req).await)
 }
 
 /// Resolved OAuth token + account, injected by [`authenticate`].
@@ -186,11 +146,6 @@ pub async fn log_failures(req: Request, next: Next) -> Response {
     }
 
     response
-}
-
-fn unknown_host_page(host: &str) -> impl IntoResponse {
-    let html = templates::render("unknown_host.html", minijinja::context! { host });
-    (StatusCode::NOT_FOUND, Html(html))
 }
 
 fn extract_bearer(req: &Request) -> Option<String> {

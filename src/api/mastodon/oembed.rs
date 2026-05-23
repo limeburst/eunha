@@ -50,11 +50,9 @@ pub async fn get_oembed(
            FROM statuses s
            JOIN accounts a ON a.id = s.account_id
            WHERE s.id = $1
-             AND s.instance_id = $2
              AND s.deleted_at IS NULL
              AND s.visibility IN (0, 1)"#,
         status_id,
-        instance.id,
     ).fetch_optional(&state.db).await?.ok_or(AppError::NotFound)?;
 
     let base_url = format!("https://{}", instance.domain);

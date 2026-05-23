@@ -128,7 +128,6 @@ pub struct LookupQuery {
 
 pub async fn lookup_account(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(q): Query<LookupQuery>,
 ) -> AppResult<Json<ApiAccount>> {
     // acct can be "username" (local) or "username@domain" (remote)
@@ -140,9 +139,8 @@ pub async fn lookup_account(
     let found = match domain {
         None => sqlx::query_as!(
             Account,
-            "SELECT * FROM accounts WHERE lower(username) = $1 AND instance_id = $2 AND domain IS NULL",
+            "SELECT * FROM accounts WHERE lower(username) = $1 AND domain IS NULL",
             username,
-            instance.id,
         )
         .fetch_optional(&state.db)
         .await?,
@@ -223,13 +221,14 @@ pub async fn get_account(
     let account = fetch_account(&state, id).await?;
     // Local accounts that are unconfirmed or pending approval are invisible (404).
     if account.domain.is_none() {
+        let approval_required = state.instance.approval_required;
         let ok = sqlx::query_scalar!(
             r#"SELECT u.confirmed_at IS NOT NULL
-                 AND (u.approved_at IS NOT NULL OR NOT i.approval_required) AS "ok!"
+                 AND (u.approved_at IS NOT NULL OR NOT $2) AS "ok!"
                FROM users u
-               JOIN instances i ON i.id = u.instance_id
                WHERE u.account_id = $1"#,
             account.id,
+            approval_required,
         )
         .fetch_optional(&state.db)
         .await?;
@@ -653,7 +652,6 @@ pub struct FollowParams {
 pub async fn follow_account(
     State(state): State<AppState>,
     Path(target_id): Path<i64>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<FollowParams>>,
 ) -> AppResult<Json<Relationship>> {
@@ -763,13 +761,12 @@ pub async fn follow_account(
 
     let mut redis = state.redis.clone();
     let db = state.db.clone();
-    let iid = instance.id;
     let follower_id = auth.account_id;
     if feed::sync_fanout() {
-        feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
+        feed::backfill_follow(&mut redis, &db, follower_id, target_id).await;
     } else {
         tokio::spawn(async move {
-            feed::backfill_follow(&mut redis, &db, iid, follower_id, target_id).await;
+            feed::backfill_follow(&mut redis, &db, follower_id, target_id).await;
         });
     }
 
@@ -1126,7 +1123,6 @@ pub struct AccountSearchQuery {
 
 pub async fn search_accounts(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(q): Query<AccountSearchQuery>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
@@ -1154,11 +1150,10 @@ pub async fn search_accounts(
         sqlx::query_as!(
             Account,
             r#"SELECT * FROM accounts
-               WHERE instance_id = $1
-                 AND suspended_at IS NULL
-                 AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
-               ORDER BY username LIMIT $3"#,
-            instance.id, pattern, limit
+               WHERE suspended_at IS NULL
+                 AND (lower(username) LIKE $1 OR lower(display_name) LIKE $1)
+               ORDER BY username LIMIT $2"#,
+            pattern, limit
         )
         .fetch_all(&state.db)
         .await?
@@ -1350,7 +1345,7 @@ pub async fn update_credentials(
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
                 let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
-                    let key = crate::media::account_avatar_key(instance.id, auth.account_id, &content_type);
+                    let key = crate::media::account_avatar_key(auth.account_id, &content_type);
                     state.storage.store(&data, &key, &content_type).await?;
                     avatar_url = Some(state.storage.public_url(&key));
                 }
@@ -1359,7 +1354,7 @@ pub async fn update_credentials(
                 let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
                 let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
-                    let key = crate::media::account_header_key(instance.id, auth.account_id, &content_type);
+                    let key = crate::media::account_header_key(auth.account_id, &content_type);
                     state.storage.store(&data, &key, &content_type).await?;
                     header_url = Some(state.storage.public_url(&key));
                 }
@@ -1912,7 +1907,6 @@ pub async fn get_follow_requests(
 pub async fn authorize_follow_request(
     State(state): State<AppState>,
     Path(requester_id): Path<i64>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
@@ -1960,13 +1954,12 @@ pub async fn authorize_follow_request(
 
         let mut redis = state.redis.clone();
         let db = state.db.clone();
-        let iid = instance.id;
         let followed_id = auth.account_id;
         if feed::sync_fanout() {
-            feed::backfill_follow(&mut redis, &db, iid, requester_id, followed_id).await;
+            feed::backfill_follow(&mut redis, &db, requester_id, followed_id).await;
         } else {
             tokio::spawn(async move {
-                feed::backfill_follow(&mut redis, &db, iid, requester_id, followed_id).await;
+                feed::backfill_follow(&mut redis, &db, requester_id, followed_id).await;
             });
         }
     }
@@ -2666,7 +2659,6 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
 
 pub async fn get_suggestions(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
@@ -2678,17 +2670,14 @@ pub async fn get_suggestions(
         r#"SELECT a.* FROM accounts a
            JOIN follows f ON f.account_id = a.id
            WHERE f.target_account_id = $1
-            
-             AND a.instance_id = $2
              AND a.domain IS NULL
              AND NOT EXISTS (
                SELECT 1 FROM follows f2
                WHERE f2.account_id = $1 AND f2.target_account_id = a.id
              )
            ORDER BY f.created_at DESC
-           LIMIT $3"#,
+           LIMIT $2"#,
         auth.account_id,
-        instance.id,
         limit,
     )
     .fetch_all(&state.db)
@@ -2719,7 +2708,6 @@ pub async fn dismiss_suggestion(
 
 pub async fn get_suggestions_v2(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<SuggestionV2>>> {
@@ -2731,8 +2719,6 @@ pub async fn get_suggestions_v2(
         r#"SELECT a.* FROM accounts a
            JOIN follows f ON f.account_id = a.id
            WHERE f.target_account_id = $1
-            
-             AND a.instance_id = $2
              AND a.domain IS NULL
              AND NOT EXISTS (
                SELECT 1 FROM follows f2
@@ -2743,9 +2729,8 @@ pub async fn get_suggestions_v2(
                WHERE sd.account_id = $1 AND sd.target_account_id = a.id
              )
            ORDER BY f.created_at DESC
-           LIMIT $3"#,
+           LIMIT $2"#,
         auth.account_id,
-        instance.id,
         limit,
     )
     .fetch_all(&state.db)
@@ -3024,7 +3009,7 @@ pub async fn get_account_featured_tags(
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Vec<super::types::FeaturedTag>>> {
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let rows = sqlx::query!(
         r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at, a.username, a.domain
            FROM featured_tags ft
@@ -3203,7 +3188,6 @@ pub struct DirectoryQuery {
 
 pub async fn get_directory(
     State(state): State<AppState>,
-    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Query(q): Query<DirectoryQuery>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let limit = q.limit.unwrap_or(40).min(80).max(1);
@@ -3215,16 +3199,15 @@ pub async fn get_directory(
         sqlx::query_as!(
             Account,
             r#"SELECT * FROM accounts
-               WHERE instance_id = $1
-                 AND discoverable = true
+               WHERE discoverable = true
                  AND suspended_at IS NULL
-                 AND (NOT $2::bool OR domain IS NULL)
+                 AND (NOT $1::bool OR domain IS NULL)
                  AND (domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = domain
                  ))
                ORDER BY created_at DESC
-               LIMIT $3 OFFSET $4"#,
-            instance.id, local_only, limit, offset,
+               LIMIT $2 OFFSET $3"#,
+            local_only, limit, offset,
         )
         .fetch_all(&state.db)
         .await?
@@ -3232,10 +3215,9 @@ pub async fn get_directory(
         sqlx::query_as!(
             Account,
             r#"SELECT a.* FROM accounts a
-               WHERE a.instance_id = $1
-                 AND a.discoverable = true
+               WHERE a.discoverable = true
                  AND a.suspended_at IS NULL
-                 AND (NOT $2::bool OR a.domain IS NULL)
+                 AND (NOT $1::bool OR a.domain IS NULL)
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
@@ -3243,8 +3225,8 @@ pub async fn get_directory(
                    SELECT MAX(s.created_at) FROM statuses s
                    WHERE s.account_id = a.id AND s.deleted_at IS NULL
                ) DESC NULLS LAST
-               LIMIT $3 OFFSET $4"#,
-            instance.id, local_only, limit, offset,
+               LIMIT $2 OFFSET $3"#,
+            local_only, limit, offset,
         )
         .fetch_all(&state.db)
         .await?
@@ -3321,12 +3303,11 @@ pub async fn fetch_statuses_tags(
     state: &AppState,
     status_id: i64,
 ) -> AppResult<Vec<super::types::StatusTag>> {
+    let domain = &state.instance.domain;
     let rows = sqlx::query!(
-        r#"SELECT t.name, i.domain
+        r#"SELECT t.name
            FROM tags t
            JOIN statuses_tags st ON st.tag_id = t.id
-           JOIN statuses s ON s.id = st.status_id
-           JOIN instances i ON i.id = s.instance_id
            WHERE st.status_id = $1
            ORDER BY t.name ASC"#,
         status_id,
@@ -3336,7 +3317,7 @@ pub async fn fetch_statuses_tags(
     Ok(rows.into_iter().map(|r| {
         let tag_lower = r.name.to_lowercase();
         super::types::StatusTag {
-            url: format!("https://{}/tags/{}", r.domain, urlencoding::encode(&tag_lower)),
+            url: format!("https://{}/tags/{}", domain, urlencoding::encode(&tag_lower)),
             name: r.name,
         }
     }).collect())
@@ -3374,12 +3355,11 @@ pub async fn batch_statuses_tags(
     if status_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
+    let domain = &state.instance.domain;
     let rows = sqlx::query!(
-        r#"SELECT st.status_id, t.name, i.domain
+        r#"SELECT st.status_id, t.name
            FROM tags t
            JOIN statuses_tags st ON st.tag_id = t.id
-           JOIN statuses s ON s.id = st.status_id
-           JOIN instances i ON i.id = s.instance_id
            WHERE st.status_id = ANY($1::bigint[])
            ORDER BY t.name ASC"#,
         status_ids,
@@ -3390,7 +3370,7 @@ pub async fn batch_statuses_tags(
     for r in rows {
         let tag_lower = r.name.to_lowercase();
         map.entry(r.status_id).or_default().push(super::types::StatusTag {
-            url: format!("https://{}/tags/{}", r.domain, urlencoding::encode(&tag_lower)),
+            url: format!("https://{}/tags/{}", domain, urlencoding::encode(&tag_lower)),
             name: r.name,
         });
     }
@@ -3455,55 +3435,56 @@ pub async fn batch_status_emojis(
         codes
     }
 
-    // Group statuses by instance_id; collect all shortcodes per status
-    let mut per_instance: std::collections::HashMap<uuid::Uuid, Vec<(i64, Vec<String>)>> = std::collections::HashMap::new();
+    // Collect all shortcodes per status
+    let mut status_codes: Vec<(i64, Vec<String>)> = Vec::new();
     for s in statuses {
         let combined = format!("{} {}", s.spoiler_text, s.text);
         let codes = extract_shortcodes(&combined);
         if !codes.is_empty() {
-            per_instance.entry(s.instance_id).or_default().push((s.id, codes));
+            status_codes.push((s.id, codes));
         }
     }
 
     let mut map: std::collections::HashMap<i64, Vec<super::types::CustomEmoji>> = std::collections::HashMap::new();
 
-    for (instance_id, id_codes) in per_instance {
-        let all_codes: Vec<String> = id_codes.iter()
-            .flat_map(|(_, codes)| codes.iter().cloned())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
+    if status_codes.is_empty() {
+        return Ok(map);
+    }
+
+    let all_codes: Vec<String> = status_codes.iter()
+        .flat_map(|(_, codes)| codes.iter().cloned())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let rows = sqlx::query!(
+        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+           FROM custom_emojis
+           WHERE shortcode = ANY($1) AND domain IS NULL AND NOT disabled"#,
+        &all_codes,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let emoji_by_code: std::collections::HashMap<String, super::types::CustomEmoji> = rows
+        .into_iter()
+        .map(|r| (r.shortcode.clone(), super::types::CustomEmoji {
+            shortcode: r.shortcode,
+            url: r.image_url.clone(),
+            static_url: r.static_image_url.unwrap_or(r.image_url),
+            visible_in_picker: r.visible_in_picker,
+            category: None,
+            featured: None,
+        }))
+        .collect();
+
+    for (status_id, codes) in status_codes {
+        let unique_codes: std::collections::HashSet<&String> = codes.iter().collect();
+        let emojis: Vec<super::types::CustomEmoji> = unique_codes.iter()
+            .filter_map(|c| emoji_by_code.get(*c).cloned())
             .collect();
-
-        let rows = sqlx::query!(
-            r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
-               FROM custom_emojis
-               WHERE instance_id = $1 AND shortcode = ANY($2) AND NOT disabled"#,
-            instance_id,
-            &all_codes,
-        )
-        .fetch_all(&state.db)
-        .await?;
-
-        let emoji_by_code: std::collections::HashMap<String, super::types::CustomEmoji> = rows
-            .into_iter()
-            .map(|r| (r.shortcode.clone(), super::types::CustomEmoji {
-                shortcode: r.shortcode,
-                url: r.image_url.clone(),
-                static_url: r.static_image_url.unwrap_or(r.image_url),
-                visible_in_picker: r.visible_in_picker,
-                category: None,
-                featured: None,
-            }))
-            .collect();
-
-        for (status_id, codes) in id_codes {
-            let unique_codes: std::collections::HashSet<&String> = codes.iter().collect();
-            let emojis: Vec<super::types::CustomEmoji> = unique_codes.iter()
-                .filter_map(|c| emoji_by_code.get(*c).cloned())
-                .collect();
-            if !emojis.is_empty() {
-                map.insert(status_id, emojis);
-            }
+        if !emojis.is_empty() {
+            map.insert(status_id, emojis);
         }
     }
 
@@ -3779,8 +3760,7 @@ async fn fetch_status_emojis(
     let rows = sqlx::query!(
         r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
            FROM custom_emojis
-           WHERE instance_id = $1 AND shortcode = ANY($2) AND NOT disabled"#,
-        s.instance_id,
+           WHERE shortcode = ANY($1) AND domain IS NULL AND NOT disabled"#,
         &shortcodes.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
     )
     .fetch_all(&state.db)
@@ -3833,8 +3813,7 @@ pub async fn fetch_account_emojis(
     let rows = sqlx::query!(
         r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
            FROM custom_emojis
-           WHERE instance_id = $1 AND shortcode = ANY($2) AND NOT disabled"#,
-        a.instance_id,
+           WHERE shortcode = ANY($1) AND domain IS NULL AND NOT disabled"#,
         &shortcodes,
     )
     .fetch_all(&state.db)
@@ -3889,52 +3868,40 @@ pub async fn batch_account_emojis(
         return std::collections::HashMap::new();
     }
 
-    // Collect all shortcodes needed, per instance_id bucket
-    let mut instance_shortcodes: std::collections::HashMap<uuid::Uuid, std::collections::HashSet<String>> =
+    // Collect all shortcodes per account
+    let mut account_shortcodes: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
-    let mut account_shortcodes: std::collections::HashMap<i64, (uuid::Uuid, Vec<String>)> =
-        std::collections::HashMap::new();
+    let mut all_shortcodes_set: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     for a in accounts {
         let codes = extract_account_shortcodes(a);
         if !codes.is_empty() {
-            instance_shortcodes
-                .entry(a.instance_id)
-                .or_default()
-                .extend(codes.iter().cloned());
-            account_shortcodes.insert(a.id, (a.instance_id, codes));
+            all_shortcodes_set.extend(codes.iter().cloned());
+            account_shortcodes.insert(a.id, codes);
         }
     }
 
-    // Fetch all emojis for all instances at once via a single query
-    // We join instance_id with shortcode via unnest
-    let mut all_instance_ids: Vec<uuid::Uuid> = Vec::new();
-    let mut all_shortcodes: Vec<String> = Vec::new();
-    for (iid, codes) in &instance_shortcodes {
-        for code in codes {
-            all_instance_ids.push(*iid);
-            all_shortcodes.push(code.clone());
-        }
-    }
-
-    if all_shortcodes.is_empty() {
+    if all_shortcodes_set.is_empty() {
         return std::collections::HashMap::new();
     }
 
+    let all_shortcodes: Vec<String> = all_shortcodes_set.into_iter().collect();
+
     let rows = sqlx::query!(
-        r#"SELECT ce.instance_id, ce.shortcode, ce.image_url, ce.static_image_url, ce.visible_in_picker
-           FROM custom_emojis ce
-           WHERE ce.disabled = false
-             AND (ce.instance_id, ce.shortcode) IN (SELECT * FROM UNNEST($1::uuid[], $2::text[]))"#,
-        &all_instance_ids as &[uuid::Uuid],
+        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+           FROM custom_emojis
+           WHERE disabled = false
+             AND domain IS NULL
+             AND shortcode = ANY($1)"#,
         &all_shortcodes as &[String],
     )
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
 
-    // Build a map: (instance_id, shortcode) → CustomEmoji
-    let emoji_lookup: std::collections::HashMap<(uuid::Uuid, String), super::types::CustomEmoji> = rows
+    // Build a map: shortcode → CustomEmoji
+    let emoji_lookup: std::collections::HashMap<String, super::types::CustomEmoji> = rows
         .into_iter()
         .map(|r| {
             let emoji = super::types::CustomEmoji {
@@ -3945,16 +3912,18 @@ pub async fn batch_account_emojis(
                 category: None,
                 featured: None,
             };
-            ((r.instance_id, r.shortcode), emoji)
+            (r.shortcode, emoji)
         })
         .collect();
 
     // Build result map: account_id → emojis
     let mut result = std::collections::HashMap::new();
     for a in accounts {
-        if let Some((iid, codes)) = account_shortcodes.get(&a.id) {
+        if let Some(codes) = account_shortcodes.get(&a.id) {
+            let mut seen = std::collections::HashSet::new();
             let emojis: Vec<_> = codes.iter()
-                .filter_map(|code| emoji_lookup.get(&(*iid, code.clone())).cloned())
+                .filter(|code| seen.insert(*code))
+                .filter_map(|code| emoji_lookup.get(code).cloned())
                 .collect();
             if !emojis.is_empty() {
                 result.insert(a.id, emojis);

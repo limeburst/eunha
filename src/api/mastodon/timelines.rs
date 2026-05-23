@@ -10,7 +10,7 @@ use crate::{
     db::models::{Account, Status as DbStatus},
     error::{AppError, AppResult},
     feed,
-    middleware::{AuthenticatedUser, ResolvedInstance},
+    middleware::AuthenticatedUser,
     state::AppState,
 };
 use super::{
@@ -33,7 +33,6 @@ pub struct PublicTimelineQuery {
 
 pub async fn public_timeline(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PublicTimelineQuery>,
@@ -60,36 +59,34 @@ pub async fn public_timeline(
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
                  AND (NOT s.reply OR s.in_reply_to_id IS NOT NULL)
-                 AND (NOT $8::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
-                 AND s.instance_id = $2
+                 AND (NOT $7::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
                  AND (NOT $1::bool OR a.domain IS NULL)
-                 AND (NOT $5::bool OR a.domain IS NOT NULL)
+                 AND (NOT $4::bool OR a.domain IS NOT NULL)
                  AND a.suspended_at IS NULL
                  AND a.silenced_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
-                 AND ($7::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM account_domain_blocks udb WHERE udb.account_id = $7 AND udb.domain = a.domain
+                 AND ($6::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM account_domain_blocks udb WHERE udb.account_id = $6 AND udb.domain = a.domain
                  ))
-                 AND ($3::bigint IS NULL OR s.id > $3)
-                 AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 AND ($2::bigint IS NULL OR s.id > $2)
+                 AND (NOT $5::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-                 AND ($7::bigint IS NULL OR NOT EXISTS (
+                 AND ($6::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $7 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $7)
+                     WHERE (b.account_id = $6 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $6)
                  ))
-                 AND ($7::bigint IS NULL OR NOT EXISTS (
+                 AND ($6::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $7 AND mu.target_account_id = s.account_id
+                     WHERE mu.account_id = $6 AND mu.target_account_id = s.account_id
                        AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))
                ORDER BY s.id ASC
-               LIMIT $4"#,
+               LIMIT $3"#,
             local_only,
-            instance.id,
             min_id,
             limit,
             remote_only,
@@ -109,37 +106,35 @@ pub async fn public_timeline(
                  AND s.deleted_at IS NULL
                  AND s.reblog_of_id IS NULL
                  AND (NOT s.reply OR s.in_reply_to_id IS NOT NULL)
-                 AND (NOT $9::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
-                 AND s.instance_id = $2
+                 AND (NOT $8::bool OR NOT s.reply OR s.in_reply_to_account_id = s.account_id)
                  AND (NOT $1::bool OR a.domain IS NULL)
-                 AND (NOT $6::bool OR a.domain IS NOT NULL)
+                 AND (NOT $5::bool OR a.domain IS NOT NULL)
                  AND a.suspended_at IS NULL
                  AND a.silenced_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
-                 AND ($8::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM account_domain_blocks udb WHERE udb.account_id = $8 AND udb.domain = a.domain
+                 AND ($7::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM account_domain_blocks udb WHERE udb.account_id = $7 AND udb.domain = a.domain
                  ))
-                 AND ($3::bigint IS NULL OR s.id < $3)
-                 AND ($5::bigint IS NULL OR s.id > $5)
-                 AND (NOT $7::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
+                 AND ($2::bigint IS NULL OR s.id < $2)
+                 AND ($4::bigint IS NULL OR s.id > $4)
+                 AND (NOT $6::bool OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
                  AND (s.text != ''
                       OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
-                 AND ($8::bigint IS NULL OR NOT EXISTS (
+                 AND ($7::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $8)
+                     WHERE (b.account_id = $7 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $7)
                  ))
-                 AND ($8::bigint IS NULL OR NOT EXISTS (
+                 AND ($7::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $8 AND mu.target_account_id = s.account_id
+                     WHERE mu.account_id = $7 AND mu.target_account_id = s.account_id
                        AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))
                ORDER BY s.id DESC
-               LIMIT $4"#,
+               LIMIT $3"#,
             local_only,
-            instance.id,
             max_id,
             limit,
             since_id,
@@ -164,7 +159,6 @@ pub async fn home_timeline(
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:statuses")?;
@@ -177,7 +171,6 @@ pub async fn home_timeline(
     let mut redis = state.redis.clone();
     let redis_ids = feed::feed_get(
         &mut redis,
-        instance.id,
         auth.account_id,
         max_id,
         since_id,
@@ -195,13 +188,12 @@ pub async fn home_timeline(
         {
             let mut redis2 = state.redis.clone();
             let db = state.db.clone();
-            let iid = instance.id;
             let account_id = auth.account_id;
             if feed::sync_fanout() {
-                feed::feed_populate(&mut redis2, iid, account_id, &db).await;
+                feed::feed_populate(&mut redis2, account_id, &db).await;
             } else {
                 tokio::spawn(async move {
-                    feed::feed_populate(&mut redis2, iid, account_id, &db).await;
+                    feed::feed_populate(&mut redis2, account_id, &db).await;
                 });
             }
         }
@@ -475,7 +467,6 @@ async fn home_timeline_from_db(
 pub async fn list_timeline(
     State(state): State<AppState>,
     Path(list_id): Path<i64>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -500,7 +491,6 @@ pub async fn list_timeline(
     let mut redis = state.redis.clone();
     let redis_ids = feed::list_feed_get(
         &mut redis,
-        instance.id,
         list_id,
         max_id,
         since_id,
@@ -516,14 +506,13 @@ pub async fn list_timeline(
         {
             let mut redis2 = state.redis.clone();
             let db = state.db.clone();
-            let iid = instance.id;
             let owner_id = auth.account_id;
             let policy = replies_policy.to_string();
             if feed::sync_fanout() {
-                feed::list_feed_populate(&mut redis2, iid, list_id, owner_id, &policy, &db).await;
+                feed::list_feed_populate(&mut redis2, list_id, owner_id, &policy, &db).await;
             } else {
                 tokio::spawn(async move {
-                    feed::list_feed_populate(&mut redis2, iid, list_id, owner_id, &policy, &db).await;
+                    feed::list_feed_populate(&mut redis2, list_id, owner_id, &policy, &db).await;
                 });
             }
         }
@@ -679,7 +668,6 @@ async fn list_timeline_from_db(
 
 pub async fn tag_timeline(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(hashtag): Path<String>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -705,23 +693,22 @@ pub async fn tag_timeline(
 
     let base_conditions = r#"
                WHERE lower(t.name) = $1
-                 AND s.instance_id = $2
                  AND s.visibility = 0
                  AND s.deleted_at IS NULL
-                 AND ($5::text[] IS NULL OR EXISTS (
+                 AND ($4::text[] IS NULL OR EXISTS (
                      SELECT 1 FROM statuses_tags st2
                      JOIN tags t2 ON t2.id = st2.tag_id
-                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($5)
+                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($4)
                  ))
-                 AND ($6::text[] IS NULL OR (
+                 AND ($5::text[] IS NULL OR (
                      SELECT COUNT(DISTINCT lower(t2.name))
                      FROM statuses_tags st2 JOIN tags t2 ON t2.id = st2.tag_id
-                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($6)
-                 ) = array_length($6, 1))
-                 AND ($7::text[] IS NULL OR NOT EXISTS (
+                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($5)
+                 ) = array_length($5, 1))
+                 AND ($6::text[] IS NULL OR NOT EXISTS (
                      SELECT 1 FROM statuses_tags st2
                      JOIN tags t2 ON t2.id = st2.tag_id
-                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($7)
+                     WHERE st2.status_id = s.id AND lower(t2.name) = ANY($6)
                  ))"#;
 
     let viewer_id: Option<i64> = auth.as_ref().map(|Extension(a)| a.account_id);
@@ -732,23 +719,22 @@ pub async fn tag_timeline(
                JOIN statuses_tags st ON st.status_id = s.id
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
-                 AND ($3::bigint IS NULL OR s.id > $3)
-                 AND ($8::bigint IS NULL OR NOT EXISTS (
+                 AND ($2::bigint IS NULL OR s.id > $2)
+                 AND ($7::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $8)
+                     WHERE (b.account_id = $7 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $7)
                  ))
-                 AND ($8::bigint IS NULL OR NOT EXISTS (
+                 AND ($7::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $8 AND mu.target_account_id = s.account_id
+                     WHERE mu.account_id = $7 AND mu.target_account_id = s.account_id
                        AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))
                ORDER BY s.id ASC
-               LIMIT $4"#
+               LIMIT $3"#
         );
         sqlx::query_as(&sql)
             .bind(&tag_name)
-            .bind(instance.id)
             .bind(min_id)
             .bind(limit)
             .bind(&any_tags)
@@ -763,24 +749,23 @@ pub async fn tag_timeline(
                JOIN statuses_tags st ON st.status_id = s.id
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
-                 AND ($3::bigint IS NULL OR s.id < $3)
-                 AND ($4::bigint IS NULL OR s.id > $4)
-                 AND ($9::bigint IS NULL OR NOT EXISTS (
+                 AND ($2::bigint IS NULL OR s.id < $2)
+                 AND ($3::bigint IS NULL OR s.id > $3)
+                 AND ($8::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $9 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $9)
+                     WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $8)
                  ))
-                 AND ($9::bigint IS NULL OR NOT EXISTS (
+                 AND ($8::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $9 AND mu.target_account_id = s.account_id
+                     WHERE mu.account_id = $8 AND mu.target_account_id = s.account_id
                        AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))
                ORDER BY s.id DESC
-               LIMIT $8"#
+               LIMIT $7"#
         );
         sqlx::query_as(&sql)
             .bind(&tag_name)
-            .bind(instance.id)
             .bind(max_id)
             .bind(since_id)
             .bind(&any_tags)

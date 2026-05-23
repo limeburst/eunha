@@ -18,7 +18,7 @@ use web_push::{
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// Path to the server config TOML file (database_url is used).
+    /// Path to the server config TOML file (database_url and VAPID keys are used).
     #[arg(long)]
     config: Option<String>,
 
@@ -48,53 +48,39 @@ async fn main() -> Result<()> {
         .or_else(|| cfg.as_ref().map(|c| c.database_url.clone()))
         .context("--db <url> or --config <path> with database_url")?;
 
+    let vapid_private_key = cfg.as_ref()
+        .map(|c| c.instance.vapid_private_key.clone())
+        .unwrap_or_default();
+
     let db = PgPoolOptions::new()
         .max_connections(3)
         .connect(&db_url)
         .await
         .context("connect to database")?;
 
-    // Resolve acct → account UUID
-    let (username, domain_part): (&str, Option<&str>) = if let Some(at) = args.acct.find('@') {
+    // Resolve acct → account id
+    let (username, _domain_part): (&str, Option<&str>) = if let Some(at) = args.acct.find('@') {
         let (u, d) = args.acct.split_at(at);
         (u, Some(&d[1..]))
     } else {
         (args.acct.as_str(), None)
     };
 
-    let account_id: i64 = if let Some(domain) = domain_part {
-        sqlx::query_scalar!(
-            r#"SELECT a.id FROM accounts a
-               JOIN instances i ON i.id = a.instance_id
-               WHERE a.username = $1
-                 AND (i.domain = $2 OR i.custom_domain = $2)
-                 AND a.domain IS NULL"#,
-            username,
-            domain,
-        )
-        .fetch_optional(&db)
-        .await?
-        .context(format!("account {username}@{domain} not found"))?
-    } else {
-        sqlx::query_scalar!(
-            "SELECT id FROM accounts WHERE username = $1 AND domain IS NULL LIMIT 1",
-            username,
-        )
-        .fetch_optional(&db)
-        .await?
-        .context(format!("account {username} not found (multiple instances? pass username@domain)"))?
-    };
+    let account_id: i64 = sqlx::query_scalar!(
+        "SELECT id FROM accounts WHERE username = $1 AND domain IS NULL LIMIT 1",
+        username,
+    )
+    .fetch_optional(&db)
+    .await?
+    .context(format!("account {username} not found"))?;
 
     println!("account_id: {account_id}");
 
-    // Load subscriptions + VAPID key for this account
+    // Load subscriptions for this account
     let subs = sqlx::query!(
-        r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth,
-                  i.vapid_private_key, i.vapid_public_key
-           FROM web_push_subscriptions wps
-           JOIN accounts a ON a.id = wps.account_id
-           JOIN instances i ON i.id = a.instance_id
-           WHERE wps.account_id = $1"#,
+        r#"SELECT id, endpoint, key_p256dh, key_auth
+           FROM web_push_subscriptions
+           WHERE account_id = $1"#,
         account_id,
     )
     .fetch_all(&db)
@@ -102,6 +88,10 @@ async fn main() -> Result<()> {
 
     if subs.is_empty() {
         bail!("no push subscriptions found for this account");
+    }
+
+    if vapid_private_key.is_empty() {
+        bail!("no VAPID private key configured — pass --config with vapid_private_key set");
     }
 
     println!("found {} subscription(s)", subs.len());
@@ -124,13 +114,7 @@ async fn main() -> Result<()> {
     let mut fail = 0usize;
 
     for sub in &subs {
-        if sub.vapid_private_key.is_empty() {
-            eprintln!("  sub {} — skipped (no VAPID key on instance)", sub.id);
-            fail += 1;
-            continue;
-        }
-
-        match send_one(&http, sub.endpoint.as_str(), sub.key_p256dh.as_str(), sub.key_auth.as_str(), sub.vapid_private_key.as_str(), &payload).await {
+        match send_one(&http, sub.endpoint.as_str(), sub.key_p256dh.as_str(), sub.key_auth.as_str(), &vapid_private_key, &payload).await {
             Ok(()) => {
                 println!("  sub {} → OK  ({})", sub.id, truncate(&sub.endpoint, 60));
                 ok += 1;

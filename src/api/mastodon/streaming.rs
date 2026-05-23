@@ -10,10 +10,9 @@ use bytes::Bytes;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::time::Duration;
-use uuid::Uuid;
 
 use crate::{
-    middleware::{AuthenticatedUser, ResolvedInstance},
+    middleware::AuthenticatedUser,
     state::AppState,
     streaming::Event,
 };
@@ -30,7 +29,6 @@ pub async fn handler(
     ws: WebSocketUpgrade,
     Query(params): Query<StreamingParams>,
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     // Auth may already be resolved by the authenticate middleware (Bearer header).
     auth: Option<Extension<AuthenticatedUser>>,
     headers: HeaderMap,
@@ -47,7 +45,6 @@ pub async fn handler(
 
     let token = params.access_token.clone().or_else(|| protocol_token.clone());
     let initial_stream = params.stream.clone();
-    let instance_id = instance.id;
 
     let ws = if let Some(proto) = protocol_token.clone() {
         ws.protocols([proto])
@@ -66,7 +63,7 @@ pub async fn handler(
         };
 
         tracing::info!(?initial_stream, ?account_id, "streaming: connection open");
-        run(socket, initial_stream, account_id, instance_id, state).await;
+        run(socket, initial_stream, account_id, state).await;
         tracing::info!("streaming: connection closed");
     })
 }
@@ -95,7 +92,6 @@ async fn run(
     mut socket: WebSocket,
     initial_stream: Option<String>,
     account_id: Option<i64>,
-    instance_id: Uuid,
     state: AppState,
 ) {
     // Load followed account IDs for any authenticated user so we can filter
@@ -132,7 +128,7 @@ async fn run(
                 match result {
                     Ok(event) => {
                         for stream in &subscribed {
-                            let msg = route_event(&event, stream, account_id, instance_id, &following, &state.db).await;
+                            let msg = route_event(&event, stream, account_id, &following, &state.db).await;
                             if let Some(msg) = msg {
                                 if socket.send(Message::Text(msg.into())).await.is_err() {
                                     return;
@@ -214,17 +210,16 @@ async fn route_event(
     event: &Event,
     stream: &str,
     account_id: Option<i64>,
-    instance_id: Uuid,
     following: &HashSet<i64>,
     db: &sqlx::PgPool,
 ) -> Option<String> {
     match stream {
-        "user" => to_wire_user(event, account_id, instance_id, following, db).await,
+        "user" => to_wire_user(event, account_id, following, db).await,
         "user:notification" => to_wire_user_notification(event, account_id),
         s if s.starts_with("list:") || s == "direct" => {
-            to_wire_authenticated(event, s, account_id, instance_id, db).await
+            to_wire_authenticated(event, s, account_id, db).await
         }
-        _ => to_wire(event, stream, account_id, instance_id, following),
+        _ => to_wire(event, stream, account_id, following),
     }
 }
 
@@ -234,22 +229,19 @@ async fn route_event(
 async fn to_wire_user(
     event: &Event,
     account_id: Option<i64>,
-    instance_id: Uuid,
     following: &HashSet<i64>,
     db: &sqlx::PgPool,
 ) -> Option<String> {
     match event {
         Event::NewStatus {
-            instance_id: ev_iid,
             author_id,
             status_id,
             payload,
             ..
         } => {
-            let deliver = *ev_iid == instance_id
-                && account_id
-                    .map(|aid| aid == *author_id || following.contains(author_id))
-                    .unwrap_or(false);
+            let deliver = account_id
+                .map(|aid| aid == *author_id || following.contains(author_id))
+                .unwrap_or(false);
             if !deliver {
                 return None;
             }
@@ -258,16 +250,14 @@ async fn to_wire_user(
         }
 
         Event::StatusUpdate {
-            instance_id: ev_iid,
             author_id,
             status_id,
             payload,
             ..
         } => {
-            let deliver = *ev_iid == instance_id
-                && account_id
-                    .map(|aid| aid == *author_id || following.contains(author_id))
-                    .unwrap_or(false);
+            let deliver = account_id
+                .map(|aid| aid == *author_id || following.contains(author_id))
+                .unwrap_or(false);
             if !deliver {
                 return None;
             }
@@ -276,7 +266,7 @@ async fn to_wire_user(
         }
 
         // Notifications and deletes fall through to the standard path.
-        other => to_wire(other, "user", account_id, instance_id, following),
+        other => to_wire(other, "user", account_id, following),
     }
 }
 
@@ -339,12 +329,10 @@ fn to_wire(
     event: &Event,
     stream: &str,
     account_id: Option<i64>,
-    instance_id: Uuid,
     following: &HashSet<i64>,
 ) -> Option<String> {
     match event {
         Event::NewStatus {
-            instance_id: ev_iid,
             author_id,
             is_public,
             hashtags,
@@ -352,14 +340,13 @@ fn to_wire(
             payload,
             ..
         } => {
-            if !should_deliver(stream, *is_public, *has_media, hashtags, *ev_iid, instance_id, *author_id, account_id, following) {
+            if !should_deliver(stream, *is_public, *has_media, hashtags, *author_id, account_id, following) {
                 return None;
             }
             Some(wire("update", &stream_label(stream), payload))
         }
 
         Event::StatusUpdate {
-            instance_id: ev_iid,
             author_id,
             is_public,
             hashtags,
@@ -367,7 +354,7 @@ fn to_wire(
             payload,
             ..
         } => {
-            if !should_deliver(stream, *is_public, *has_media, hashtags, *ev_iid, instance_id, *author_id, account_id, following) {
+            if !should_deliver(stream, *is_public, *has_media, hashtags, *author_id, account_id, following) {
                 return None;
             }
             Some(wire("status.update", &stream_label(stream), payload))
@@ -387,12 +374,8 @@ fn to_wire(
         }
 
         Event::DeleteStatus {
-            instance_id: ev_iid,
             status_id,
         } => {
-            if *ev_iid != instance_id {
-                return None;
-            }
             if !is_status_stream(stream) {
                 return None;
             }
@@ -431,29 +414,25 @@ fn should_deliver(
     is_public: bool,
     has_media: bool,
     hashtags: &[String],
-    ev_iid: Uuid,
-    instance_id: Uuid,
     author_id: i64,
     account_id: Option<i64>,
     following: &HashSet<i64>,
 ) -> bool {
     match stream {
         "public" => is_public,
-        "public:local" => is_public && ev_iid == instance_id,
+        "public:local" => is_public,
         "public:media" => is_public && has_media,
-        "public:local:media" => is_public && has_media && ev_iid == instance_id,
+        "public:local:media" => is_public && has_media,
         // public:remote needs federated content; always false until AP inbox is wired.
         "public:remote" | "public:remote:media" => false,
         "user" => {
-            ev_iid == instance_id
-                && account_id
-                    .map(|aid| aid == author_id || following.contains(&author_id))
-                    .unwrap_or(false)
+            account_id
+                .map(|aid| aid == author_id || following.contains(&author_id))
+                .unwrap_or(false)
         }
         s if s.starts_with("hashtag:local:") => {
             let tag = &s["hashtag:local:".len()..];
-            is_public && ev_iid == instance_id
-                && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
+            is_public && hashtags.iter().any(|h| h.eq_ignore_ascii_case(tag))
         }
         s if s.starts_with("hashtag:") => {
             let tag = &s["hashtag:".len()..];
@@ -470,22 +449,17 @@ async fn to_wire_authenticated(
     event: &Event,
     stream: &str,
     account_id: Option<i64>,
-    instance_id: Uuid,
     db: &sqlx::PgPool,
 ) -> Option<String> {
     let aid = account_id?;
     match event {
         Event::NewStatus {
-            instance_id: ev_iid,
             author_id,
             is_direct,
             status_id,
             payload,
             ..
         } => {
-            if *ev_iid != instance_id {
-                return None;
-            }
             let deliver = deliver_authenticated(stream, *is_direct, *status_id, *author_id, aid, db).await;
             if !deliver {
                 return None;
@@ -495,14 +469,10 @@ async fn to_wire_authenticated(
         }
 
         Event::StatusUpdate {
-            instance_id: ev_iid,
             author_id,
             payload,
             ..
         } => {
-            if *ev_iid != instance_id {
-                return None;
-            }
             if let Some(list_id_str) = stream.strip_prefix("list:") {
                 if let Ok(list_id) = list_id_str.parse::<i64>() {
                     let in_list = sqlx::query_scalar!(
@@ -523,10 +493,7 @@ async fn to_wire_authenticated(
             None
         }
 
-        Event::DeleteStatus { instance_id: ev_iid, status_id } => {
-            if *ev_iid != instance_id {
-                return None;
-            }
+        Event::DeleteStatus { status_id } => {
             let stream_arr = stream_label(stream);
             Some(serde_json::json!({
                 "stream": stream_arr,

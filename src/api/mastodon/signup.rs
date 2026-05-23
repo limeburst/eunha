@@ -6,7 +6,6 @@ use axum::{
 use serde::Deserialize;
 use crate::{
     crypto,
-    db::models::Instance,
     error::{AppError, AppResult},
     middleware::ResolvedInstance,
     state::AppState,
@@ -35,7 +34,7 @@ pub async fn signup_get(
         if invite.is_empty() {
             return render(&instance, &invite, false, false, None, locale);
         }
-        if let Err(msg) = validate_invite(&state, &instance, &invite).await {
+        if let Err(msg) = validate_invite(&state, &invite).await {
             return render(&instance, &invite, false, false, Some(locale.t(msg)), locale);
         }
     }
@@ -47,13 +46,11 @@ pub async fn signup_get(
 
 async fn validate_invite(
     state: &AppState,
-    instance: &Instance,
     code: &str,
 ) -> Result<i64, &'static str> {
     let row = sqlx::query!(
-        "SELECT id, uses, max_uses, expires_at FROM invites WHERE code = $1 AND instance_id = $2",
+        "SELECT id, uses, max_uses, expires_at FROM invites WHERE code = $1",
         code,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
@@ -93,7 +90,7 @@ pub async fn api_create_account(
 ) -> AppResult<Json<super::types::Token>> {
     let invite_code = form.invite_code.as_deref().unwrap_or("").trim().to_string();
     let invite_id: Option<i64> = if !invite_code.is_empty() {
-        Some(validate_invite(&state, &instance, &invite_code).await
+        Some(validate_invite(&state, &invite_code).await
             .map_err(|_| AppError::Unprocessable("Invalid or expired invite code".into()))?)
     } else if !instance.registrations_open {
         return Err(AppError::Unprocessable("This instance is not open for registration".into()));
@@ -120,8 +117,8 @@ pub async fn api_create_account(
 
     // Reject if email already belongs to a confirmed account.
     let email_confirmed = sqlx::query_scalar!(
-        "SELECT 1 FROM users WHERE email_normalized = $1 AND instance_id = $2 AND confirmed_at IS NOT NULL",
-        email_normalized, instance.id,
+        "SELECT 1 FROM users WHERE email_normalized = $1 AND confirmed_at IS NOT NULL",
+        email_normalized,
     ).fetch_optional(&state.db).await?.is_some();
     if email_confirmed {
         return Err(AppError::Unprocessable("Email is already taken".into()));
@@ -129,14 +126,14 @@ pub async fn api_create_account(
 
     // Reject if username is taken by a confirmed account or a pending signup for a different email.
     let username_taken = sqlx::query_scalar!(
-        r#"SELECT 1 FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL
+        r#"SELECT 1 FROM accounts WHERE username = $1 AND domain IS NULL
            UNION ALL
            SELECT 1 FROM pending_signups
-             WHERE username = $1 AND instance_id = $2
-               AND email_normalized != $3
+             WHERE username = $1
+               AND email_normalized != $2
                AND expires_at > now()
            LIMIT 1"#,
-        username, instance.id, email_normalized,
+        username, email_normalized,
     ).fetch_optional(&state.db).await?.is_some();
     if username_taken {
         return Err(AppError::Unprocessable("Username is already taken".into()));
@@ -150,10 +147,10 @@ pub async fn api_create_account(
 
     sqlx::query!(
         r#"INSERT INTO pending_signups
-             (instance_id, username, email, email_normalized, password_hash,
+             (username, email, email_normalized, password_hash,
               invite_id, reason, locale, app_id, confirmation_token)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           ON CONFLICT (instance_id, email_normalized) DO UPDATE SET
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (email_normalized) DO UPDATE SET
              username           = EXCLUDED.username,
              password_hash      = EXCLUDED.password_hash,
              invite_id          = EXCLUDED.invite_id,
@@ -162,13 +159,12 @@ pub async fn api_create_account(
              app_id             = EXCLUDED.app_id,
              confirmation_token = EXCLUDED.confirmation_token,
              expires_at         = now() + interval '24 hours'"#,
-        instance.id, username, email, email_normalized, password_hash,
+        username, email, email_normalized, password_hash,
         invite_id, reason, locale_str, app_id, confirmation_token,
     ).execute(&state.db).await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("pending signup failed")))?;
 
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-    let confirm_url = format!("https://{}/auth/confirm?token={}", domain, confirmation_token);
+    let confirm_url = format!("https://{}/auth/confirm?token={}", instance.domain, confirmation_token);
     let email_sender = state.email.clone();
     let to = email.clone();
     let uname = username.clone();
@@ -203,7 +199,7 @@ pub async fn confirm_email(
     let pending = sqlx::query!(
         r#"DELETE FROM pending_signups
            WHERE confirmation_token = $1 AND expires_at > now()
-           RETURNING instance_id, username, email, email_normalized,
+           RETURNING username, email, email_normalized,
                      password_hash, invite_id, reason, locale, app_id"#,
         q.token,
     )
@@ -218,50 +214,42 @@ pub async fn confirm_email(
         )).into_response();
     };
 
-    let instance = match sqlx::query!(
-        "SELECT approval_required, domain, custom_domain FROM instances WHERE id = $1",
-        pending.instance_id,
-    ).fetch_optional(&state.db).await.ok().flatten() {
-        Some(i) => i,
-        None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-
     let (private_key, public_key) = match crypto::generate_rsa_keypair() {
         Ok(kp) => kp,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
-    let uri = format!("https://{}/users/{}", instance.domain, pending.username);
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-    let url = format!("https://{}/@{}", domain, pending.username);
+    let instance_domain = &state.instance.domain;
+    let uri = format!("https://{}/users/{}", instance_domain, pending.username);
+    let url = format!("https://{}/@{}", instance_domain, pending.username);
 
     let new_account_id = crate::snowflake::next_id();
     let account_id = match sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (id, instance_id, username, url, uri, private_key, public_key,
+             (id, username, url, uri, private_key, public_key,
               inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            RETURNING id"#,
         new_account_id,
-        pending.instance_id, pending.username, url, uri, private_key, public_key,
+        pending.username, url, uri, private_key, public_key,
         format!("{}/inbox", uri),
         format!("{}/outbox", uri),
-        format!("https://{}/inbox", instance.domain),
+        format!("https://{}/inbox", instance_domain),
     ).fetch_one(&state.db).await {
         Ok(id) => id,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
-    let needs_approval = instance.approval_required && pending.invite_id.is_none();
+    let needs_approval = state.instance.approval_required && pending.invite_id.is_none();
     if sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash,
+             (account_id, email, email_normalized, password_hash,
               confirmed_at, invite_id, approved_at, reason)
-           VALUES ($1,$2,$3,$4,$5,
-                   now(), $6,
-                   CASE WHEN $7 THEN NULL ELSE now() END,
-                   $8)"#,
-        account_id, pending.instance_id, pending.email, pending.email_normalized,
+           VALUES ($1,$2,$3,$4,
+                   now(), $5,
+                   CASE WHEN $6 THEN NULL ELSE now() END,
+                   $7)"#,
+        account_id, pending.email, pending.email_normalized,
         pending.password_hash, pending.invite_id, needs_approval, pending.reason,
     ).execute(&state.db).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -271,9 +259,8 @@ pub async fn confirm_email(
     // open instances get it too so admins have visibility into new accounts).
     {
         let state2 = state.clone();
-        let iid = pending.instance_id;
         tokio::spawn(async move {
-            crate::push::notify_admins(&state2, iid, account_id, "admin.sign_up", None).await;
+            crate::push::notify_admins(&state2, account_id, "admin.sign_up", None).await;
         });
     }
 
@@ -346,8 +333,8 @@ pub async fn request_password_reset(
     let row = sqlx::query!(
         "SELECT u.id, u.email, a.username FROM users u
          JOIN accounts a ON a.id = u.account_id
-         WHERE u.email_normalized = $1 AND u.instance_id = $2 AND u.confirmed_at IS NOT NULL",
-        email, instance.id,
+         WHERE u.email_normalized = $1 AND u.confirmed_at IS NOT NULL",
+        email,
     )
     .fetch_optional(&state.db)
     .await;
@@ -364,8 +351,7 @@ pub async fn request_password_reset(
     .execute(&state.db)
     .await;
 
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
-    let reset_url = format!("https://{}/auth/password/reset?token={}", domain, token);
+    let reset_url = format!("https://{}/auth/password/reset?token={}", instance.domain, token);
     let email = state.email.clone();
     let to = row.email.clone();
     let name = row.username.clone();
@@ -447,7 +433,7 @@ fn api_generate_token() -> String {
 // ── helpers ────────────────────────────────────────────────────────────────
 
 fn render(
-    instance: &Instance,
+    instance: &crate::config::InstanceConfig,
     invite: &str,
     show_form: bool,
     pending: bool,

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub enum Event {
     NewStatus {
-        instance_id: Uuid,
         author_id: i64,
         is_public: bool,
         is_direct: bool,
@@ -16,7 +14,6 @@ pub enum Event {
     },
     /// Fired when a status is edited. Delivered as a `status.update` wire event.
     StatusUpdate {
-        instance_id: Uuid,
         author_id: i64,
         is_public: bool,
         status_id: i64,
@@ -29,7 +26,6 @@ pub enum Event {
         payload: Arc<String>,
     },
     DeleteStatus {
-        instance_id: Uuid,
         status_id: i64,
     },
     /// Sent to a user's streaming connection when their custom filters change.

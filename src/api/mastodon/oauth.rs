@@ -95,7 +95,6 @@ pub struct RegisterAppForm {
 
 pub async fn register_app(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     FormOrJson(form): FormOrJson<RegisterAppForm>,
 ) -> AppResult<Json<CredentialApplication>> {
     let client_id = generate_token(32);
@@ -106,10 +105,9 @@ pub async fn register_app(
     let app = sqlx::query_as!(
         OauthApplication,
         r#"INSERT INTO oauth_applications
-             (instance_id, name, uid, secret, redirect_uri, scopes, website)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)
+             (name, uid, secret, redirect_uri, scopes, website)
+           VALUES ($1,$2,$3,$4,$5,$6)
            RETURNING *"#,
-        instance.id,
         form.client_name,
         client_id,
         client_secret,
@@ -168,9 +166,8 @@ pub async fn issue_token(
     // Verify client credentials
     let app = sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
+        "SELECT * FROM oauth_applications WHERE uid = $1",
         form.client_id,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await?
@@ -213,10 +210,8 @@ pub async fn issue_token(
                    FROM users u
                    JOIN accounts a ON a.id = u.account_id
                    WHERE u.email_normalized = lower($1)
-                     AND u.instance_id = $2
                      AND u.confirmed_at IS NOT NULL"#,
                 username,
-                instance.id,
             )
             .fetch_optional(&state.db)
             .await?
@@ -336,8 +331,7 @@ pub async fn elk_login(
     // redirect_uri in sync with the current origin.
     let existing = sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE instance_id = $1 AND name = 'Elk' LIMIT 1",
-        instance.id,
+        "SELECT * FROM oauth_applications WHERE name = 'Elk' LIMIT 1",
     )
     .fetch_optional(&state.db)
     .await?;
@@ -361,10 +355,9 @@ pub async fn elk_login(
             sqlx::query_as!(
                 OauthApplication,
                 r#"INSERT INTO oauth_applications
-                     (instance_id, name, uid, secret, redirect_uri, scopes)
-                   VALUES ($1, 'Elk', $2, $3, $4, $5)
+                     (name, uid, secret, redirect_uri, scopes)
+                   VALUES ('Elk', $1, $2, $3, $4)
                    RETURNING *"#,
-                instance.id,
                 client_id,
                 client_secret,
                 redirect_uri,
@@ -422,8 +415,7 @@ pub async fn elk_oauth_callback(
 
     let app = match sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE instance_id = $1 AND name = 'Elk' LIMIT 1",
-        instance.id,
+        "SELECT * FROM oauth_applications WHERE name = 'Elk' LIMIT 1",
     )
     .fetch_optional(&state.db)
     .await
@@ -514,9 +506,8 @@ pub async fn authorize_form(
 ) -> Response {
     let app = match sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
+        "SELECT * FROM oauth_applications WHERE uid = $1",
         params.client_id,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
@@ -584,16 +575,15 @@ pub async fn authorize_submit(
 ) -> Response {
     let locale = crate::locale::Locale::detect(form.lang.as_deref(), None);
     let app_name = sqlx::query_scalar!(
-        "SELECT name FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
+        "SELECT name FROM oauth_applications WHERE uid = $1",
         form.client_id,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
     .ok()
     .flatten()
     .unwrap_or_else(|| form.client_id.clone());
-    let result = do_authorize(&state, &instance, &form).await;
+    let result = do_authorize(&state, &form).await;
     match result {
         Ok(redirect_url) => Redirect::to(&redirect_url).into_response(),
         Err(_) => {
@@ -629,14 +619,12 @@ pub async fn authorize_submit(
 
 async fn do_authorize(
     state: &AppState,
-    instance: &crate::db::models::Instance,
     form: &AuthorizeForm,
 ) -> Result<String, String> {
     let app = sqlx::query_as!(
         OauthApplication,
-        "SELECT * FROM oauth_applications WHERE uid = $1 AND instance_id = $2",
+        "SELECT * FROM oauth_applications WHERE uid = $1",
         form.client_id,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
@@ -648,10 +636,8 @@ async fn do_authorize(
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            WHERE u.email_normalized = lower($1)
-             AND u.instance_id = $2
              AND u.confirmed_at IS NOT NULL"#,
         form.email,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await

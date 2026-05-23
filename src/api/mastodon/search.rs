@@ -105,10 +105,10 @@ pub async fn search(
                 sqlx::query_as!(
                     crate::db::models::Account,
                     r#"SELECT * FROM accounts
-                       WHERE instance_id = $1 AND suspended_at IS NULL
-                         AND lower(username) = $2 AND lower(domain) = $3
-                       LIMIT $4"#,
-                    instance.id, uname, dom, limit
+                       WHERE suspended_at IS NULL
+                         AND lower(username) = $1 AND lower(domain) = $2
+                       LIMIT $3"#,
+                    uname, dom, limit
                 )
                 .fetch_all(&state.db)
                 .await?
@@ -116,10 +116,10 @@ pub async fn search(
                 sqlx::query_as!(
                     crate::db::models::Account,
                     r#"SELECT * FROM accounts
-                       WHERE instance_id = $1 AND suspended_at IS NULL
-                         AND lower(username) = $2 AND domain IS NULL
-                       LIMIT $3"#,
-                    instance.id, uname, limit
+                       WHERE suspended_at IS NULL
+                         AND lower(username) = $1 AND domain IS NULL
+                       LIMIT $2"#,
+                    uname, limit
                 )
                 .fetch_all(&state.db)
                 .await?
@@ -132,12 +132,11 @@ pub async fn search(
                     crate::db::models::Account,
                     r#"SELECT a.* FROM accounts a
                        JOIN follows f ON f.target_account_id = a.id
-                       WHERE a.instance_id = $1
-                         AND a.suspended_at IS NULL
-                         AND f.account_id = $4
-                         AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
-                       ORDER BY a.followers_count DESC LIMIT $3 OFFSET $5"#,
-                    instance.id, pattern, limit, vid, offset
+                       WHERE a.suspended_at IS NULL
+                         AND f.account_id = $3
+                         AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
+                       ORDER BY a.followers_count DESC LIMIT $2 OFFSET $4"#,
+                    pattern, limit, vid, offset
                 )
                 .fetch_all(&state.db)
                 .await?
@@ -145,11 +144,10 @@ pub async fn search(
                 sqlx::query_as!(
                     crate::db::models::Account,
                     r#"SELECT * FROM accounts
-                       WHERE instance_id = $1
-                         AND suspended_at IS NULL
-                         AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
-                       ORDER BY followers_count DESC LIMIT $3 OFFSET $4"#,
-                    instance.id, pattern, limit, offset
+                       WHERE suspended_at IS NULL
+                         AND (lower(username) LIKE $1 OR lower(display_name) LIKE $1)
+                       ORDER BY followers_count DESC LIMIT $2 OFFSET $3"#,
+                    pattern, limit, offset
                 )
                 .fetch_all(&state.db)
                 .await?
@@ -160,12 +158,11 @@ pub async fn search(
                 crate::db::models::Account,
                 r#"SELECT a.* FROM accounts a
                    JOIN follows f ON f.target_account_id = a.id
-                   WHERE a.instance_id = $1
-                     AND a.suspended_at IS NULL
-                     AND f.account_id = $4
-                     AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
-                   ORDER BY a.followers_count DESC LIMIT $3 OFFSET $5"#,
-                instance.id, pattern, limit, vid, offset
+                   WHERE a.suspended_at IS NULL
+                     AND f.account_id = $3
+                     AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
+                   ORDER BY a.followers_count DESC LIMIT $2 OFFSET $4"#,
+                pattern, limit, vid, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -173,11 +170,10 @@ pub async fn search(
             sqlx::query_as!(
                 crate::db::models::Account,
                 r#"SELECT * FROM accounts
-                   WHERE instance_id = $1
-                     AND suspended_at IS NULL
-                     AND (lower(username) LIKE $2 OR lower(display_name) LIKE $2)
-                   ORDER BY followers_count DESC LIMIT $3 OFFSET $4"#,
-                instance.id, pattern, limit, offset
+                   WHERE suspended_at IS NULL
+                     AND (lower(username) LIKE $1 OR lower(display_name) LIKE $1)
+                   ORDER BY followers_count DESC LIMIT $2 OFFSET $3"#,
+                pattern, limit, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -195,28 +191,27 @@ pub async fn search(
             crate::db::models::Status,
             r#"SELECT s.* FROM statuses s
                JOIN accounts a ON a.id = s.account_id
-               WHERE s.instance_id = $1
-                 AND s.deleted_at IS NULL
-                 AND (s.visibility IN (0, 1) OR s.account_id = $5)
+               WHERE s.deleted_at IS NULL
+                 AND (s.visibility IN (0, 1) OR s.account_id = $4)
                  AND a.suspended_at IS NULL
                  AND (a.domain IS NULL OR NOT EXISTS (
                      SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
                  ))
-                 AND ($4::bigint IS NULL OR s.account_id = $4)
-                 AND ($5::bigint IS NULL OR NOT EXISTS (
+                 AND ($3::bigint IS NULL OR s.account_id = $3)
+                 AND ($4::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $5 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $5)
+                     WHERE (b.account_id = $4 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $4)
                  ))
-                 AND ($5::bigint IS NULL OR NOT EXISTS (
+                 AND ($4::bigint IS NULL OR NOT EXISTS (
                      SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $5 AND mu.target_account_id = s.account_id
+                     WHERE mu.account_id = $4 AND mu.target_account_id = s.account_id
                        AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))
                  AND to_tsvector('simple', coalesce(s.text, ''))
-                     @@ websearch_to_tsquery('simple', $2)
-               ORDER BY s.id DESC LIMIT $3 OFFSET $6"#,
-            instance.id, fts_query, limit, filter_account_id, viewer_id, offset
+                     @@ websearch_to_tsquery('simple', $1)
+               ORDER BY s.id DESC LIMIT $2 OFFSET $5"#,
+            fts_query, limit, filter_account_id, viewer_id, offset
         )
         .fetch_all(&state.db)
         .await?;

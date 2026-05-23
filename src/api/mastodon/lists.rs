@@ -124,7 +124,7 @@ pub async fn update_list(
 pub async fn delete_list(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:lists")?;
@@ -137,8 +137,7 @@ pub async fn delete_list(
     .await?;
     {
         let mut redis = state.redis.clone();
-        let iid = instance.id;
-        feed::delete_list_feed(&mut redis, iid, id).await;
+        feed::delete_list_feed(&mut redis, id).await;
     }
     Ok(Json(serde_json::json!({})))
 }
@@ -211,7 +210,7 @@ pub struct ListAccountsForm {
 pub async fn add_list_accounts(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListAccountsForm>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -239,14 +238,13 @@ pub async fn add_list_accounts(
             {
                 let mut redis = state.redis.clone();
                 let db = state.db.clone();
-                let iid = instance.id;
                 let owner_id = auth.account_id;
                 let policy = models::replies::to_str(list.replies_policy).to_owned();
                 if feed::sync_fanout() {
-                    feed::backfill_list_member(&mut redis, &db, iid, id, account_id, owner_id, &policy).await;
+                    feed::backfill_list_member(&mut redis, &db, id, account_id, owner_id, &policy).await;
                 } else {
                     tokio::spawn(async move {
-                        feed::backfill_list_member(&mut redis, &db, iid, id, account_id, owner_id, &policy).await;
+                        feed::backfill_list_member(&mut redis, &db, id, account_id, owner_id, &policy).await;
                     });
                 }
             }

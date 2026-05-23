@@ -27,28 +27,24 @@ pub async fn nodeinfo(
 ) -> AppResult<Json<Value>> {
     let (user_count, active_month, active_halfyear, status_count) = tokio::try_join!(
         sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND suspended_at IS NULL",
-            instance.id
+            "SELECT COUNT(*) FROM accounts WHERE domain IS NULL AND suspended_at IS NULL",
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
             r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
                WHERE s.account_id IN (
-                   SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+                   SELECT id FROM accounts WHERE domain IS NULL
                ) AND s.deleted_at IS NULL
                  AND s.created_at > now() - interval '30 days'"#,
-            instance.id
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
             r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
                WHERE s.account_id IN (
-                   SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+                   SELECT id FROM accounts WHERE domain IS NULL
                ) AND s.deleted_at IS NULL
                  AND s.created_at > now() - interval '180 days'"#,
-            instance.id
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
-            "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE instance_id = $1 AND domain IS NULL",
-            instance.id
+            "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE domain IS NULL",
         ).fetch_one(&state.db),
     )?;
 

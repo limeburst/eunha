@@ -3,7 +3,6 @@ use p256::{
     ecdsa::SigningKey,
     pkcs8::{EncodePrivateKey, LineEnding},
 };
-use uuid::Uuid;
 
 use crate::state::AppState;
 
@@ -27,31 +26,14 @@ pub fn generate_vapid_keypair() -> anyhow::Result<(String, String)> {
     Ok((pem.to_string(), pub_b64))
 }
 
-/// Ensures the instance has a VAPID keypair, generating one if missing.
-pub async fn ensure_vapid_keys(state: &AppState, instance_id: Uuid) -> anyhow::Result<()> {
-    let needs_keys = sqlx::query_scalar!(
-        "SELECT vapid_private_key = '' FROM instances WHERE id = $1",
-        instance_id,
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .flatten()
-    .unwrap_or(true);
+/// Returns the VAPID private key from instance config.
+/// In single-tenant mode, keys are sourced from config rather than the DB.
+pub fn get_vapid_private_key(state: &AppState) -> &str {
+    &state.instance.vapid_private_key
+}
 
-    if needs_keys {
-        let (private_pem, public_b64) = generate_vapid_keypair()?;
-        sqlx::query!(
-            "UPDATE instances SET vapid_private_key = $1, vapid_public_key = $2 WHERE id = $3",
-            private_pem,
-            public_b64,
-            instance_id,
-        )
-        .execute(&state.db)
-        .await?;
-        tracing::info!(instance_id = %instance_id, "generated VAPID keypair");
-    }
-
-    Ok(())
+pub fn get_vapid_public_key(state: &AppState) -> &str {
+    &state.instance.vapid_public_key
 }
 
 // ── Push delivery ──────────────────────────────────────────────────────────
@@ -118,18 +100,15 @@ async fn try_deliver(
     };
 
     let subs_query = format!(
-        r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth,
-                  i.vapid_private_key, i.vapid_public_key
+        r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth
            FROM web_push_subscriptions wps
-           JOIN accounts a ON a.id = wps.account_id
-           JOIN instances i ON i.id = a.instance_id
            WHERE wps.account_id = $1
              AND COALESCE((wps.data->'alerts'->>'{}')::boolean, {})"#,
         alert_key,
         alert_default,
     );
 
-    let rows = sqlx::query_as::<_, (i64, String, String, String, String, String)>(
+    let rows = sqlx::query_as::<_, (i64, String, String, String)>(
         &subs_query,
     )
     .bind(recipient_id)
@@ -140,6 +119,8 @@ async fn try_deliver(
         return Ok(());
     }
 
+    let vapid_priv = state.instance.vapid_private_key.clone();
+
     let payload = serde_json::to_string(&PushPayload {
         notification_id,
         notification_type,
@@ -149,12 +130,12 @@ async fn try_deliver(
         preferred_locale: "en",
     })?;
 
-    for (_, endpoint, p256dh, auth, vapid_priv, _vapid_pub) in rows {
+    for (_, endpoint, p256dh, auth) in &rows {
         if let Err(e) = send_one(
             state,
-            &endpoint,
-            &p256dh,
-            &auth,
+            endpoint,
+            p256dh,
+            auth,
             &vapid_priv,
             &payload,
         )
@@ -346,10 +327,9 @@ pub async fn create_and_push(
 
     if matches!(notification_type, "mention" | "follow" | "favourite" | "reblog") {
         let email_info = sqlx::query!(
-            r#"SELECT u.email, a.username, a.display_name, i.domain, i.custom_domain
+            r#"SELECT u.email, a.username, a.display_name
                FROM users u
                JOIN accounts a ON a.id = u.account_id
-               JOIN instances i ON i.id = u.instance_id
                WHERE u.account_id = $1 AND u.confirmed_at IS NOT NULL"#,
             recipient_id,
         )
@@ -368,7 +348,7 @@ pub async fn create_and_push(
                 } else {
                     actor.display_name.clone()
                 };
-                let instance_domain = row.custom_domain.as_deref().unwrap_or(&row.domain);
+                let instance_domain = &state.instance.domain;
                 let instance_url = format!("https://{}", instance_domain);
                 let recipient_name = if row.display_name.is_empty() {
                     row.username.clone()
@@ -412,7 +392,6 @@ pub async fn create_and_push(
 /// are always delivered.
 pub async fn notify_admins(
     state: &AppState,
-    instance_id: uuid::Uuid,
     from_account_id: i64,
     notification_type: &'static str,
     report_id: Option<i64>,
@@ -420,8 +399,7 @@ pub async fn notify_admins(
     let admins = match sqlx::query_scalar!(
         r#"SELECT a.id FROM accounts a
            JOIN users u ON u.account_id = a.id
-           WHERE a.instance_id = $1 AND u.role IN ('admin', 'moderator')"#,
-        instance_id,
+           WHERE a.domain IS NULL AND u.role IN ('admin', 'moderator')"#,
     )
     .fetch_all(&state.db)
     .await

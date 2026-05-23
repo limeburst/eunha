@@ -30,7 +30,7 @@ pub async fn trending_tags(
 ) -> AppResult<Json<Vec<Tag>>> {
     let limit = params.limit.unwrap_or(10).min(20).max(1);
     let offset = params.offset.unwrap_or(0).max(0);
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
 
     // Tags with most status uses in the last 7 days
     let rows = sqlx::query!(
@@ -38,20 +38,19 @@ pub async fn trending_tags(
            FROM tags t
            JOIN statuses_tags st ON st.tag_id = t.id
            JOIN statuses s ON s.id = st.status_id
-           WHERE s.instance_id = $1
-             AND s.deleted_at IS NULL
+           WHERE s.deleted_at IS NULL
              AND s.visibility = 0
              AND s.created_at > now() - interval '7 days'
            GROUP BY t.id, t.name
            ORDER BY uses DESC, t.name ASC
-           LIMIT $2 OFFSET $3"#,
-        instance.id, limit, offset,
+           LIMIT $1 OFFSET $2"#,
+        limit, offset,
     )
     .fetch_all(&state.db)
     .await?;
 
     let tag_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let histories = super::tags::fetch_tags_histories(&state.db, &tag_ids, instance.id).await;
+    let histories = super::tags::fetch_tags_histories(&state.db, &tag_ids).await;
 
     let tags: Vec<Tag> = rows
         .into_iter()
@@ -75,7 +74,6 @@ pub async fn trending_tags(
 
 pub async fn trending_statuses(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<TrendParams>,
     auth: Option<Extension<crate::middleware::AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<Status>>> {
@@ -86,25 +84,23 @@ pub async fn trending_statuses(
         crate::db::models::Status,
         r#"SELECT s.* FROM statuses s
            JOIN accounts a ON a.id = s.account_id
-           WHERE s.instance_id = $1
-             AND s.deleted_at IS NULL
+           WHERE s.deleted_at IS NULL
              AND s.visibility = 0
              AND s.reblog_of_id IS NULL
              AND s.created_at > now() - interval '2 days'
              AND a.suspended_at IS NULL
-             AND ($3::bigint IS NULL OR NOT EXISTS (
+             AND ($2::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM blocks b
-                 WHERE (b.account_id = $3 AND b.target_account_id = s.account_id)
-                    OR (b.account_id = s.account_id AND b.target_account_id = $3)
+                 WHERE (b.account_id = $2 AND b.target_account_id = s.account_id)
+                    OR (b.account_id = s.account_id AND b.target_account_id = $2)
              ))
-             AND ($3::bigint IS NULL OR NOT EXISTS (
+             AND ($2::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM mutes mu
-                 WHERE mu.account_id = $3 AND mu.target_account_id = s.account_id
+                 WHERE mu.account_id = $2 AND mu.target_account_id = s.account_id
                    AND (mu.expires_at IS NULL OR mu.expires_at > now())
              ))
            ORDER BY (s.favourites_count + s.reblogs_count * 2) DESC, s.created_at DESC
-           LIMIT $2"#,
-        instance.id,
+           LIMIT $1"#,
         limit,
         viewer_id,
     )

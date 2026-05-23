@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{AppError, AppResult},
     middleware::AuthenticatedUser,
-    push::ensure_vapid_keys,
     state::AppState,
 };
 
@@ -105,21 +104,9 @@ pub struct AlertsInput {
 pub async fn create_subscription(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Json(body): Json<CreateSubscriptionBody>,
 ) -> AppResult<Json<PushSubscription>> {
     auth.require_scope("push")?;
-    ensure_vapid_keys(&state, instance.id)
-        .await
-        .map_err(|e| AppError::Internal(e))?;
-
-    let instance = sqlx::query_as!(
-        crate::db::models::Instance,
-        "SELECT * FROM instances WHERE id = $1",
-        instance.id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let alerts = &body.data.alerts;
     let policy = body.data.policy.as_deref().unwrap_or("all");
@@ -164,7 +151,7 @@ pub async fn create_subscription(
         standard: false,
         alerts: alerts_from_data(&row.data),
         policy: policy_from_data(&row.data),
-        server_key: instance.vapid_public_key,
+        server_key: state.instance.vapid_public_key.clone(),
     }))
 }
 
@@ -173,16 +160,8 @@ pub async fn create_subscription(
 pub async fn get_subscription(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
 ) -> AppResult<Json<PushSubscription>> {
     auth.require_scope("push")?;
-    let instance = sqlx::query_as!(
-        crate::db::models::Instance,
-        "SELECT * FROM instances WHERE id = $1",
-        instance.id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let row = sqlx::query!(
         r#"SELECT id, endpoint, data as "data: serde_json::Value"
@@ -200,7 +179,7 @@ pub async fn get_subscription(
         standard: false,
         alerts: alerts_from_data(&row.data),
         policy: policy_from_data(&row.data),
-        server_key: instance.vapid_public_key,
+        server_key: state.instance.vapid_public_key.clone(),
     }))
 }
 
@@ -215,17 +194,9 @@ pub struct UpdateSubscriptionBody {
 pub async fn update_subscription(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
     Json(body): Json<UpdateSubscriptionBody>,
 ) -> AppResult<Json<PushSubscription>> {
     auth.require_scope("push")?;
-    let instance = sqlx::query_as!(
-        crate::db::models::Instance,
-        "SELECT * FROM instances WHERE id = $1",
-        instance.id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let alerts = &body.data.alerts;
     let policy = body.data.policy.as_deref().unwrap_or("all");
@@ -269,7 +240,7 @@ pub async fn update_subscription(
         standard: false,
         alerts: alerts_from_data(&row.data),
         policy: policy_from_data(&row.data),
-        server_key: instance.vapid_public_key,
+        server_key: state.instance.vapid_public_key.clone(),
     }))
 }
 

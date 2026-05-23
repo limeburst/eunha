@@ -1,6 +1,6 @@
 use sqlx::PgPool;
 use std::sync::Arc;
-use crate::config::Config;
+use crate::config::{Config, InstanceConfig};
 use crate::email::EmailSender;
 use crate::media::Storage;
 use crate::streaming::StreamBus;
@@ -10,6 +10,7 @@ pub struct AppState {
     pub db: PgPool,
     pub redis: redis::aio::ConnectionManager,
     pub config: Arc<Config>,
+    pub instance: Arc<InstanceConfig>,
     pub http: reqwest::Client,
     pub email: EmailSender,
     pub streaming: StreamBus,
@@ -34,10 +35,12 @@ impl AppState {
         let redis_client = redis::Client::open(config.redis_url.as_str())?;
         let redis = redis::aio::ConnectionManager::new(redis_client).await?;
 
+        let instance = Arc::new(config.instance.clone());
         Ok(Self {
             db,
             redis,
             config: Arc::new(config),
+            instance,
             http,
             email,
             streaming: StreamBus::new(),

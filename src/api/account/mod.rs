@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 use crate::{
     crypto::{generate_token, hash_password, verify_password},
-    db::models::Instance,
     locale::Locale,
     middleware::ResolvedInstance,
     state::AppState,
@@ -52,7 +51,6 @@ fn extract_session_token(headers: &HeaderMap) -> Option<String> {
 async fn get_session(
     headers: &HeaderMap,
     state: &AppState,
-    instance: &Instance,
 ) -> Option<AccountSession> {
     let token = extract_session_token(headers)?;
     let row = sqlx::query!(
@@ -61,12 +59,10 @@ async fn get_session(
            JOIN accounts a ON a.id = t.account_id
            JOIN users u ON u.account_id = a.id
            WHERE t.token = $1
-             AND u.instance_id = $2
              AND t.revoked_at IS NULL
              AND (t.expires_at IS NULL OR t.expires_at > now())
              AND a.domain IS NULL"#,
         token,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
@@ -107,11 +103,11 @@ pub async fn account_home(
 ) -> Response {
     let locale = Locale::detect(None, accept_language(&headers));
 
-    let Some(session) = get_session(&headers, &state, &instance).await else {
+    let Some(session) = get_session(&headers, &state).await else {
         return Redirect::to("/account/login").into_response();
     };
 
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let domain = instance.domain.clone();
 
     let html = templates::render(
         "account_home.html",
@@ -136,7 +132,7 @@ pub async fn login_page(
     headers: HeaderMap,
 ) -> Response {
     let locale = Locale::detect(None, accept_language(&headers));
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let domain = instance.domain.clone();
 
     let html = templates::render(
         "account_login.html",
@@ -168,7 +164,7 @@ pub async fn login_post(
     Form(form): Form<LoginForm>,
 ) -> Response {
     let locale = Locale::detect(None, accept_language(&headers));
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let domain = instance.domain.clone();
     let htmx = is_htmx(&headers);
 
     let email_normalized = form.email.trim().to_lowercase();
@@ -197,11 +193,9 @@ pub async fn login_post(
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            WHERE u.email_normalized = $1
-             AND u.instance_id = $2
              AND u.confirmed_at IS NOT NULL
              AND a.domain IS NULL"#,
         email_normalized,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
@@ -269,7 +263,7 @@ pub struct SsoForm {
 
 pub async fn sso_post(
     State(state): State<AppState>,
-    axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<ResolvedInstance>,
+    axum::extract::Extension(ResolvedInstance(_instance)): axum::extract::Extension<ResolvedInstance>,
     Form(form): Form<SsoForm>,
 ) -> Response {
     let valid = sqlx::query!(
@@ -278,12 +272,10 @@ pub async fn sso_post(
            JOIN accounts a ON a.id = t.account_id
            JOIN users u ON u.account_id = a.id
            WHERE t.token = $1
-             AND u.instance_id = $2
              AND t.revoked_at IS NULL
              AND (t.expires_at IS NULL OR t.expires_at > now())
              AND a.domain IS NULL"#,
         form.token,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await
@@ -355,11 +347,11 @@ pub async fn password_page(
 ) -> Response {
     let locale = Locale::detect(None, accept_language(&headers));
 
-    let Some(_session) = get_session(&headers, &state, &instance).await else {
+    let Some(_session) = get_session(&headers, &state).await else {
         return Redirect::to("/account/login").into_response();
     };
 
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let domain = instance.domain.clone();
     let ok = query.ok.as_deref() == Some("1");
     let err = query.err.as_deref() == Some("1");
     let mismatch = query.mismatch.as_deref() == Some("1");
@@ -398,7 +390,7 @@ pub struct PasswordForm {
 
 pub async fn password_post(
     State(state): State<AppState>,
-    axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<ResolvedInstance>,
+    axum::extract::Extension(ResolvedInstance(_instance)): axum::extract::Extension<ResolvedInstance>,
     headers: HeaderMap,
     Form(form): Form<PasswordForm>,
 ) -> Response {
@@ -414,7 +406,7 @@ pub async fn password_post(
         }};
     }
 
-    let Some(session) = get_session(&headers, &state, &instance).await else {
+    let Some(session) = get_session(&headers, &state).await else {
         return Redirect::to("/account/login").into_response();
     };
 
@@ -480,11 +472,11 @@ pub async fn invites_page(
 ) -> Response {
     let locale = Locale::detect(None, accept_language(&headers));
 
-    let Some(_session) = get_session(&headers, &state, &instance).await else {
+    let Some(_session) = get_session(&headers, &state).await else {
         return Redirect::to("/account/login").into_response();
     };
 
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain).to_string();
+    let domain = instance.domain.clone();
 
     let rows = match sqlx::query!(
         r#"SELECT a.username, inv_a.username AS "invited_by?: String"
@@ -492,9 +484,8 @@ pub async fn invites_page(
            JOIN accounts a ON a.id = u.account_id
            LEFT JOIN invites i ON i.id = u.invite_id
            LEFT JOIN accounts inv_a ON inv_a.id = i.created_by
-           WHERE u.instance_id = $1 AND a.domain IS NULL
+           WHERE a.domain IS NULL
            ORDER BY u.created_at ASC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await

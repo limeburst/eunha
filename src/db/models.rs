@@ -3,30 +3,6 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow)]
-pub struct Instance {
-    pub id: Uuid,
-    pub domain: String,
-    pub custom_domain: Option<String>,
-    pub title: String,
-    pub description: String,
-    pub short_description: String,
-    pub contact_email: Option<String>,
-    pub registrations_open: bool,
-    pub approval_required: bool,
-    pub private_key: String,
-    pub public_key: String,
-    pub console_user_id: Option<Uuid>,
-    pub vapid_private_key: String,
-    pub vapid_public_key: String,
-    pub icon_url: Option<String>,
-    pub privacy_policy: String,
-    pub terms_of_service: String,
-    pub rules: serde_json::Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, FromRow)]
 pub struct ConsoleUser {
     pub id: Uuid,
     pub email: String,
@@ -52,7 +28,6 @@ pub struct ConsoleSession {
 #[derive(Debug, Clone, FromRow)]
 pub struct Account {
     pub id: i64,
-    pub instance_id: Uuid,
     pub username: String,
     pub domain: Option<String>,
     pub display_name: String,
@@ -141,7 +116,6 @@ impl Account {
 pub struct User {
     pub id: i64,
     pub account_id: i64,
-    pub instance_id: Uuid,
     pub email: String,
     pub email_normalized: String,
     pub password_hash: String,
@@ -165,7 +139,6 @@ pub struct User {
 #[derive(Debug, Clone, FromRow)]
 pub struct Status {
     pub id: i64,
-    pub instance_id: Uuid,
     pub account_id: i64,
     pub application_id: Option<i64>,
     pub text: String,
@@ -268,7 +241,6 @@ pub struct Notification {
 #[derive(Debug, Clone, FromRow)]
 pub struct OauthApplication {
     pub id: i64,
-    pub instance_id: Uuid,
     pub name: String,
     pub uid: String,
     pub secret: String,
@@ -308,7 +280,6 @@ pub struct Tag {
 #[derive(Debug, Clone, FromRow)]
 pub struct CustomEmoji {
     pub id: i64,
-    pub instance_id: Uuid,
     pub shortcode: String,
     pub domain: Option<String>,
     pub image_url: String,

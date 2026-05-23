@@ -66,14 +66,6 @@ async fn publish_one(
     .fetch_one(&state.db)
     .await?;
 
-    let instance = sqlx::query_as!(
-        crate::db::models::Instance,
-        "SELECT * FROM instances WHERE id = $1",
-        account.instance_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
-
     let text = params["text"].as_str().unwrap_or("").to_string();
     let visibility = params["visibility"].as_str().unwrap_or("public").to_string();
     let spoiler_text = params["spoiler_text"].as_str().unwrap_or("").to_string();
@@ -104,24 +96,26 @@ async fn publish_one(
     };
     use crate::api::mastodon::formatting::render_content;
 
+    let domain = &state.instance.domain;
+
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
-    let resolved = resolve_mention_accounts(state, instance.id, &mention_handles).await;
+    let resolved = resolve_mention_accounts(state, &mention_handles).await;
     let mention_map = build_mention_map(&resolved);
-    let content = render_content(&text, &instance.domain, &mention_map);
+    let content = render_content(&text, domain, &mention_map);
 
     let status_id = crate::snowflake::next_id();
-    let uri = format!("https://{}/users/{}/statuses/{}", instance.domain, account.username, status_id);
+    let uri = format!("https://{}/users/{}/statuses/{}", domain, account.username, status_id);
 
     let visibility_int = crate::db::models::vis::from_str(&visibility);
     let status = sqlx::query_as!(
         crate::db::models::Status,
         r#"INSERT INTO statuses
-             (id, instance_id, account_id, text, spoiler_text, visibility,
+             (id, account_id, text, spoiler_text, visibility,
               language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, uri, url)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
            RETURNING *"#,
-        status_id, instance.id, account.id, text, spoiler_text, visibility_int,
+        status_id, account.id, text, spoiler_text, visibility_int,
         language, sensitive, in_reply_to_id, in_reply_to_account_id, is_reply, uri,
     )
     .fetch_one(&state.db)
@@ -197,7 +191,6 @@ async fn publish_one(
                 if let Ok(payload) = serde_json::to_string(&api_status) {
                     let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
                     state.streaming.publish(crate::streaming::Event::NewStatus {
-                        instance_id: instance.id,
                         author_id: account.id,
                         is_public: visibility == "public",
                         is_direct: visibility == "direct",
@@ -222,12 +215,11 @@ async fn publish_one(
 
     let mut redis = state.redis.clone();
     let db = state.db.clone();
-    let iid = instance.id;
     let author_id = account.id;
     let sid = status.id;
     let vis = visibility.clone();
-    crate::feed::fanout_new_status(&mut redis, &db, iid, author_id, sid, &tag_ids).await;
-    crate::feed::fanout_to_lists(&mut redis, &db, iid, author_id, sid, in_reply_to_account_id, &vis).await;
+    crate::feed::fanout_new_status(&mut redis, &db, author_id, sid, &tag_ids).await;
+    crate::feed::fanout_to_lists(&mut redis, &db, author_id, sid, in_reply_to_account_id, &vis).await;
 
     // Send mention notifications (mirrors post_status)
     let mut notified = std::collections::HashSet::new();

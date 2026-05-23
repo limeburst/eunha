@@ -200,13 +200,6 @@ pub async fn list_admin_accounts(
 ) -> AppResult<impl IntoResponse> {
     require_admin(&state, auth.account_id).await?;
 
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
-
     let limit = params.limit.unwrap_or(40).min(80).max(1);
     let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -215,26 +208,25 @@ pub async fn list_admin_accounts(
     let accounts = sqlx::query_as!(
         models::Account,
         r#"SELECT a.* FROM accounts a
-           WHERE a.instance_id = $1
-             AND a.domain IS NULL
-             AND ($3::text IS NULL OR a.username = $3)
-             AND ($4::text IS NULL OR
-                  ($4 = 'suspended' AND a.suspended_at IS NOT NULL) OR
-                  ($4 = 'silenced' AND a.silenced_at IS NOT NULL) OR
-                  ($4 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
-                  ($4 = 'disabled' AND a.suspended_at IS NOT NULL) OR
-                  ($4 = 'pending' AND EXISTS (
+           WHERE a.domain IS NULL
+             AND ($2::text IS NULL OR a.username = $2)
+             AND ($3::text IS NULL OR
+                  ($3 = 'suspended' AND a.suspended_at IS NOT NULL) OR
+                  ($3 = 'silenced' AND a.silenced_at IS NOT NULL) OR
+                  ($3 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
+                  ($3 = 'disabled' AND a.suspended_at IS NOT NULL) OR
+                  ($3 = 'pending' AND EXISTS (
                       SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL
                   )) OR
-                  ($4 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
+                  ($3 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
                       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL))
              )
-             AND ($5::bigint IS NULL OR a.id < $5)
+             AND ($4::bigint IS NULL OR a.id < $4)
+             AND ($5::bigint IS NULL OR a.id > $5)
              AND ($6::bigint IS NULL OR a.id > $6)
-             AND ($7::bigint IS NULL OR a.id > $7)
            ORDER BY a.id DESC
-           LIMIT $2"#,
-        instance_id, limit, params.username.as_deref(), params.status.as_deref(),
+           LIMIT $1"#,
+        limit, params.username.as_deref(), params.status.as_deref(),
         max_id, since_id, min_id,
     )
     .fetch_all(&state.db)
@@ -285,11 +277,6 @@ pub async fn list_admin_accounts_v2(
 ) -> AppResult<impl IntoResponse> {
     require_admin(&state, auth.account_id).await?;
 
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    ).fetch_one(&state.db).await?;
-
     let limit = params.limit.unwrap_or(40).min(80).max(1);
     let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = params.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -306,27 +293,26 @@ pub async fn list_admin_accounts_v2(
         models::Account,
         r#"SELECT a.* FROM accounts a
            LEFT JOIN users u ON u.account_id = a.id
-           WHERE a.instance_id = $1
-             AND ($3::boolean IS NOT TRUE OR a.domain IS NULL)
-             AND ($4::boolean IS NOT TRUE OR a.domain IS NOT NULL)
-             AND ($5::text IS NULL OR a.username ILIKE $5)
-             AND ($6::text IS NULL OR a.display_name ILIKE $6)
-             AND ($7::text IS NULL OR
-                  ($7 = 'suspended' AND a.suspended_at IS NOT NULL) OR
-                  ($7 = 'silenced' AND a.silenced_at IS NOT NULL) OR
-                  ($7 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
-                  ($7 = 'disabled' AND a.suspended_at IS NOT NULL) OR
-                  ($7 = 'pending' AND u.approved_at IS NULL AND u.id IS NOT NULL) OR
-                  ($7 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
+           WHERE ($2::boolean IS NOT TRUE OR a.domain IS NULL)
+             AND ($3::boolean IS NOT TRUE OR a.domain IS NOT NULL)
+             AND ($4::text IS NULL OR a.username ILIKE $4)
+             AND ($5::text IS NULL OR a.display_name ILIKE $5)
+             AND ($6::text IS NULL OR
+                  ($6 = 'suspended' AND a.suspended_at IS NOT NULL) OR
+                  ($6 = 'silenced' AND a.silenced_at IS NOT NULL) OR
+                  ($6 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
+                  ($6 = 'disabled' AND a.suspended_at IS NOT NULL) OR
+                  ($6 = 'pending' AND u.approved_at IS NULL AND u.id IS NOT NULL) OR
+                  ($6 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
                       AND (u.id IS NULL OR u.approved_at IS NOT NULL))
              )
-             AND ($8::text IS NULL OR (u.email_normalized = $8 AND a.domain IS NULL))
-             AND ($9::bigint IS NULL OR a.id < $9)
+             AND ($7::text IS NULL OR (u.email_normalized = $7 AND a.domain IS NULL))
+             AND ($8::bigint IS NULL OR a.id < $8)
+             AND ($9::bigint IS NULL OR a.id > $9)
              AND ($10::bigint IS NULL OR a.id > $10)
-             AND ($11::bigint IS NULL OR a.id > $11)
            ORDER BY a.id DESC
-           LIMIT $2"#,
-        instance_id, limit,
+           LIMIT $1"#,
+        limit,
         local_only, remote_only,
         params.username.as_deref(),
         display_name_pattern.as_deref(),
@@ -624,13 +610,6 @@ pub async fn list_admin_reports(
 ) -> AppResult<impl IntoResponse> {
     require_admin(&state, auth.account_id).await?;
 
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
-
     let limit = params.limit.unwrap_or(20).min(40).max(1);
     let resolved = params.resolved.unwrap_or(false);
     let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -643,15 +622,13 @@ pub async fn list_admin_reports(
                   r.created_at, r.updated_at,
                   CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
            FROM reports r
-           JOIN accounts a ON a.id = r.account_id
-           WHERE a.instance_id = $1
-             AND ($2 = (r.action_taken_at IS NOT NULL))
-             AND ($4::bigint IS NULL OR r.id < $4)
+           WHERE ($1 = (r.action_taken_at IS NOT NULL))
+             AND ($3::bigint IS NULL OR r.id < $3)
+             AND ($4::bigint IS NULL OR r.id > $4)
              AND ($5::bigint IS NULL OR r.id > $5)
-             AND ($6::bigint IS NULL OR r.id > $6)
            ORDER BY r.id DESC
-           LIMIT $3"#,
-        instance_id, resolved, limit, max_id, since_id, min_id,
+           LIMIT $2"#,
+        resolved, limit, max_id, since_id, min_id,
     )
     .fetch_all(&state.db)
     .await?;
@@ -819,12 +796,6 @@ pub async fn get_measures(
     Json(body): Json<MeasuresRequest>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -842,18 +813,18 @@ pub async fn get_measures(
         let measure = match key.as_str() {
             "new_users" => {
                 let total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND created_at BETWEEN $2 AND $3",
-                    instance_id, start, end,
+                    "SELECT COUNT(*) FROM accounts WHERE domain IS NULL AND created_at BETWEEN $1 AND $2",
+                    start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND created_at BETWEEN $2 AND $3",
-                    instance_id, prev_start, start,
+                    "SELECT COUNT(*) FROM accounts WHERE domain IS NULL AND created_at BETWEEN $1 AND $2",
+                    prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let data = sqlx::query!(
                     r#"SELECT date_trunc('day', created_at)::timestamptz AS day, COUNT(*) AS n
-                       FROM accounts WHERE instance_id = $1 AND domain IS NULL AND created_at BETWEEN $2 AND $3
+                       FROM accounts WHERE domain IS NULL AND created_at BETWEEN $1 AND $2
                        GROUP BY day ORDER BY day"#,
-                    instance_id, start, end,
+                    start, end,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
                     "key": key,
@@ -871,21 +842,21 @@ pub async fn get_measures(
                 let total = sqlx::query_scalar!(
                     r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
                        JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
-                    instance_id, start, end,
+                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL"#,
+                    start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
                     r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
                        JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
-                    instance_id, prev_start, start,
+                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL"#,
+                    prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let data = sqlx::query!(
                     r#"SELECT date_trunc('day', s.created_at)::timestamptz AS day, COUNT(DISTINCT s.account_id) AS n
                        FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL
+                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL
                        GROUP BY day ORDER BY day"#,
-                    instance_id, start, end,
+                    start, end,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
                     "key": key,
@@ -902,20 +873,20 @@ pub async fn get_measures(
             "new_statuses" => {
                 let total = sqlx::query_scalar!(
                     r#"SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
-                    instance_id, start, end,
+                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL"#,
+                    start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
                     r#"SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL"#,
-                    instance_id, prev_start, start,
+                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL"#,
+                    prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let data = sqlx::query!(
                     r#"SELECT date_trunc('day', s.created_at)::timestamptz AS day, COUNT(*) AS n
                        FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND a.domain IS NULL AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL
+                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL
                        GROUP BY day ORDER BY day"#,
-                    instance_id, start, end,
+                    start, end,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
                     "key": key,
@@ -931,14 +902,12 @@ pub async fn get_measures(
             }
             "opened_reports" => {
                 let total = sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
-                       WHERE a.instance_id = $1 AND r.created_at BETWEEN $2 AND $3"#,
-                    instance_id, start, end,
+                    "SELECT COUNT(*) FROM reports r WHERE r.created_at BETWEEN $1 AND $2",
+                    start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
-                       WHERE a.instance_id = $1 AND r.created_at BETWEEN $2 AND $3"#,
-                    instance_id, prev_start, start,
+                    "SELECT COUNT(*) FROM reports r WHERE r.created_at BETWEEN $1 AND $2",
+                    prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 serde_json::json!({
                     "key": key, "unit": null,
@@ -948,14 +917,12 @@ pub async fn get_measures(
             }
             "resolved_reports" => {
                 let total = sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
-                       WHERE a.instance_id = $1 AND r.action_taken_at BETWEEN $2 AND $3"#,
-                    instance_id, start, end,
+                    "SELECT COUNT(*) FROM reports r WHERE r.action_taken_at BETWEEN $1 AND $2",
+                    start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) FROM reports r JOIN accounts a ON a.id = r.account_id
-                       WHERE a.instance_id = $1 AND r.action_taken_at BETWEEN $2 AND $3"#,
-                    instance_id, prev_start, start,
+                    "SELECT COUNT(*) FROM reports r WHERE r.action_taken_at BETWEEN $1 AND $2",
+                    prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 serde_json::json!({
                     "key": key, "unit": null,
@@ -990,12 +957,6 @@ pub async fn get_dimensions(
     Json(body): Json<DimensionsRequest>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -1015,9 +976,9 @@ pub async fn get_dimensions(
                 let rows = sqlx::query!(
                     r#"SELECT COALESCE(a.domain, 'local') AS server, COUNT(*) AS n
                        FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.instance_id = $1 AND s.created_at BETWEEN $2 AND $3 AND s.deleted_at IS NULL
-                       GROUP BY server ORDER BY n DESC LIMIT $4"#,
-                    instance_id, start, end, limit,
+                       WHERE s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL
+                       GROUP BY server ORDER BY n DESC LIMIT $3"#,
+                    start, end, limit,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
                     "key": key,
@@ -1063,12 +1024,6 @@ pub async fn get_retention(
     Json(body): Json<RetentionRequest>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -1087,14 +1042,12 @@ pub async fn get_retention(
 
     let cohort_rows = sqlx::query!(
         r#"SELECT
-               date_trunc($3, a.created_at)::timestamptz AS period,
+               date_trunc($2, a.created_at)::timestamptz AS period,
                a.id AS account_id
            FROM accounts a
-           WHERE a.instance_id = $1
-             AND a.domain IS NULL
-             AND a.created_at BETWEEN $2 AND $4
+           WHERE a.domain IS NULL
+             AND a.created_at BETWEEN $1 AND $3
            ORDER BY period"#,
-        instance_id,
         start,
         frequency,
         end,
@@ -1199,17 +1152,10 @@ pub async fn list_admin_custom_emojis(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<AdminCustomEmoji>>> {
     require_admin(&state, auth.account_id).await?;
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let rows = sqlx::query!(
         "SELECT id, shortcode, image_url, static_image_url, visible_in_picker, disabled
-         FROM custom_emojis WHERE instance_id = $1 AND domain IS NULL ORDER BY shortcode",
-        instance_id,
+         FROM custom_emojis WHERE domain IS NULL ORDER BY shortcode",
     )
     .fetch_all(&state.db)
     .await?;
@@ -1233,13 +1179,6 @@ pub async fn create_admin_custom_emoji(
     mut multipart: Multipart,
 ) -> AppResult<Json<AdminCustomEmoji>> {
     require_admin(&state, auth.account_id).await?;
-
-    let instance_id = sqlx::query_scalar!(
-        "SELECT instance_id FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let mut shortcode = String::new();
     let mut image_bytes: Option<Vec<u8>> = None;
@@ -1270,18 +1209,18 @@ pub async fn create_admin_custom_emoji(
         "image/webp" => "webp",
         _ => "png",
     };
-    let key = format!("{}/emoji/{}.{}", instance_id, shortcode, ext);
+    let key = format!("emoji/{}.{}", shortcode, ext);
     state.storage.store(&image_data, &key, &content_type).await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("storage: {e}")))?;
     let url = state.storage.public_url(&key);
 
     let row = sqlx::query!(
-        r#"INSERT INTO custom_emojis (instance_id, shortcode, image_url, static_image_url, visible_in_picker)
-           VALUES ($1, $2, $3, $3, true)
-           ON CONFLICT (instance_id, shortcode)
-           DO UPDATE SET image_url = $3, static_image_url = $3, disabled = false
+        r#"INSERT INTO custom_emojis (shortcode, image_url, static_image_url, visible_in_picker)
+           VALUES ($1, $2, $2, true)
+           ON CONFLICT (shortcode)
+           DO UPDATE SET image_url = $2, static_image_url = $2, disabled = false
            RETURNING id, shortcode, image_url, static_image_url, visible_in_picker, disabled"#,
-        instance_id, shortcode, url,
+        shortcode, url,
     )
     .fetch_one(&state.db)
     .await?;
@@ -2050,12 +1989,11 @@ pub async fn admin_trending_tags(
 
 pub async fn admin_trending_statuses(
     state: State<AppState>,
-    instance: axum::extract::Extension<crate::middleware::ResolvedInstance>,
     query: axum::extract::Query<super::trends::TrendParams>,
     auth: axum::extract::Extension<AuthenticatedUser>,
 ) -> AppResult<axum::Json<Vec<super::types::Status>>> {
     require_admin(&state, auth.account_id).await?;
-    super::trends::trending_statuses(state, instance, query, Some(axum::extract::Extension(crate::middleware::AuthenticatedUser { account_id: auth.account_id, token_id: auth.token_id, scopes: auth.scopes.clone(), application_id: auth.application_id }))).await
+    super::trends::trending_statuses(state, query, Some(axum::extract::Extension(crate::middleware::AuthenticatedUser { account_id: auth.account_id, token_id: auth.token_id, scopes: auth.scopes.clone(), application_id: auth.application_id }))).await
 }
 
 pub async fn admin_trending_links(
@@ -2279,7 +2217,7 @@ pub async fn list_admin_tags(
     Query(params): Query<AdminTagsParams>,
 ) -> AppResult<Json<Vec<AdminTag>>> {
     require_admin(&state, auth.account_id).await?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let limit = params.pagination.limit_clamped(100, 100);
     let max_id = params.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = params.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -2322,7 +2260,7 @@ pub async fn get_admin_tag(
     Path(id): Path<i64>,
 ) -> AppResult<Json<AdminTag>> {
     require_admin(&state, auth.account_id).await?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let r = sqlx::query!(
         "SELECT id, name, trendable, usable, listable, reviewed_at FROM tags WHERE id = $1",
         id,
@@ -2349,7 +2287,7 @@ pub async fn update_admin_tag(
     Json(form): Json<UpdateAdminTagForm>,
 ) -> AppResult<Json<AdminTag>> {
     require_admin(&state, auth.account_id).await?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let r = sqlx::query!(
         r#"UPDATE tags SET
                trendable   = COALESCE($2, trendable),

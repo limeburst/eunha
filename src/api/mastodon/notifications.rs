@@ -1031,7 +1031,7 @@ pub async fn get_notification_requests(
                   a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
                   a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
                   a.suspended_at, a.silenced_at, a.hide_collections, a.last_status_at, a.fields,
-                  a.instance_id, a.created_at AS account_created_at, a.updated_at AS account_updated_at
+                  a.created_at AS account_created_at, a.updated_at AS account_updated_at
            FROM notification_requests nr
            JOIN accounts a ON a.id = nr.from_account_id
            WHERE nr.account_id = $1 AND NOT nr.dismissed
@@ -1149,7 +1149,6 @@ pub async fn get_notification_requests(
     for r in rows {
         let acc = crate::db::models::Account {
             id: r.from_account_id,
-            instance_id: r.instance_id,
             username: r.username,
             domain: r.domain,
             display_name: r.display_name,
@@ -1339,7 +1338,7 @@ pub async fn get_notification_request(
                   a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
                   a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
                   a.suspended_at, a.silenced_at, a.hide_collections, a.last_status_at, a.fields,
-                  a.instance_id, a.created_at AS account_created_at, a.updated_at AS account_updated_at
+                  a.created_at AS account_created_at, a.updated_at AS account_updated_at
            FROM notification_requests nr
            JOIN accounts a ON a.id = nr.from_account_id
            WHERE nr.id = $1 AND nr.account_id = $2"#,
@@ -1351,7 +1350,6 @@ pub async fn get_notification_request(
 
     let acc = crate::db::models::Account {
         id: r.from_account_id,
-        instance_id: r.instance_id,
         username: r.username,
         domain: r.domain,
         display_name: r.display_name,

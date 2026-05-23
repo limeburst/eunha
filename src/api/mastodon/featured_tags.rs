@@ -23,7 +23,7 @@ pub async fn list_featured_tags(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FeaturedTag>>> {
     auth.require_scope("read:accounts")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
 
     let rows = sqlx::query!(
         r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
@@ -64,7 +64,7 @@ pub async fn feature_tag(
     Json(form): Json<FeaturedTagForm>,
 ) -> AppResult<Json<FeaturedTag>> {
     auth.require_scope("write:accounts")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let name = form.name.to_lowercase();
     let name = name.trim_start_matches('#');
 
@@ -130,7 +130,7 @@ pub async fn feature_tag_by_name(
     Path(name): Path<String>,
 ) -> AppResult<Json<FeaturedTag>> {
     auth.require_scope("write:accounts")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let name = name.to_lowercase();
     let name = name.trim_start_matches('#');
 
@@ -195,7 +195,7 @@ pub async fn featured_tag_suggestions(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::Tag>>> {
     auth.require_scope("read:accounts")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
 
     let rows = sqlx::query!(
         r#"SELECT t.id, t.name

@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::{
     error::{AppError, AppResult},
-    middleware::{AuthenticatedUser, ResolvedInstance},
+    middleware::AuthenticatedUser,
     state::AppState,
 };
 use super::{convert::media_from_db, types::MediaAttachment};
@@ -20,7 +20,6 @@ const SMALL_PIXELS: u32 = 230_400;
 
 pub async fn upload_media(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     mut multipart: Multipart,
 ) -> AppResult<Json<MediaAttachment>> {
@@ -47,7 +46,7 @@ pub async fn upload_media(
 
     let (_, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
     let media_type = classify_media_type(&content_type);
-    let keys = crate::media::media_attachment_keys(instance.id, &content_type);
+    let keys = crate::media::media_attachment_keys(&content_type);
 
     let data = strip_exif(&data, &content_type);
     state.storage.store(&data, &keys.original, &content_type).await?;

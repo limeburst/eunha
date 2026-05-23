@@ -47,7 +47,7 @@ pub async fn shared_inbox(
 
 async fn handle_follow(
     state: &AppState,
-    instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
@@ -56,9 +56,8 @@ async fn handle_follow(
 
     // Resolve the target local account
     let target = sqlx::query!(
-        "SELECT id, locked FROM accounts WHERE uri = $1 AND instance_id = $2",
+        "SELECT id, locked FROM accounts WHERE uri = $1",
         object_uri,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await?;
@@ -100,7 +99,7 @@ async fn handle_follow(
 
 async fn handle_undo(
     state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let object = activity.get("object");
@@ -122,7 +121,7 @@ async fn handle_undo(
 
 async fn handle_create(
     state: &AppState,
-    instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let object = match activity.get("object") {
@@ -197,12 +196,11 @@ async fn handle_create(
 
     sqlx::query!(
         r#"INSERT INTO statuses
-             (id, instance_id, account_id, text, spoiler_text, visibility, sensitive,
+             (id, account_id, text, spoiler_text, visibility, sensitive,
               uri, url, in_reply_to_id, quote_of_id, reply, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING"#,
         status_id,
-        instance.id,
         account_id,
         text,
         spoiler_text,
@@ -233,7 +231,7 @@ async fn handle_create(
 
 async fn handle_delete(
     state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let object_uri = activity.get("object").and_then(|o| {
@@ -254,7 +252,7 @@ async fn handle_delete(
 
 async fn handle_announce(
     _state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     _activity: &Value,
 ) -> AppResult<()> {
     // TODO: create boost (reblog) status
@@ -263,7 +261,7 @@ async fn handle_announce(
 
 async fn handle_like(
     state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
@@ -299,7 +297,7 @@ async fn handle_like(
 
 async fn handle_accept_reject(
     state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let activity_type = activity.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -339,7 +337,7 @@ async fn handle_accept_reject(
 
 async fn handle_update(
     _state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     _activity: &Value,
 ) -> AppResult<()> {
     // TODO: handle actor updates, status edits
@@ -348,7 +346,7 @@ async fn handle_update(
 
 async fn handle_quote_request(
     state: &AppState,
-    _instance: &crate::db::models::Instance,
+    _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
@@ -445,15 +443,12 @@ pub async fn resolve_or_fetch_remote_account(
         .unwrap_or("")
         .to_string();
 
-    // We need an instance_id for the remote domain — find or create a remote instance stub
-    let remote_instance_id = get_or_create_remote_instance(state, &domain).await?;
-
     let new_account_id = crate::snowflake::next_id();
     let id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (id, instance_id, username, domain, display_name, note, url, uri,
+             (id, username, domain, display_name, note, url, uri,
               inbox_url, outbox_url, shared_inbox_url, public_key)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            ON CONFLICT (uri) WHERE uri != '' DO UPDATE
              SET display_name = EXCLUDED.display_name,
                  note = EXCLUDED.note,
@@ -461,7 +456,6 @@ pub async fn resolve_or_fetch_remote_account(
                  updated_at = now()
            RETURNING id"#,
         new_account_id,
-        remote_instance_id,
         username,
         domain,
         display_name,
@@ -477,26 +471,4 @@ pub async fn resolve_or_fetch_remote_account(
     .await?;
 
     Ok(id)
-}
-
-pub async fn get_or_create_remote_instance(state: &AppState, domain: &str) -> AppResult<uuid::Uuid> {
-    if let Some(id) = sqlx::query_scalar!(
-        "SELECT id FROM instances WHERE domain = $1",
-        domain
-    )
-    .fetch_optional(&state.db)
-    .await? {
-        return Ok(id);
-    }
-
-    // Create a stub instance entry for this remote domain
-    Ok(sqlx::query_scalar!(
-        r#"INSERT INTO instances (domain, title, registrations_open, private_key, public_key)
-           VALUES ($1, $1, false, '', '')
-           ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain
-           RETURNING id"#,
-        domain,
-    )
-    .fetch_one(&state.db)
-    .await?)
 }

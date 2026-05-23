@@ -62,9 +62,8 @@ pub async fn webfinger(
     };
 
     let account = sqlx::query!(
-        "SELECT id, username FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL",
+        "SELECT id, username FROM accounts WHERE username = $1 AND domain IS NULL",
         username,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await?

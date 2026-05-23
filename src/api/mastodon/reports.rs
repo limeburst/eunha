@@ -41,7 +41,7 @@ pub struct ReportForm {
 
 pub async fn file_report(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+    Extension(ResolvedInstance(_instance)): Extension<crate::middleware::ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ReportForm>,
 ) -> AppResult<Json<Report>> {
@@ -100,9 +100,8 @@ pub async fn file_report(
         let state2 = state.clone();
         let reporter_id = auth.account_id;
         let rid = report.id;
-        let iid = instance.id;
         tokio::spawn(async move {
-            notify_admins(&state2, iid, reporter_id, "admin.report", Some(rid)).await;
+            notify_admins(&state2, reporter_id, "admin.report", Some(rid)).await;
         });
     }
 

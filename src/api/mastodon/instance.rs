@@ -81,18 +81,8 @@ fn obfuscate_domain(domain: &str) -> String {
 
 // ── GET /api/v1/instance/rules ────────────────────────────────────────────
 
-pub async fn get_instance_rules(
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-) -> Json<Vec<Rule>> {
-    let rules = instance.rules.as_array()
-        .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
-            id: (i + 1).to_string(),
-            text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            translations: serde_json::json!({}),
-        }).collect())
-        .unwrap_or_default();
-    Json(rules)
+pub async fn get_instance_rules() -> Json<Vec<Rule>> {
+    Json(vec![])
 }
 
 // ── GET /api/v1/instance/privacy_policy ──────────────────────────────────
@@ -101,7 +91,7 @@ pub async fn get_privacy_policy(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<ExtendedDescription>> {
     Ok(Json(ExtendedDescription {
-        updated_at: super::convert::mastodon_date(instance.updated_at),
+        updated_at: super::convert::mastodon_date(chrono::Utc::now()),
         content: instance.privacy_policy.clone(),
     }))
 }
@@ -112,7 +102,7 @@ pub async fn get_extended_description(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<ExtendedDescription>> {
     Ok(Json(ExtendedDescription {
-        updated_at: super::convert::mastodon_date(instance.updated_at),
+        updated_at: super::convert::mastodon_date(chrono::Utc::now()),
         content: instance.description.clone(),
     }))
 }
@@ -124,8 +114,8 @@ pub async fn get_instance_v1(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV1>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
-    let (user_count, status_count, domain_count) = fetch_stats(&state, instance.id).await;
-    let contact_account = fetch_contact_account(&state, instance.id).await;
+    let (user_count, status_count, domain_count) = fetch_stats(&state).await;
+    let contact_account = fetch_contact_account(&state).await;
 
     let base_url = format!("https://{}", instance.domain);
     Ok(Json(InstanceV1 {
@@ -176,14 +166,7 @@ pub async fn get_instance_v1(
             },
         }),
         contact_account,
-        rules: instance.rules.as_array()
-            .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
-                id: (i + 1).to_string(),
-                text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                translations: serde_json::json!({}),
-            }).collect())
-            .unwrap_or_default(),
+        rules: vec![],
     }))
 }
 
@@ -191,11 +174,9 @@ pub async fn get_instance_v1(
 
 pub async fn get_peers(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<Vec<String>>> {
     let rows = sqlx::query_scalar!(
-        "SELECT DISTINCT domain FROM accounts WHERE instance_id = $1 AND domain IS NOT NULL ORDER BY domain",
-        instance.id,
+        "SELECT DISTINCT domain FROM accounts WHERE domain IS NOT NULL ORDER BY domain",
     )
     .fetch_all(&state.db)
     .await?;
@@ -211,14 +192,12 @@ pub struct PeersSearchParams {
 
 pub async fn search_peers(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<PeersSearchParams>,
 ) -> AppResult<Json<Vec<String>>> {
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
     let pattern = format!("%{}%", q);
     let rows = sqlx::query_scalar!(
-        "SELECT DISTINCT domain FROM accounts WHERE instance_id = $1 AND domain IS NOT NULL AND domain ILIKE $2 ORDER BY domain LIMIT 20",
-        instance.id,
+        "SELECT DISTINCT domain FROM accounts WHERE domain IS NOT NULL AND domain ILIKE $1 ORDER BY domain LIMIT 20",
         pattern,
     )
     .fetch_all(&state.db)
@@ -238,7 +217,7 @@ pub async fn get_terms_of_service(
         return Ok(Json(vec![]));
     }
     Ok(Json(vec![TermsOfServiceByDate {
-        effective_date: instance.updated_at.format("%Y-%m-%d").to_string(),
+        effective_date: "2025-01-01".to_string(),
         effective: true,
         content: instance.terms_of_service.clone(),
         succeeded_by: None,
@@ -268,8 +247,8 @@ pub async fn get_terms_of_service_by_date(
     if date.len() != 10 || !date.chars().all(|c| c.is_ascii_digit() || c == '-') {
         return Err(crate::error::AppError::NotFound);
     }
-    let updated_date = instance.updated_at.format("%Y-%m-%d").to_string();
-    if date != updated_date {
+    // Only recognise the single fixed effective date
+    if date != "2025-01-01" {
         return Err(crate::error::AppError::NotFound);
     }
     Ok(Json(TermsOfServiceByDate {
@@ -286,16 +265,15 @@ pub async fn get_instance_v2(
 ) -> AppResult<Json<InstanceV2>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
     let base_url = format!("https://{}", instance.domain);
-    let (_, _, _) = fetch_stats(&state, instance.id).await;
-    let contact_account = fetch_contact_account(&state, instance.id).await;
+    let (_, _, _) = fetch_stats(&state).await;
+    let contact_account = fetch_contact_account(&state).await;
     let active_month = sqlx::query_scalar!(
         r#"SELECT COUNT(DISTINCT s.account_id)
            FROM statuses s
            WHERE s.account_id IN (
-               SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+               SELECT id FROM accounts WHERE domain IS NULL
            ) AND s.deleted_at IS NULL
              AND s.created_at > now() - interval '30 days'"#,
-        instance.id,
     )
     .fetch_one(&state.db)
     .await
@@ -413,14 +391,7 @@ pub async fn get_instance_v2(
             email: instance.contact_email.clone().unwrap_or_default(),
             account: contact_account,
         },
-        rules: instance.rules.as_array()
-            .map(|arr| arr.iter().enumerate().map(|(i, r)| Rule {
-                id: (i + 1).to_string(),
-                text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                translations: serde_json::json!({}),
-            }).collect())
-            .unwrap_or_default(),
+        rules: vec![],
         api_versions: serde_json::json!({ "mastodon": 9 }),
         wrapstodon: None,
     }))
@@ -430,7 +401,6 @@ pub async fn get_instance_v2(
 
 pub async fn get_instance_activity(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     // Return 12 weeks of activity
     let rows = sqlx::query!(
@@ -440,12 +410,11 @@ pub async fn get_instance_activity(
              COUNT(DISTINCT s.account_id) AS logins
            FROM statuses s
            WHERE s.account_id IN (
-               SELECT id FROM accounts WHERE instance_id = $1 AND domain IS NULL
+               SELECT id FROM accounts WHERE domain IS NULL
            ) AND s.deleted_at IS NULL
              AND s.created_at >= date_trunc('week', now()) - interval '11 weeks'
            GROUP BY date_trunc('week', s.created_at)
            ORDER BY week DESC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?;
@@ -455,10 +424,9 @@ pub async fn get_instance_activity(
              EXTRACT(EPOCH FROM date_trunc('week', a.created_at))::bigint AS week,
              COUNT(a.id) AS registrations
            FROM accounts a
-           WHERE a.instance_id = $1 AND a.domain IS NULL
+           WHERE a.domain IS NULL
              AND a.created_at >= date_trunc('week', now()) - interval '11 weeks'
            GROUP BY date_trunc('week', a.created_at)"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?;
@@ -487,10 +455,9 @@ pub async fn get_instance_activity(
     Ok(Json(result))
 }
 
-async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i64) {
+async fn fetch_stats(state: &AppState) -> (i64, i64, i64) {
     let user_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM accounts WHERE instance_id = $1 AND domain IS NULL AND suspended_at IS NULL",
-        instance_id,
+        "SELECT COUNT(*) FROM accounts WHERE domain IS NULL AND suspended_at IS NULL",
     )
     .fetch_one(&state.db)
     .await
@@ -498,8 +465,7 @@ async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i6
     .unwrap_or(0);
 
     let status_count = sqlx::query_scalar!(
-        "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE instance_id = $1 AND domain IS NULL",
-        instance_id,
+        "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE domain IS NULL",
     )
     .fetch_one(&state.db)
     .await
@@ -507,8 +473,7 @@ async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i6
     .unwrap_or(0);
 
     let domain_count = sqlx::query_scalar!(
-        "SELECT COUNT(DISTINCT domain) FROM accounts WHERE instance_id = $1 AND domain IS NOT NULL",
-        instance_id,
+        "SELECT COUNT(DISTINCT domain) FROM accounts WHERE domain IS NOT NULL",
     )
     .fetch_one(&state.db)
     .await
@@ -518,15 +483,14 @@ async fn fetch_stats(state: &AppState, instance_id: uuid::Uuid) -> (i64, i64, i6
     (user_count, status_count, domain_count)
 }
 
-async fn fetch_contact_account(state: &AppState, instance_id: uuid::Uuid) -> Option<super::types::Account> {
+async fn fetch_contact_account(state: &AppState) -> Option<super::types::Account> {
     let account = sqlx::query_as!(
         crate::db::models::Account,
         r#"SELECT a.* FROM accounts a
            JOIN users u ON u.account_id = a.id
-           WHERE a.instance_id = $1 AND u.role = 'admin'
+           WHERE u.role = 'admin'
            ORDER BY a.created_at ASC
            LIMIT 1"#,
-        instance_id,
     )
     .fetch_optional(&state.db)
     .await

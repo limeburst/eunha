@@ -22,9 +22,8 @@ pub async fn get_actor(
 ) -> AppResult<Response> {
     let account = sqlx::query!(
         r#"SELECT a.* FROM accounts a
-           WHERE a.username = $1 AND a.instance_id = $2 AND a.domain IS NULL"#,
+           WHERE a.username = $1 AND a.domain IS NULL"#,
         username,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await?

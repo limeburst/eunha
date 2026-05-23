@@ -4,10 +4,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::{
-    db::models::Instance,
     error::{AppError, AppResult},
     media,
     state::AppState,
@@ -16,345 +14,64 @@ use super::ConsoleAuth;
 
 #[derive(Debug, Serialize)]
 pub struct InstanceResponse {
-    pub id: String,
     pub domain: String,
-    pub custom_domain: Option<String>,
     pub title: String,
-    pub status: String,
-    pub plan: String,
-    pub region: String,
     pub registrations_open: bool,
     pub approval_required: bool,
     pub icon_url: Option<String>,
     pub privacy_policy: String,
-    pub rules: serde_json::Value,
-    pub created_at: String,
-    pub admin_account: Option<String>,
-}
-
-impl InstanceResponse {
-    fn from_instance(instance: &Instance, admin: Option<String>) -> Self {
-        InstanceResponse {
-            id: instance.id.to_string(),
-            domain: instance.domain.clone(),
-            custom_domain: instance.custom_domain.clone(),
-            title: instance.title.clone(),
-            status: "running".to_string(),
-            plan: "free".to_string(),
-            region: "default".to_string(),
-            registrations_open: instance.registrations_open,
-            approval_required: instance.approval_required,
-            icon_url: instance.icon_url.clone(),
-            privacy_policy: instance.privacy_policy.clone(),
-            rules: instance.rules.clone(),
-            created_at: instance.created_at.to_rfc3339(),
-            admin_account: admin,
-        }
-    }
 }
 
 pub async fn list(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
+    ConsoleAuth(_user): ConsoleAuth,
 ) -> AppResult<Json<Vec<InstanceResponse>>> {
-    let instances = sqlx::query_as!(
-        Instance,
-        "SELECT * FROM instances WHERE console_user_id = $1 ORDER BY created_at DESC",
-        user.id,
-    )
-    .fetch_all(&state.db)
-    .await?;
-
-    let mut responses = Vec::with_capacity(instances.len());
-    for instance in &instances {
-        let admin = first_admin_username(&state, instance.id).await?;
-        responses.push(InstanceResponse::from_instance(instance, admin));
-    }
-
-    Ok(Json(responses))
+    Ok(Json(vec![InstanceResponse {
+        domain: state.instance.domain.clone(),
+        title: state.instance.title.clone(),
+        registrations_open: state.instance.registrations_open,
+        approval_required: state.instance.approval_required,
+        icon_url: state.instance.icon_url.clone(),
+        privacy_policy: state.instance.privacy_policy.clone(),
+    }]))
 }
 
 pub async fn get_one(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
 ) -> AppResult<Json<InstanceResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-    let admin = first_admin_username(&state, instance.id).await?;
-    Ok(Json(InstanceResponse::from_instance(&instance, admin)))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateInstanceRequest {
-    pub domain: String,
-    pub custom_domain: Option<String>,
-    pub title: String,
-    pub admin_username: String,
-    pub admin_email: String,
-    pub admin_password: String,
+    Ok(Json(InstanceResponse {
+        domain: state.instance.domain.clone(),
+        title: state.instance.title.clone(),
+        registrations_open: state.instance.registrations_open,
+        approval_required: state.instance.approval_required,
+        icon_url: state.instance.icon_url.clone(),
+        privacy_policy: state.instance.privacy_policy.clone(),
+    }))
 }
 
 pub async fn create(
-    State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Json(body): Json<CreateInstanceRequest>,
-) -> AppResult<(StatusCode, Json<InstanceResponse>)> {
-    let domain = body.domain.trim().to_lowercase();
-    if domain.is_empty() {
-        return Err(AppError::Unprocessable("domain is required".into()));
-    }
-
-    let username = body.admin_username.trim().to_lowercase();
-    if username.is_empty() {
-        return Err(AppError::Unprocessable("admin_username is required".into()));
-    }
-    if body.admin_password.len() < 8 {
-        return Err(AppError::Unprocessable("admin_password must be at least 8 characters".into()));
-    }
-
-    // Normalise custom domain
-    let custom_domain: Option<String> = body.custom_domain
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_lowercase());
-
-    // Check domain not already taken
-    let exists = sqlx::query_scalar!(
-        "SELECT 1 FROM instances WHERE domain = $1 OR custom_domain = $1",
-        domain
-    )
-    .fetch_optional(&state.db)
-    .await?;
-    if exists.is_some() {
-        return Err(AppError::Conflict);
-    }
-
-    if let Some(ref cd) = custom_domain {
-        let taken = sqlx::query_scalar!(
-            "SELECT 1 FROM instances WHERE domain = $1 OR custom_domain = $1",
-            cd
-        )
-        .fetch_optional(&state.db)
-        .await?;
-        if taken.is_some() {
-            return Err(AppError::Conflict);
-        }
-    }
-
-    // Generate instance keypair (for ActivityPub instance actor)
-    let (instance_private_key, instance_public_key) = generate_rsa_keypair()?;
-
-    let instance = sqlx::query_as!(
-        Instance,
-        r#"INSERT INTO instances
-             (domain, custom_domain, title, private_key, public_key, console_user_id)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING *"#,
-        domain,
-        custom_domain,
-        body.title.trim(),
-        instance_private_key,
-        instance_public_key,
-        user.id,
-    )
-    .fetch_one(&state.db)
-    .await?;
-
-    // Generate admin account keypair
-    let (account_private_key, account_public_key) = generate_rsa_keypair()?;
-
-    let base_url = format!("https://{}", domain);
-    let uri = format!("{}/users/{}", base_url, username);
-    let inbox_url = format!("{}/inbox", uri);
-    let outbox_url = format!("{}/outbox", uri);
-    let url = format!("{}/{}", base_url, username);
-
-    let new_account_id = crate::snowflake::next_id();
-    let account = sqlx::query!(
-        r#"INSERT INTO accounts
-             (id, instance_id, username, display_name, note, note_text, url, uri,
-              private_key, public_key, inbox_url, outbox_url, shared_inbox_url)
-           VALUES ($1, $2, $3, $3, '', '', $4, $5, $6, $7, $8, $9, $10)
-           RETURNING id"#,
-        new_account_id,
-        instance.id,
-        username,
-        url,
-        uri,
-        account_private_key,
-        account_public_key,
-        inbox_url,
-        outbox_url,
-        format!("https://{}/inbox", domain),
-    )
-    .fetch_one(&state.db)
-    .await?;
-
-    let admin_email = body.admin_email.trim();
-    let password_hash = hash_password(&body.admin_password)?;
-
-    sqlx::query!(
-        r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, role)
-           VALUES ($1, $2, $3, $4, $5, now(), 'admin')"#,
-        account.id,
-        instance.id,
-        admin_email,
-        admin_email.to_lowercase(),
-        password_hash,
-    )
-    .execute(&state.db)
-    .await?;
-
-    Ok((
-        StatusCode::CREATED,
-        Json(InstanceResponse::from_instance(&instance, Some(username))),
-    ))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateInstanceRequest {
-    pub title: Option<String>,
-    /// `null` clears the custom domain; omitting the field leaves it unchanged.
-    /// We use a double-Option to distinguish "not provided" from "set to null".
-    #[serde(default, deserialize_with = "deserialize_optional_field")]
-    pub custom_domain: MaybeAbsent<Option<String>>,
-    pub registrations_open: Option<bool>,
-    pub approval_required: Option<bool>,
-    pub privacy_policy: Option<String>,
-    pub rules: Option<serde_json::Value>,
-}
-
-/// Represents a JSON field that may be absent vs explicitly null/present.
-#[derive(Debug, Default)]
-pub enum MaybeAbsent<T> {
-    #[default]
-    Absent,
-    Present(T),
-}
-
-fn deserialize_optional_field<'de, D, T>(d: D) -> Result<MaybeAbsent<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    Ok(MaybeAbsent::Present(T::deserialize(d)?))
+    ConsoleAuth(_user): ConsoleAuth,
+    Json(_body): Json<serde_json::Value>,
+) -> AppResult<StatusCode> {
+    Err(AppError::Unprocessable("Multi-instance creation is not supported in single-tenant mode".into()))
 }
 
 pub async fn update(
-    State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
-    Json(body): Json<UpdateInstanceRequest>,
-) -> AppResult<Json<InstanceResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
-    if let Some(title) = &body.title {
-        sqlx::query!(
-            "UPDATE instances SET title = $1, updated_at = now() WHERE id = $2",
-            title.trim(),
-            instance.id,
-        )
-        .execute(&state.db)
-        .await?;
-    }
-
-    if let Some(registrations_open) = body.registrations_open {
-        sqlx::query!(
-            "UPDATE instances SET registrations_open = $1, updated_at = now() WHERE id = $2",
-            registrations_open,
-            instance.id,
-        )
-        .execute(&state.db)
-        .await?;
-    }
-
-    if let Some(approval_required) = body.approval_required {
-        sqlx::query!(
-            "UPDATE instances SET approval_required = $1, updated_at = now() WHERE id = $2",
-            approval_required,
-            instance.id,
-        )
-        .execute(&state.db)
-        .await?;
-
-        // Turning approval off: approve everyone who was waiting
-        if !approval_required {
-            sqlx::query!(
-                "UPDATE users SET approved_at = now(), updated_at = now() WHERE instance_id = $1 AND approved_at IS NULL",
-                instance.id,
-            )
-            .execute(&state.db)
-            .await?;
-        }
-    }
-
-    if let MaybeAbsent::Present(ref custom_domain) = body.custom_domain {
-        let cd: Option<String> = custom_domain
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_lowercase());
-
-        if let Some(ref cd_val) = cd {
-            let taken = sqlx::query_scalar!(
-                "SELECT 1 FROM instances WHERE (domain = $1 OR custom_domain = $1) AND id != $2",
-                cd_val,
-                instance.id,
-            )
-            .fetch_optional(&state.db)
-            .await?;
-            if taken.is_some() {
-                return Err(AppError::Conflict);
-            }
-        }
-
-        sqlx::query!(
-            "UPDATE instances SET custom_domain = $1, updated_at = now() WHERE id = $2",
-            cd,
-            instance.id,
-        )
-        .execute(&state.db)
-        .await?;
-    }
-
-    if let Some(privacy_policy) = &body.privacy_policy {
-        sqlx::query!(
-            "UPDATE instances SET privacy_policy = $1, updated_at = now() WHERE id = $2",
-            privacy_policy,
-            instance.id,
-        )
-        .execute(&state.db)
-        .await?;
-    }
-
-    if let Some(rules) = &body.rules {
-        sqlx::query!(
-            "UPDATE instances SET rules = $1, updated_at = now() WHERE id = $2",
-            rules,
-            instance.id,
-        )
-        .execute(&state.db)
-        .await?;
-    }
-
-    let updated = sqlx::query_as!(Instance, "SELECT * FROM instances WHERE id = $1", instance.id)
-        .fetch_one(&state.db)
-        .await?;
-
-    let admin = first_admin_username(&state, updated.id).await?;
-    Ok(Json(InstanceResponse::from_instance(&updated, admin)))
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
+    Json(_body): Json<serde_json::Value>,
+) -> AppResult<StatusCode> {
+    Err(AppError::Unprocessable("Instance settings must be updated via config file".into()))
 }
 
 pub async fn upload_icon(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
     mut multipart: Multipart,
 ) -> AppResult<Json<InstanceResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let storage = &state.storage;
 
     let mut icon_data: Option<(Vec<u8>, String)> = None;
@@ -367,39 +84,25 @@ pub async fn upload_icon(
     }
 
     let (data, content_type) = icon_data.ok_or_else(|| AppError::Unprocessable("missing icon field".into()))?;
-
-    let key = media::instance_icon_key(instance.id, &content_type);
+    let key = media::singleton_icon_key(&content_type);
     storage.store(&data, &key, &content_type).await?;
-    let url = storage.public_url(&key);
+    let _url = storage.public_url(&key);
 
-    sqlx::query!(
-        "UPDATE instances SET icon_url = $1, updated_at = now() WHERE id = $2",
-        url,
-        instance.id,
-    )
-    .execute(&state.db)
-    .await?;
-
-    let updated = sqlx::query_as!(Instance, "SELECT * FROM instances WHERE id = $1", instance.id)
-        .fetch_one(&state.db)
-        .await?;
-
-    let admin = first_admin_username(&state, updated.id).await?;
-    Ok(Json(InstanceResponse::from_instance(&updated, admin)))
+    Ok(Json(InstanceResponse {
+        domain: state.instance.domain.clone(),
+        title: state.instance.title.clone(),
+        registrations_open: state.instance.registrations_open,
+        approval_required: state.instance.approval_required,
+        icon_url: state.instance.icon_url.clone(),
+        privacy_policy: state.instance.privacy_policy.clone(),
+    }))
 }
 
 pub async fn delete(
-    State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
 ) -> AppResult<StatusCode> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
-    sqlx::query!("DELETE FROM instances WHERE id = $1", instance.id)
-        .execute(&state.db)
-        .await?;
-
-    Ok(StatusCode::NO_CONTENT)
+    Err(AppError::Unprocessable("Instance deletion is not supported in single-tenant mode".into()))
 }
 
 // ── Invites ────────────────────────────────────────────────────────────────
@@ -421,9 +124,7 @@ pub struct ConsoleInviteResponse {
 pub struct InviteTreeMember {
     pub account_id: String,
     pub username: String,
-    /// Invite ID used at signup; null if no invite was used.
     pub invite_id: Option<String>,
-    /// Account ID of the person whose invite was used; null for root members.
     pub invited_by_account_id: Option<String>,
     pub invited_by_username: Option<String>,
     pub joined_at: chrono::DateTime<chrono::Utc>,
@@ -448,26 +149,23 @@ pub struct InviteTreeResponse {
 
 pub async fn invite_tree(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
 ) -> AppResult<Json<InviteTreeResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let members = sqlx::query!(
         r#"SELECT
              a.id        AS account_id,
              a.username,
-             u.invite_id AS "invite_id?: Uuid",
-             inv_a.id    AS "invited_by_account_id?: Uuid",
+             u.invite_id,
+             inv_a.id    AS "invited_by_account_id?: i64",
              inv_a.username AS "invited_by_username?: String",
              u.created_at
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            LEFT JOIN invites i ON i.id = u.invite_id
            LEFT JOIN accounts inv_a ON inv_a.id = i.created_by
-           WHERE u.instance_id = $1 AND a.domain IS NULL
+           WHERE a.domain IS NULL
            ORDER BY u.created_at ASC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?
@@ -485,19 +183,17 @@ pub async fn invite_tree(
     let invites = sqlx::query!(
         r#"SELECT
              i.id, i.code, i.max_uses, i.uses, i.expires_at, i.created_at,
-             a.id       AS "created_by_account_id?: Uuid",
+             a.id       AS "created_by_account_id?: i64",
              a.username AS "created_by_username?: String"
            FROM invites i
            LEFT JOIN accounts a ON a.id = i.created_by
-           WHERE i.instance_id = $1
            ORDER BY i.created_at DESC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?
     .into_iter()
     .map(|r| ConsoleInviteResponse {
-        url: crate::api::mastodon::invites::invite_url(&instance.domain, &r.code),
+        url: crate::api::mastodon::invites::invite_url(&state.instance.domain, &r.code),
         id: r.id.to_string(),
         code: r.code,
         created_by_account_id: r.created_by_account_id.map(|id| id.to_string()),
@@ -514,11 +210,9 @@ pub async fn invite_tree(
                   u.created_at, u.rejected_at AS "rejected_at!: chrono::DateTime<chrono::Utc>"
            FROM users u
            JOIN accounts a ON a.id = u.account_id
-           WHERE u.instance_id = $1
-             AND a.domain IS NULL
+           WHERE a.domain IS NULL
              AND u.rejected_at IS NOT NULL
            ORDER BY u.rejected_at DESC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?
@@ -543,11 +237,10 @@ pub struct CreateConsoleInviteRequest {
 
 pub async fn create_console_invite(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
     body: Option<Json<CreateConsoleInviteRequest>>,
 ) -> AppResult<Json<ConsoleInviteResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
     let max_uses = body.and_then(|Json(b)| b.max_uses);
 
     if let Some(n) = max_uses {
@@ -556,14 +249,11 @@ pub async fn create_console_invite(
         }
     }
 
-    // Create the invite on behalf of the first admin account (if one exists),
-    // so it appears in the tree rooted at the admin.
     let admin_id = sqlx::query_scalar!(
         r#"SELECT a.id FROM accounts a
            JOIN users u ON u.account_id = a.id
-           WHERE a.instance_id = $1 AND a.domain IS NULL
+           WHERE a.domain IS NULL
            ORDER BY u.created_at ASC LIMIT 1"#,
-        instance.id,
     )
     .fetch_optional(&state.db)
     .await?;
@@ -571,10 +261,9 @@ pub async fn create_console_invite(
     let code = crate::api::mastodon::invites::generate_code();
 
     let row = sqlx::query!(
-        r#"INSERT INTO invites (instance_id, code, created_by, max_uses)
-           VALUES ($1, $2, $3, $4)
+        r#"INSERT INTO invites (code, created_by, max_uses)
+           VALUES ($1, $2, $3)
            RETURNING id, code, max_uses, uses, expires_at, created_at"#,
-        instance.id,
         code,
         admin_id,
         max_uses,
@@ -591,7 +280,7 @@ pub async fn create_console_invite(
     };
 
     Ok(Json(ConsoleInviteResponse {
-        url: crate::api::mastodon::invites::invite_url(&instance.domain, &row.code),
+        url: crate::api::mastodon::invites::invite_url(&state.instance.domain, &row.code),
         id: row.id.to_string(),
         code: row.code,
         created_by_account_id: admin_id.map(|id| id.to_string()),
@@ -616,48 +305,38 @@ pub struct ApplicationResponse {
 
 pub async fn list_applications(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
 ) -> AppResult<Json<Vec<ApplicationResponse>>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let rows = sqlx::query!(
         r#"SELECT a.id AS account_id, a.username, u.email, u.reason, u.created_at
            FROM users u
            JOIN accounts a ON a.id = u.account_id
-           WHERE u.instance_id = $1
-             AND a.domain IS NULL
+           WHERE a.domain IS NULL
              AND u.approved_at IS NULL
              AND u.rejected_at IS NULL
            ORDER BY u.created_at ASC"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let apps = rows.into_iter().map(|r| ApplicationResponse {
+    Ok(Json(rows.into_iter().map(|r| ApplicationResponse {
         account_id: r.account_id.to_string(),
         username: r.username,
         email: r.email,
         reason: r.reason,
         applied_at: r.created_at,
-    }).collect();
-
-    Ok(Json(apps))
+    }).collect()))
 }
 
 pub async fn approve_application(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path((domain, account_id)): Path<(String, i64)>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path((_domain, account_id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let rows_affected = sqlx::query!(
-        r#"UPDATE users SET approved_at = now(), updated_at = now()
-           WHERE account_id = $1 AND instance_id = $2 AND approved_at IS NULL"#,
+        "UPDATE users SET approved_at = now(), updated_at = now() WHERE account_id = $1 AND approved_at IS NULL",
         account_id,
-        instance.id,
     )
     .execute(&state.db)
     .await?
@@ -672,17 +351,12 @@ pub async fn approve_application(
 
 pub async fn reject_application(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path((domain, account_id)): Path<(String, i64)>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path((_domain, account_id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let rows_affected = sqlx::query!(
-        r#"UPDATE users SET rejected_at = now(), updated_at = now()
-           WHERE account_id = $1 AND instance_id = $2
-             AND approved_at IS NULL AND rejected_at IS NULL"#,
+        "UPDATE users SET rejected_at = now(), updated_at = now() WHERE account_id = $1 AND approved_at IS NULL AND rejected_at IS NULL",
         account_id,
-        instance.id,
     )
     .execute(&state.db)
     .await?
@@ -721,15 +395,12 @@ pub struct AnnouncementForm {
 
 pub async fn list_announcements(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
 ) -> AppResult<Json<Vec<AnnouncementResponse>>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let rows = sqlx::query!(
         "SELECT id, text, published, all_day, starts_at, ends_at, published_at, created_at, updated_at
-         FROM announcements WHERE instance_id = $1 ORDER BY published_at DESC",
-        instance.id,
+         FROM announcements ORDER BY published_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
@@ -749,22 +420,19 @@ pub async fn list_announcements(
 
 pub async fn create_announcement(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path(domain): Path<String>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path(_domain): Path<String>,
     Json(form): Json<AnnouncementForm>,
 ) -> AppResult<Json<AnnouncementResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let starts_at = form.starts_at.as_deref()
         .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
     let ends_at = form.ends_at.as_deref()
         .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
 
     let r = sqlx::query!(
-        r#"INSERT INTO announcements (instance_id, text, published, all_day, starts_at, ends_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
+        r#"INSERT INTO announcements (text, published, all_day, starts_at, ends_at)
+           VALUES ($1, $2, $3, $4, $5)
            RETURNING id, text, published, all_day, starts_at, ends_at, published_at, created_at, updated_at"#,
-        instance.id,
         form.text,
         form.published.unwrap_or(true),
         form.all_day.unwrap_or(false),
@@ -789,12 +457,10 @@ pub async fn create_announcement(
 
 pub async fn update_announcement(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path((domain, id)): Path<(String, i64)>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path((_domain, id)): Path<(String, i64)>,
     Json(form): Json<AnnouncementForm>,
 ) -> AppResult<Json<AnnouncementResponse>> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let starts_at = form.starts_at.as_deref()
         .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
     let ends_at = form.ends_at.as_deref()
@@ -802,11 +468,10 @@ pub async fn update_announcement(
 
     let r = sqlx::query!(
         r#"UPDATE announcements
-           SET text = $3, published = $4, all_day = $5, starts_at = $6, ends_at = $7, updated_at = now()
-           WHERE id = $1 AND instance_id = $2
+           SET text = $2, published = $3, all_day = $4, starts_at = $5, ends_at = $6, updated_at = now()
+           WHERE id = $1
            RETURNING id, text, published, all_day, starts_at, ends_at, published_at, created_at, updated_at"#,
         id,
-        instance.id,
         form.text,
         form.published.unwrap_or(true),
         form.all_day.unwrap_or(false),
@@ -832,14 +497,12 @@ pub async fn update_announcement(
 
 pub async fn delete_announcement(
     State(state): State<AppState>,
-    ConsoleAuth(user): ConsoleAuth,
-    Path((domain, id)): Path<(String, i64)>,
+    ConsoleAuth(_user): ConsoleAuth,
+    Path((_domain, id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
-    let instance = instance_for_user(&state, &domain, user.id).await?;
-
     let deleted = sqlx::query_scalar!(
-        "DELETE FROM announcements WHERE id = $1 AND instance_id = $2 RETURNING id",
-        id, instance.id,
+        "DELETE FROM announcements WHERE id = $1 RETURNING id",
+        id,
     )
     .fetch_optional(&state.db)
     .await?;
@@ -849,41 +512,4 @@ pub async fn delete_announcement(
     }
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-// ── helpers ────────────────────────────────────────────────────────────────
-
-async fn instance_for_user(state: &AppState, domain: &str, user_id: Uuid) -> AppResult<Instance> {
-    sqlx::query_as!(
-        Instance,
-        "SELECT * FROM instances WHERE domain = $1 AND console_user_id = $2",
-        domain,
-        user_id,
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(AppError::NotFound)
-}
-
-async fn first_admin_username(state: &AppState, instance_id: Uuid) -> AppResult<Option<String>> {
-    let row = sqlx::query!(
-        r#"SELECT a.username FROM accounts a
-           JOIN users u ON u.account_id = a.id
-           WHERE a.instance_id = $1
-           ORDER BY u.created_at ASC
-           LIMIT 1"#,
-        instance_id,
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    Ok(row.map(|r| r.username))
-}
-
-fn generate_rsa_keypair() -> AppResult<(String, String)> {
-    crate::crypto::generate_rsa_keypair()
-}
-
-fn hash_password(password: &str) -> AppResult<String> {
-    crate::crypto::hash_password(password)
 }

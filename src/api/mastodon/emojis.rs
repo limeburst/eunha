@@ -1,25 +1,21 @@
-use axum::{extract::State, response::Json, Extension};
+use axum::{extract::State, response::Json};
 use crate::{
     error::AppResult,
-    middleware::ResolvedInstance,
     state::AppState,
 };
 use super::types::CustomEmoji;
 
 pub async fn list_custom_emojis(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<Vec<CustomEmoji>>> {
     let rows = sqlx::query!(
         r#"SELECT ce.shortcode, ce.image_url, ce.static_image_url, ce.visible_in_picker,
                   ecc.name AS "category_name?"
            FROM custom_emojis ce
            LEFT JOIN custom_emoji_categories ecc ON ecc.id = ce.category_id
-           WHERE ce.instance_id = $1
-             AND ce.domain IS NULL
+           WHERE ce.domain IS NULL
              AND ce.disabled = false
            ORDER BY ce.shortcode"#,
-        instance.id,
     )
     .fetch_all(&state.db)
     .await?;

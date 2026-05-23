@@ -5,7 +5,6 @@ use axum::{
     Extension,
 };
 use std::collections::HashMap;
-use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     middleware::{AuthenticatedUser, ResolvedInstance},
@@ -19,7 +18,6 @@ use super::types::{Tag, TagHistory};
 pub(super) async fn fetch_tags_histories(
     db: &sqlx::PgPool,
     tag_ids: &[i64],
-    instance_id: Uuid,
 ) -> HashMap<i64, Vec<TagHistory>> {
     if tag_ids.is_empty() {
         return HashMap::new();
@@ -33,13 +31,11 @@ pub(super) async fn fetch_tags_histories(
            FROM statuses_tags st
            JOIN statuses s ON s.id = st.status_id
            WHERE st.tag_id = ANY($1::bigint[])
-             AND s.instance_id = $2
              AND s.deleted_at IS NULL
              AND s.visibility = 0
-             AND s.created_at >= $3
+             AND s.created_at >= $2
            GROUP BY st.tag_id, date_trunc('day', s.created_at)::date"#,
         tag_ids as &[i64],
-        instance_id,
         cutoff,
     )
     .fetch_all(db)
@@ -83,9 +79,8 @@ pub(super) async fn fetch_tags_histories(
 pub(super) async fn fetch_tag_history(
     db: &sqlx::PgPool,
     tag_id: i64,
-    instance_id: Uuid,
 ) -> Vec<TagHistory> {
-    fetch_tags_histories(db, &[tag_id], instance_id)
+    fetch_tags_histories(db, &[tag_id])
         .await
         .remove(&tag_id)
         .unwrap_or_default()
@@ -103,7 +98,7 @@ pub async fn get_tag(
     Path(name): Path<String>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Tag>> {
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let name = name.to_lowercase();
 
     let tag = sqlx::query!(
@@ -145,7 +140,7 @@ pub async fn get_tag(
         (None, None)
     };
 
-    let history = fetch_tag_history(&state.db, tag.id, instance.id).await;
+    let history = fetch_tag_history(&state.db, tag.id).await;
 
     Ok(Json(Tag {
         id: tag.id.to_string(),
@@ -174,7 +169,7 @@ pub async fn list_followed_tags(
     req_headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:follows")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let limit = params.limit.unwrap_or(100).min(200).max(1) as i64;
     let max_id = params.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = params.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -204,7 +199,7 @@ pub async fn list_followed_tags(
     let last_follow_id = rows.last().map(|r| r.follow_id.to_string());
 
     let tag_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let histories = fetch_tags_histories(&state.db, &tag_ids, instance.id).await;
+    let histories = fetch_tags_histories(&state.db, &tag_ids).await;
 
     let result: Vec<Tag> = rows
         .into_iter()
@@ -238,7 +233,7 @@ pub async fn follow_tag(
     Path(name): Path<String>,
 ) -> AppResult<Json<Tag>> {
     auth.require_scope("write:follows")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let name = name.to_lowercase();
 
     let tag_id = sqlx::query_scalar!(
@@ -257,7 +252,7 @@ pub async fn follow_tag(
     .execute(&state.db)
     .await?;
 
-    let history = fetch_tag_history(&state.db, tag_id, instance.id).await;
+    let history = fetch_tag_history(&state.db, tag_id).await;
 
     let featuring = sqlx::query_scalar!(
         "SELECT EXISTS(SELECT 1 FROM featured_tags WHERE account_id = $1 AND tag_id = $2)",
@@ -284,7 +279,7 @@ pub async fn unfollow_tag(
     Path(name): Path<String>,
 ) -> AppResult<Json<Tag>> {
     auth.require_scope("write:follows")?;
-    let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
+    let domain = &instance.domain;
     let name = name.to_lowercase();
 
     let tag_id = sqlx::query_scalar!(
@@ -303,7 +298,7 @@ pub async fn unfollow_tag(
     .execute(&state.db)
     .await?;
 
-    let history = fetch_tag_history(&state.db, tag_id, instance.id).await;
+    let history = fetch_tag_history(&state.db, tag_id).await;
 
     let featuring = sqlx::query_scalar!(
         "SELECT EXISTS(SELECT 1 FROM featured_tags WHERE account_id = $1 AND tag_id = $2)",

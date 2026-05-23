@@ -28,8 +28,8 @@ pub async fn get_outbox(
     Query(q): Query<OutboxQuery>,
 ) -> AppResult<Response> {
     let account = sqlx::query!(
-        "SELECT id, statuses_count FROM accounts WHERE username = $1 AND instance_id = $2 AND domain IS NULL",
-        username, instance.id,
+        "SELECT id, statuses_count FROM accounts WHERE username = $1 AND domain IS NULL",
+        username,
     )
     .fetch_optional(&state.db)
     .await?

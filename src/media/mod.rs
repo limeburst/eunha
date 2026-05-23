@@ -63,32 +63,25 @@ impl Storage {
 
 // ── Key generation ────────────────────────────────────────────────────────
 
-pub fn instance_icon_key(instance_id: Uuid, content_type: &str) -> String {
+pub fn singleton_icon_key(content_type: &str) -> String {
     let ext = ext_for(content_type);
-    format!(
-        "{}/instance/icon/{}.{}",
-        instance_id,
-        random_hex(),
-        ext,
-    )
+    format!("instance/icon/{}.{}", random_hex(), ext)
 }
 
-pub fn account_avatar_key(instance_id: Uuid, account_id: i64, content_type: &str) -> String {
+pub fn account_avatar_key(account_id: i64, content_type: &str) -> String {
     let ext = ext_for(content_type);
     format!(
-        "{}/accounts/avatars/{}/original/{}.{}",
-        instance_id,
+        "accounts/avatars/{}/original/{}.{}",
         int_to_path(account_id),
         random_hex(),
         ext,
     )
 }
 
-pub fn account_header_key(instance_id: Uuid, account_id: i64, content_type: &str) -> String {
+pub fn account_header_key(account_id: i64, content_type: &str) -> String {
     let ext = ext_for(content_type);
     format!(
-        "{}/accounts/headers/{}/original/{}.{}",
-        instance_id,
+        "accounts/headers/{}/original/{}.{}",
         int_to_path(account_id),
         random_hex(),
         ext,
@@ -100,11 +93,10 @@ pub struct MediaAttachmentKeys {
     pub small: String,
 }
 
-pub fn media_attachment_keys(instance_id: Uuid, content_type: &str) -> MediaAttachmentKeys {
+pub fn media_attachment_keys(content_type: &str) -> MediaAttachmentKeys {
     let ext = ext_for(content_type);
     let base = format!(
-        "{}/media_attachments/files/{}",
-        instance_id,
+        "media_attachments/files/{}",
         uuid_to_path(Uuid::new_v4()),
     );
     let name = random_hex();

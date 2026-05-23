@@ -6,7 +6,6 @@ use axum::{
 };
 use serde::Deserialize;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::{
     db::models::{Account, Status as DbStatus},
@@ -222,7 +221,7 @@ pub async fn post_status(
 
     let hashtags = extract_hashtags(&text);
     let mention_handles = extract_mention_handles(&text);
-    let resolved = resolve_mention_accounts(&state, instance.id, &mention_handles).await;
+    let resolved = resolve_mention_accounts(&state, &mention_handles).await;
 
     // Safeguard: if the caller passed allowed_mentions, reject the post if any resolved
     // mentions are not in that list (mirrors Mastodon's PostStatusService#safeguard_mentions!).
@@ -312,12 +311,11 @@ pub async fn post_status(
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
-             (id, instance_id, account_id, application_id, text, spoiler_text, visibility,
+             (id, account_id, application_id, text, spoiler_text, visibility,
               language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url, quote_of_id, interaction_policy)
-           VALUES ($1,$2,$3,$12,$4,$5,$6,$7,$8,$9,$10,$14,$11,$13,$13,$15,$16)
+           VALUES ($1,$2,$11,$3,$4,$5,$6,$7,$8,$9,$13,$10,$12,$12,$14,$15)
            RETURNING *"#,
         status_id,
-        instance.id,
         account.id,
         text,
         form.spoiler_text.unwrap_or_default(),
@@ -408,8 +406,7 @@ pub async fn post_status(
         cid
     } else {
         sqlx::query_scalar!(
-            "INSERT INTO conversations (instance_id) VALUES ($1) RETURNING id",
-            instance.id
+            "INSERT INTO conversations DEFAULT VALUES RETURNING id",
         )
         .fetch_one(&state.db)
         .await?
@@ -557,7 +554,6 @@ pub async fn post_status(
         if let Ok(payload) = serde_json::to_string(&api_status) {
             let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
             state.streaming.publish(Event::NewStatus {
-                instance_id: instance.id,
                 author_id: account.id,
                 is_public: visibility == "public",
                 is_direct: visibility == "direct",
@@ -649,18 +645,17 @@ pub async fn post_status(
 
         let mut redis = state.redis.clone();
         let db = state.db.clone();
-        let iid = instance.id;
         let author_id = account.id;
         let status_id = status.id;
         let reply_to_account = in_reply_to_account_id;
         let vis = visibility.clone();
         if feed::sync_fanout() {
-            feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
-            feed::fanout_to_lists(&mut redis, &db, iid, author_id, status_id, reply_to_account, &vis).await;
+            feed::fanout_new_status(&mut redis, &db, author_id, status_id, &tag_ids).await;
+            feed::fanout_to_lists(&mut redis, &db, author_id, status_id, reply_to_account, &vis).await;
         } else {
             tokio::spawn(async move {
-                feed::fanout_new_status(&mut redis, &db, iid, author_id, status_id, &tag_ids).await;
-                feed::fanout_to_lists(&mut redis, &db, iid, author_id, status_id, reply_to_account, &vis).await;
+                feed::fanout_new_status(&mut redis, &db, author_id, status_id, &tag_ids).await;
+                feed::fanout_to_lists(&mut redis, &db, author_id, status_id, reply_to_account, &vis).await;
             });
         }
     }
@@ -1134,7 +1129,6 @@ pub async fn delete_status(
     .await?;
 
     state.streaming.publish(Event::DeleteStatus {
-        instance_id: status.instance_id,
         status_id: id,
     });
 
@@ -1142,15 +1136,14 @@ pub async fn delete_status(
     {
         let mut redis = state.redis.clone();
         let db = state.db.clone();
-        let iid = status.instance_id;
         let author_id = account.id;
         if feed::sync_fanout() {
-            feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
-            feed::fanout_remove_from_lists(&mut redis, &db, iid, author_id, id).await;
+            feed::fanout_remove_status(&mut redis, &db, author_id, id).await;
+            feed::fanout_remove_from_lists(&mut redis, &db, author_id, id).await;
         } else {
             tokio::spawn(async move {
-                feed::fanout_remove_status(&mut redis, &db, iid, author_id, id).await;
-                feed::fanout_remove_from_lists(&mut redis, &db, iid, author_id, id).await;
+                feed::fanout_remove_status(&mut redis, &db, author_id, id).await;
+                feed::fanout_remove_from_lists(&mut redis, &db, author_id, id).await;
             });
         }
     }
@@ -1247,7 +1240,6 @@ pub async fn unfavourite_status(
 
 pub async fn reblog_status(
     State(state): State<AppState>,
-    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1290,11 +1282,10 @@ pub async fn reblog_status(
     let boost_id = crate::snowflake::next_id();
     let boost = sqlx::query_as!(
         DbStatus,
-        r#"INSERT INTO statuses (id, instance_id, account_id, text, visibility, reblog_of_id)
-           VALUES ($1,$2,$3,'',$4,$5)
+        r#"INSERT INTO statuses (id, account_id, text, visibility, reblog_of_id)
+           VALUES ($1,$2,'',$3,$4)
            RETURNING *"#,
         boost_id,
-        instance.id,
         auth.account_id,
         original.visibility,
         original_id,
@@ -1338,7 +1329,6 @@ pub async fn reblog_status(
     if let Ok(payload) = serde_json::to_string(&api_boost) {
         let hashtags: Vec<String> = api_boost.tags.iter().map(|t| t.name.clone()).collect();
         state.streaming.publish(Event::NewStatus {
-            instance_id: instance.id,
             author_id: boost_account.id,
             is_public: original.visibility == crate::db::models::vis::PUBLIC,
             is_direct: false,
@@ -1992,12 +1982,7 @@ pub async fn edit_status(
         return Err(AppError::Unprocessable("Reblogs cannot be edited".into()));
     }
 
-    let instance_domain = sqlx::query_scalar!(
-        "SELECT domain FROM instances WHERE id = $1",
-        status.instance_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
+    let instance_domain = state.instance.domain.clone();
 
     // Render old content for the status_edits snapshot
     let old_mention_rows = sqlx::query!(
@@ -2042,7 +2027,7 @@ pub async fn edit_status(
     }
     let hashtags = extract_hashtags(&new_text);
     let mention_handles = extract_mention_handles(&new_text);
-    let resolved = resolve_mention_accounts(&state, status.instance_id, &mention_handles).await;
+    let resolved = resolve_mention_accounts(&state, &mention_handles).await;
     let mention_map = build_mention_map(&resolved);
     let new_content = render_content(&new_text, &instance_domain, &mention_map);
     let new_spoiler = form.spoiler_text.unwrap_or_else(|| status.spoiler_text.clone());
@@ -2101,7 +2086,6 @@ pub async fn edit_status(
         if let Ok(payload) = serde_json::to_string(&api_status) {
             let hashtags: Vec<String> = api_status.tags.iter().map(|t| t.name.clone()).collect();
             state.streaming.publish(Event::StatusUpdate {
-                instance_id: updated_status.instance_id,
                 author_id: account.id,
                 is_public: updated_status.visibility == crate::db::models::vis::PUBLIC,
                 status_id: id,
@@ -2160,13 +2144,7 @@ pub async fn get_status_history(
     // Render current version content on the fly
     let current_mentions = super::accounts::fetch_status_mentions(&state, id).await.unwrap_or_default();
     let current_content = if account.domain.is_none() {
-        let instance_domain = sqlx::query_scalar!(
-            "SELECT domain FROM instances WHERE id = $1",
-            status.instance_id,
-        )
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or_default();
+        let instance_domain = state.instance.domain.clone();
         let map = super::formatting::mention_map_from_api(&current_mentions);
         super::formatting::render_content(&status.text, &instance_domain, &map)
     } else {
@@ -2850,7 +2828,6 @@ pub fn extract_mention_handles(text: &str) -> Vec<(String, Option<String>)> {
 
 pub async fn resolve_mention_accounts(
     state: &AppState,
-    instance_id: Uuid,
     handles: &[(String, Option<String>)],
 ) -> Vec<(String, Account)> {
     let mut result = Vec::new();
@@ -2868,8 +2845,8 @@ pub async fn resolve_mention_accounts(
         } else {
             sqlx::query_as!(
                 Account,
-                "SELECT * FROM accounts WHERE instance_id = $1 AND LOWER(username) = $2 AND domain IS NULL LIMIT 1",
-                instance_id, username,
+                "SELECT * FROM accounts WHERE LOWER(username) = $1 AND domain IS NULL LIMIT 1",
+                username,
             )
             .fetch_optional(&state.db)
             .await
