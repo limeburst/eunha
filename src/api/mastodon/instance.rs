@@ -421,7 +421,7 @@ pub async fn get_instance_v2(
                 translations: serde_json::json!({}),
             }).collect())
             .unwrap_or_default(),
-        api_versions: serde_json::json!({ "mastodon": 2 }),
+        api_versions: serde_json::json!({ "mastodon": 9 }),
         wrapstodon: None,
     }))
 }
