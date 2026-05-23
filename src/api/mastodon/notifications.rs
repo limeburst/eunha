@@ -298,7 +298,6 @@ pub async fn get_notifications(
         let Some(account) = from_account_map.get(&n.from_account_id) else { continue };
         let status = n.status_id.and_then(|sid| status_api_map.get(&sid)).cloned();
         let report = n.report_id.and_then(|rid| report_map.get(&rid)).cloned();
-        let filtered = status.as_ref().and_then(|s| s.filtered.clone());
         let mut notif_account = account_from_db(account);
         notif_account.emojis = from_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
         notif_account.roles = from_account_roles_map.get(&account.id).cloned().unwrap_or_default();
@@ -310,7 +309,7 @@ pub async fn get_notifications(
             account: notif_account,
             status,
             report,
-            filtered,
+            filtered: if n.filtered { Some(true) } else { None },
             event: None,
             moderation_warning: None,
             fallback: None,

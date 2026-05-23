@@ -1845,7 +1845,12 @@ pub async fn favourited_by(
                JOIN favourites f ON f.account_id = a.id
                WHERE f.status_id = $1
                  AND NOT EXISTS (
-                     SELECT 1 FROM blocks WHERE account_id = $2 AND target_account_id = a.id
+                     SELECT 1 FROM blocks
+                     WHERE (account_id = $2 AND target_account_id = a.id)
+                        OR (account_id = a.id AND target_account_id = $2)
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes WHERE account_id = $2 AND target_account_id = a.id
                  )
                  AND ($3::bigint IS NULL OR a.id < $3)
                  AND ($4::bigint IS NULL OR a.id > $4)
@@ -1914,8 +1919,14 @@ pub async fn reblogged_by(
             r#"SELECT a.* FROM accounts a
                JOIN statuses s ON s.account_id = a.id
                WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
+                 AND s.visibility IN (0, 1)
                  AND NOT EXISTS (
-                     SELECT 1 FROM blocks WHERE account_id = $2 AND target_account_id = a.id
+                     SELECT 1 FROM blocks
+                     WHERE (account_id = $2 AND target_account_id = a.id)
+                        OR (account_id = a.id AND target_account_id = $2)
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM mutes WHERE account_id = $2 AND target_account_id = a.id
                  )
                  AND ($3::bigint IS NULL OR a.id < $3)
                  AND ($4::bigint IS NULL OR a.id > $4)
@@ -1931,6 +1942,7 @@ pub async fn reblogged_by(
             r#"SELECT a.* FROM accounts a
                JOIN statuses s ON s.account_id = a.id
                WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
+                 AND s.visibility IN (0, 1)
                  AND ($2::bigint IS NULL OR a.id < $2)
                  AND ($3::bigint IS NULL OR a.id > $3)
                  AND ($4::bigint IS NULL OR a.id > $4)

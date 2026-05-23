@@ -366,8 +366,9 @@ pub struct Notification {
     pub status: Option<Status>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<Report>,
+    // true when notification is routed to filtered inbox (notification policies)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub filtered: Option<Vec<serde_json::Value>>,
+    pub filtered: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

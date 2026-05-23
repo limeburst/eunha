@@ -221,6 +221,23 @@ pub async fn get_account(
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, id).await?;
+    // Local accounts that are unconfirmed or pending approval are invisible (404).
+    if account.domain.is_none() {
+        let ok = sqlx::query_scalar!(
+            r#"SELECT u.confirmed_at IS NOT NULL
+                 AND (u.approved_at IS NOT NULL OR NOT i.approval_required) AS "ok!"
+               FROM users u
+               JOIN instances i ON i.id = u.instance_id
+               WHERE u.account_id = $1"#,
+            account.id,
+        )
+        .fetch_optional(&state.db)
+        .await?;
+        match ok {
+            None | Some(false) => return Err(AppError::NotFound),
+            _ => {}
+        }
+    }
     let mut api_account = account_from_db(&account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
     api_account.roles = fetch_account_roles(&state, account.id).await;
@@ -250,6 +267,7 @@ pub struct StatusesQuery {
     pub only_media: Option<bool>,
     pub exclude_replies: Option<bool>,
     pub exclude_reblogs: Option<bool>,
+    pub exclude_direct: Option<bool>,
     pub pinned: Option<bool>,
     pub tagged: Option<String>,
 }
@@ -395,6 +413,7 @@ pub async fn get_account_statuses(
     let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let tagged_lower = q.tagged.as_deref().map(|t| t.to_lowercase());
+    let exclude_direct = q.exclude_direct.unwrap_or(false);
     let statuses = if min_id.is_some() {
         sqlx::query_as!(
             crate::db::models::Status,
@@ -408,6 +427,12 @@ pub async fn get_account_statuses(
                    visibility IN (0, 1)
                    OR ($5::boolean = true)
                    OR ($6::boolean = true AND visibility = 2)
+                   OR (
+                     NOT $10::boolean
+                     AND $11::bigint IS NOT NULL
+                     AND visibility = 3
+                     AND EXISTS (SELECT 1 FROM mentions WHERE status_id = statuses.id AND account_id = $11)
+                   )
                  )
                  AND (
                    text != ''
@@ -434,6 +459,8 @@ pub async fn get_account_statuses(
             limit,
             q.only_media.unwrap_or(false),
             tagged_lower,
+            exclude_direct,
+            viewer_id,
         )
         .fetch_all(&state.db)
         .await?
@@ -451,6 +478,12 @@ pub async fn get_account_statuses(
                    visibility IN (0, 1)
                    OR ($6::boolean = true)
                    OR ($7::boolean = true AND visibility = 2)
+                   OR (
+                     NOT $11::boolean
+                     AND $12::bigint IS NOT NULL
+                     AND visibility = 3
+                     AND EXISTS (SELECT 1 FROM mentions WHERE status_id = statuses.id AND account_id = $12)
+                   )
                  )
                  AND (
                    text != ''
@@ -478,6 +511,8 @@ pub async fn get_account_statuses(
             limit,
             q.only_media.unwrap_or(false),
             tagged_lower,
+            exclude_direct,
+            viewer_id,
         )
         .fetch_all(&state.db)
         .await?
@@ -2911,9 +2946,10 @@ pub async fn get_account_featured_tags(
 ) -> AppResult<Json<Vec<super::types::FeaturedTag>>> {
     let domain = instance.custom_domain.as_deref().unwrap_or(&instance.domain);
     let rows = sqlx::query!(
-        r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
+        r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at, a.username, a.domain
            FROM featured_tags ft
            JOIN tags t ON t.id = ft.tag_id
+           JOIN accounts a ON a.id = ft.account_id
            WHERE ft.account_id = $1
            ORDER BY ft.id"#,
         id,
@@ -2922,12 +2958,19 @@ pub async fn get_account_featured_tags(
     .await?;
     let tags = rows
         .into_iter()
-        .map(|r| super::types::FeaturedTag {
-            id: r.id.to_string(),
-            name: r.name.clone(),
-            url: format!("https://{}/tags/{}", domain, r.name),
-            statuses_count: r.statuses_count.to_string(),
-            last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        .map(|r| {
+            let url = if let Some(ref acct_domain) = r.domain {
+                format!("https://{}/@{}@{}/tagged/{}", domain, r.username, acct_domain, r.name)
+            } else {
+                format!("https://{}/@{}/tagged/{}", domain, r.username, r.name)
+            };
+            super::types::FeaturedTag {
+                id: r.id.to_string(),
+                name: r.name.clone(),
+                url,
+                statuses_count: r.statuses_count.to_string(),
+                last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+            }
         })
         .collect();
     Ok(Json(tags))
