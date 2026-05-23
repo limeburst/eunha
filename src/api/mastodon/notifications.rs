@@ -16,7 +16,7 @@ use super::{
     accounts::{
         batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis,
         batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
-        build_status, fetch_reblog_data, fetch_status_media,
+        build_status, fetch_account_emojis, fetch_reblog_data, fetch_status_media,
     },
     convert::{account_from_db, status_from_db},
     types::{
@@ -62,8 +62,12 @@ async fn fetch_reports_map(
     } else {
         std::collections::HashMap::new()
     };
+    let ta_vec: Vec<Account> = target_accounts.values().cloned().collect();
+    let ta_emojis_map = batch_account_emojis(state, &ta_vec).await;
     for r in rows {
         let Some(ta) = target_accounts.get(&r.target_account_id) else { continue };
+        let mut ta_api = account_from_db(ta);
+        ta_api.emojis = ta_emojis_map.get(&ta.id).cloned().unwrap_or_default();
         map.insert(r.id, super::types::Report {
             id: r.id.to_string(),
             action_taken: r.action_taken_at.is_some(),
@@ -75,7 +79,7 @@ async fn fetch_reports_map(
             status_ids: r.status_ids.iter().map(|i| i.to_string()).collect(),
             rule_ids: vec![],
             collection_ids: vec![],
-            target_account: account_from_db(ta),
+            target_account: ta_api,
         });
     }
     Ok(map)
@@ -739,7 +743,9 @@ pub async fn get_notification_group_accounts(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(vec![super::convert::account_from_db(&account)]))
+    let mut api_account = super::convert::account_from_db(&account);
+    api_account.emojis = fetch_account_emojis(&state, &account).await;
+    Ok(Json(vec![api_account]))
 }
 
 // ── GET /api/v1/notifications/unread_count ───────────────────────────────
@@ -1101,6 +1107,16 @@ pub async fn get_notification_requests(
         }
     }
 
+    // Batch-fetch account emojis for notification request senders
+    let req_account_ids: Vec<i64> = rows.iter().map(|r| r.from_account_id).collect();
+    let req_db_accounts: Vec<Account> = if !req_account_ids.is_empty() {
+        sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &req_account_ids)
+            .fetch_all(&state.db).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let req_acc_emojis_map = batch_account_emojis(&state, &req_db_accounts).await;
+
     let mut result: Vec<NotificationRequest> = Vec::with_capacity(rows.len());
     for r in rows {
         let acc = crate::db::models::Account {
@@ -1174,13 +1190,15 @@ pub async fn get_notification_requests(
             feature_approval_policy: 0,
         };
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
+        let mut api_account = super::convert::account_from_db(&acc);
+        api_account.emojis = req_acc_emojis_map.get(&acc.id).cloned().unwrap_or_default();
         result.push(NotificationRequest {
             id: r.id.to_string(),
             created_at: super::convert::mastodon_date(r.created_at),
             updated_at: super::convert::mastodon_date(r.updated_at),
             notifications_count: r.notifications_count.to_string(),
             last_status,
-            account: super::convert::account_from_db(&acc),
+            account: api_account,
         });
     }
 
@@ -1373,13 +1391,15 @@ pub async fn get_notification_request(
         feature_approval_policy: 0,
     };
     let last_status = fetch_last_status(&state, r.last_status_id).await;
+    let mut api_account = super::convert::account_from_db(&acc);
+    api_account.emojis = fetch_account_emojis(&state, &acc).await;
     Ok(Json(NotificationRequest {
         id: r.id.to_string(),
         created_at: super::convert::mastodon_date(r.created_at),
         updated_at: super::convert::mastodon_date(r.updated_at),
         notifications_count: r.notifications_count.to_string(),
         last_status,
-        account: super::convert::account_from_db(&acc),
+        account: api_account,
     }))
 }
 
@@ -1512,12 +1532,14 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         })
     } else { None };
 
+    let mut notif_account = account_from_db(&from_account);
+    notif_account.emojis = fetch_account_emojis(state, &from_account).await;
     Ok(Notification {
         id: n.id.to_string(),
         notification_type: n.r#type.clone(),
         created_at: super::convert::mastodon_date(n.created_at),
         group_key: format!("ungrouped-{}", n.id),
-        account: account_from_db(&from_account),
+        account: notif_account,
         status,
         report,
         filtered: None,

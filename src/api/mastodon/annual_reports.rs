@@ -15,8 +15,9 @@ use crate::{
 };
 use super::{
     accounts::{
-        batch_quote_data, batch_reblog_data, batch_status_cards, batch_status_emojis,
-        batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
+        batch_account_emojis, batch_quote_data, batch_reblog_data, batch_status_cards,
+        batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls,
+        batch_statuses_tags,
     },
     convert::{account_from_db, status_from_db},
     types::{Account as ApiAccount, Status as ApiStatus},
@@ -225,8 +226,6 @@ async fn build_response(
         }
     }
 
-    let api_accounts = vec![account_from_db(account)];
-
     // Fetch referenced statuses
     let api_statuses = if top_status_ids.is_empty() {
         vec![]
@@ -252,8 +251,14 @@ async fn build_response(
         let emojis_map = batch_status_emojis(state, &all_for_emoji).await?;
         let polls_map = batch_status_polls(state, &enrich_ids, Some(viewer_id)).await?;
         let cards_map = batch_status_cards(state, &enrich_ids).await?;
-
         let ctxs = super::statuses::batch_viewer_contexts(state, viewer_id, &all_ids).await?;
+
+        let all_accounts_for_emoji: Vec<DbAccount> = {
+            let mut v = vec![account.clone()];
+            v.extend(reblog_map.values().map(|(_, ra, _)| ra.clone()));
+            v
+        };
+        let account_emojis_map = batch_account_emojis(state, &all_accounts_for_emoji).await;
 
         let mut result = Vec::with_capacity(statuses.len());
         for s in &statuses {
@@ -266,16 +271,31 @@ async fn build_response(
                 .cloned()
                 .unwrap_or_default();
             let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            api.account.emojis = account_emojis_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
             api.poll = polls_map.get(&s.id).cloned();
             api.card = cards_map.get(&s.id).cloned();
             api.quote = quote_map.get(&s.id).cloned();
+            if let Some(ref mut rb) = api.reblog {
+                let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+                rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+                rb.mentions = rb_mentions;
+                rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+                rb.poll = polls_map.get(&rid).cloned();
+                rb.card = cards_map.get(&rid).cloned();
+            }
             result.push(api);
         }
         result
     };
+
+    let account_emojis = batch_account_emojis(state, std::slice::from_ref(account)).await;
+    let mut api_account = account_from_db(account);
+    api_account.emojis = account_emojis.get(&account.id).cloned().unwrap_or_default();
+    let api_accounts = vec![api_account];
 
     Ok(AnnualReportsResponse {
         annual_reports: reports,
