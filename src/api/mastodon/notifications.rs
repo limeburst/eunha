@@ -1517,19 +1517,23 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
     let report = if let Some((rid, comment, forwarded, category, action_taken_at, created_at_r, status_ids, ta_id)) = report {
         let ta = sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = $1", ta_id)
             .fetch_optional(&state.db).await.ok().flatten();
-        ta.as_ref().map(|ta| super::types::Report {
-            id: rid.to_string(),
-            action_taken: action_taken_at.is_some(),
-            action_taken_at: action_taken_at.map(super::convert::mastodon_date),
-            category,
-            comment,
-            forwarded,
-            created_at: super::convert::mastodon_date(created_at_r),
-            status_ids: status_ids.iter().map(|i| i.to_string()).collect(),
-            rule_ids: vec![],
-            collection_ids: vec![],
-            target_account: account_from_db(ta),
-        })
+        if let Some(ta) = ta {
+            let mut ta_api = account_from_db(&ta);
+            ta_api.emojis = fetch_account_emojis(state, &ta).await;
+            Some(super::types::Report {
+                id: rid.to_string(),
+                action_taken: action_taken_at.is_some(),
+                action_taken_at: action_taken_at.map(super::convert::mastodon_date),
+                category,
+                comment,
+                forwarded,
+                created_at: super::convert::mastodon_date(created_at_r),
+                status_ids: status_ids.iter().map(|i| i.to_string()).collect(),
+                rule_ids: vec![],
+                collection_ids: vec![],
+                target_account: ta_api,
+            })
+        } else { None }
     } else { None };
 
     let mut notif_account = account_from_db(&from_account);

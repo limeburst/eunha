@@ -485,6 +485,7 @@ async fn build_admin_notification_payload(
     report_id: Option<i64>,
 ) -> Option<String> {
     use crate::api::mastodon::convert::account_from_db;
+    use crate::api::mastodon::accounts::fetch_account_emojis;
 
     let created_at = sqlx::query_scalar!(
         "SELECT created_at FROM notifications WHERE id = $1",
@@ -540,12 +541,14 @@ async fn build_admin_notification_payload(
         None
     };
 
+    let mut from_api = account_from_db(&from_account);
+    from_api.emojis = fetch_account_emojis(state, &from_account).await;
     let payload = serde_json::json!({
         "id": notification_id.to_string(),
         "type": notification_type,
         "created_at": created_at.to_rfc3339(),
         "group_key": format!("ungrouped-{}", notification_id),
-        "account": serde_json::to_value(account_from_db(&from_account)).ok(),
+        "account": serde_json::to_value(from_api).ok(),
         "report": report_json,
         "filtered": null,
     });
@@ -716,7 +719,7 @@ async fn build_notification_payload(
     status_id: Option<i64>,
 ) -> Option<String> {
     use crate::api::mastodon::convert::account_from_db;
-    use crate::api::mastodon::accounts::{build_status, fetch_reblog_data, fetch_status_media};
+    use crate::api::mastodon::accounts::{build_status, fetch_account_emojis, fetch_reblog_data, fetch_status_media};
 
     let created_at = sqlx::query_scalar!(
         "SELECT created_at FROM notifications WHERE id = $1",
@@ -737,7 +740,8 @@ async fn build_notification_payload(
     .ok()
     .flatten()?;
 
-    let api_account = account_from_db(&from_account);
+    let mut api_account = account_from_db(&from_account);
+    api_account.emojis = fetch_account_emojis(state, &from_account).await;
 
     let status_json = if let Some(sid) = status_id {
         let s = sqlx::query_as!(
