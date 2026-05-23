@@ -101,7 +101,10 @@ pub async fn get_notifications(
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let (types, exclude_types, account_id) = parse_notif_filters(qs.as_deref());
+    let (types, exclude_types, account_id, include_filtered) = parse_notif_filters(qs.as_deref());
+    // Mastodon excludes filtered notifications by default; include all when include_filtered=true
+    // or when filtering by account_id.
+    let exclude_filtered = !include_filtered && account_id.is_none();
 
     let notifications: Vec<DbNotification> = if min_id.is_some() {
         sqlx::query_as(
@@ -111,6 +114,7 @@ pub async fn get_notifications(
                  AND ($5::text[] IS NULL OR "type" = ANY($5))
                  AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
                  AND ($7::bigint IS NULL OR from_account_id = $7)
+                 AND (NOT $8::boolean OR NOT filtered)
                  AND NOT EXISTS (
                      SELECT 1 FROM mutes m
                      WHERE m.account_id = $1 AND m.target_account_id = from_account_id
@@ -127,6 +131,7 @@ pub async fn get_notifications(
         .bind(types)
         .bind(exclude_types)
         .bind(account_id)
+        .bind(exclude_filtered)
         .fetch_all(&state.db)
         .await?
     } else {
@@ -138,6 +143,7 @@ pub async fn get_notifications(
                  AND ($5::text[] IS NULL OR "type" = ANY($5))
                  AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
                  AND ($7::bigint IS NULL OR from_account_id = $7)
+                 AND (NOT $8::boolean OR NOT filtered)
                  AND NOT EXISTS (
                      SELECT 1 FROM mutes m
                      WHERE m.account_id = $1 AND m.target_account_id = from_account_id
@@ -154,6 +160,7 @@ pub async fn get_notifications(
         .bind(types)
         .bind(exclude_types)
         .bind(account_id)
+        .bind(exclude_filtered)
         .fetch_all(&state.db)
         .await?
     };
@@ -411,7 +418,8 @@ pub async fn get_notifications_v2(
         })
         .unwrap_or_default();
 
-    let (types, exclude_types, account_id) = parse_notif_filters(qs.as_deref());
+    let (types, exclude_types, account_id, include_filtered) = parse_notif_filters(qs.as_deref());
+    let exclude_filtered = !include_filtered && account_id.is_none();
 
     let notifications: Vec<DbNotification> = sqlx::query_as(
         r#"SELECT * FROM notifications
@@ -421,6 +429,7 @@ pub async fn get_notifications_v2(
              AND ($5::text[] IS NULL OR "type" = ANY($5))
              AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
              AND ($7::bigint IS NULL OR from_account_id = $7)
+             AND (NOT $8::boolean OR NOT filtered)
              AND NOT EXISTS (
                  SELECT 1 FROM mutes m
                  WHERE m.account_id = $1 AND m.target_account_id = from_account_id
@@ -437,6 +446,7 @@ pub async fn get_notifications_v2(
     .bind(types)
     .bind(exclude_types)
     .bind(account_id)
+    .bind(exclude_filtered)
     .fetch_all(&state.db)
     .await?;
 
@@ -1452,12 +1462,12 @@ async fn fetch_last_status(
     build_status(state, &s, &account, media, reblog, None).await.ok()
 }
 
-/// Parse `types[]=x`, `types=x`, `exclude_types[]=x`, `exclude_types=x`, and
-/// `account_id=x` from the raw query string.  Mastodon clients use bracket
-/// array notation (`foo[]=val`) which serde_urlencoded does not normalise.
+/// Parse `types[]=x`, `types=x`, `exclude_types[]=x`, `exclude_types=x`,
+/// `account_id=x`, and `include_filtered=true` from the raw query string.
+/// Returns (types, exclude_types, account_id, include_filtered).
 fn parse_notif_filters(
     qs: Option<&str>,
-) -> (Option<Vec<String>>, Option<Vec<String>>, Option<i64>) {
+) -> (Option<Vec<String>>, Option<Vec<String>>, Option<i64>, bool) {
     let pairs: Vec<(std::borrow::Cow<str>, std::borrow::Cow<str>)> =
         url::form_urlencoded::parse(qs.unwrap_or("").as_bytes()).collect();
 
@@ -1474,8 +1484,12 @@ fn parse_notif_filters(
     let account_id = pairs.iter()
         .find(|(k, _)| k == "account_id")
         .and_then(|(_, v)| v.parse::<i64>().ok());
+    let include_filtered = pairs.iter()
+        .find(|(k, _)| k == "include_filtered")
+        .map(|(_, v)| matches!(v.as_ref(), "true" | "1"))
+        .unwrap_or(false);
 
-    (types, exclude_types, account_id)
+    (types, exclude_types, account_id, include_filtered)
 }
 
 async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<Notification> {
