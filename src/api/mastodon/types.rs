@@ -465,6 +465,8 @@ pub struct PreviewCard {
     pub authors: Vec<PreviewCardAuthor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missing_attribution: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history: Option<Vec<TagHistory>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

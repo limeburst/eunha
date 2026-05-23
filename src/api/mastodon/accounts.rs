@@ -3467,6 +3467,7 @@ pub async fn batch_status_cards(
             published_at: None,
             authors: vec![],
             missing_attribution: None,
+            history: None,
         });
     }
     Ok(result)
@@ -3678,6 +3679,7 @@ pub(super) async fn fetch_status_card(
         published_at: None,
         authors: vec![],
         missing_attribution: None,
+        history: None,
     })
 }
 
