@@ -346,6 +346,7 @@ pub struct Rule {
     pub id: String,
     pub text: String,
     pub hint: String,
+    pub translations: serde_json::Value,
 }
 
 // ── Notification ───────────────────────────────────────────────────────────

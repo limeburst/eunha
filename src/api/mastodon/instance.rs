@@ -38,6 +38,7 @@ pub async fn get_instance_domain_blocks(
     .await?;
 
     let blocks: Vec<serde_json::Value> = rows.into_iter().map(|r| {
+        let digest = domain_digest(&r.domain);
         let domain = if r.obfuscate {
             obfuscate_domain(&r.domain)
         } else {
@@ -45,12 +46,21 @@ pub async fn get_instance_domain_blocks(
         };
         serde_json::json!({
             "domain": domain,
+            "digest": digest,
             "severity": r.severity,
             "comment": r.public_comment.unwrap_or_default(),
         })
     }).collect();
 
     Ok(Json(blocks))
+}
+
+fn domain_digest(domain: &str) -> String {
+    let mut h: u128 = 0x9e3779b97f4a7c15;
+    for b in domain.bytes() {
+        h = h.wrapping_mul(0x6c62272e07bb0142).wrapping_add(b as u128);
+    }
+    hex::encode(h.to_le_bytes())
 }
 
 fn obfuscate_domain(domain: &str) -> String {
@@ -80,6 +90,7 @@ pub async fn get_instance_rules(
             id: (i + 1).to_string(),
             text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            translations: serde_json::json!({}),
         }).collect())
         .unwrap_or_default();
     Json(rules)
@@ -171,6 +182,7 @@ pub async fn get_instance_v1(
                 id: (i + 1).to_string(),
                 text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                translations: serde_json::json!({}),
             }).collect())
             .unwrap_or_default(),
     }))
@@ -222,11 +234,16 @@ pub async fn search_peers(
 
 pub async fn get_terms_of_service(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-) -> AppResult<Json<ExtendedDescription>> {
-    Ok(Json(ExtendedDescription {
-        updated_at: super::convert::mastodon_date(instance.updated_at),
+) -> AppResult<Json<Vec<TermsOfServiceByDate>>> {
+    if instance.terms_of_service.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    Ok(Json(vec![TermsOfServiceByDate {
+        effective_date: instance.updated_at.format("%Y-%m-%d").to_string(),
+        effective: true,
         content: instance.terms_of_service.clone(),
-    }))
+        succeeded_by: None,
+    }]))
 }
 
 // ── GET /api/v1/instance/terms_of_service/{date} ─────────────────────────
@@ -402,6 +419,7 @@ pub async fn get_instance_v2(
                 id: (i + 1).to_string(),
                 text: r.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 hint: r.get("hint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                translations: serde_json::json!({}),
             }).collect())
             .unwrap_or_default(),
         api_versions: serde_json::json!({ "mastodon": 2 }),
