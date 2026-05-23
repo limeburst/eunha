@@ -19,9 +19,9 @@ use crate::{
 };
 use super::{
     accounts::{
-        batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis,
-        batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
-        build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch,
+        batch_account_emojis, batch_accounts_to_api, batch_reblog_data, batch_status_cards,
+        batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls,
+        batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch,
     },
     convert::{account_from_db, status_from_db},
     formatting::{HASHTAG_RE, MENTION_RE, render_content},
@@ -1866,7 +1866,7 @@ pub async fn favourited_by(
         .await?
     };
 
-    let result: Vec<super::types::Account> = accounts.iter().map(account_from_db).collect();
+    let result = batch_accounts_to_api(&state, &accounts).await;
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
@@ -1936,7 +1936,7 @@ pub async fn reblogged_by(
         .await?
     };
 
-    let result: Vec<super::types::Account> = accounts.iter().map(account_from_db).collect();
+    let result = batch_accounts_to_api(&state, &accounts).await;
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)

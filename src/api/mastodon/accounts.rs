@@ -950,7 +950,7 @@ pub async fn get_account_followers(
     .fetch_all(&state.db)
     .await?;
 
-    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let api_accounts = batch_accounts_to_api(&state, &accounts).await;
     let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
@@ -1008,7 +1008,7 @@ pub async fn get_account_following(
     .fetch_all(&state.db)
     .await?;
 
-    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let api_accounts = batch_accounts_to_api(&state, &accounts).await;
     let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
@@ -1130,7 +1130,7 @@ pub async fn search_accounts(
         }
     }
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    Ok(Json(batch_accounts_to_api(&state, &accounts).await))
 }
 
 // ── PATCH /api/v1/accounts/update_credentials ─────────────────────────────
@@ -1622,7 +1622,7 @@ pub async fn get_blocks(
     )
     .fetch_all(&state.db)
     .await?;
-    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let api_accounts = batch_accounts_to_api(&state, &accounts).await;
     let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
@@ -1674,8 +1674,10 @@ pub async fn get_mutes(
     .into_iter()
     .map(|r| (r.target_account_id, r.expires_at))
     .collect();
+    let mute_emojis_map = batch_account_emojis(&state, &accounts).await;
     let api_accounts: Vec<ApiAccount> = accounts.iter().map(|a| {
         let mut api = account_from_db(a);
+        api.emojis = mute_emojis_map.get(&a.id).cloned().unwrap_or_default();
         if let Some(expires_at) = mute_expiries.get(&a.id).and_then(|e| *e) {
             api.mute_expires_at = Some(super::convert::mastodon_date(expires_at));
         }
@@ -1752,7 +1754,7 @@ pub async fn get_follow_requests(
     .fetch_all(&state.db)
     .await?;
 
-    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let api_accounts = batch_accounts_to_api(&state, &accounts).await;
     let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
@@ -2553,7 +2555,7 @@ pub async fn get_suggestions(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    Ok(Json(batch_accounts_to_api(&state, &accounts).await))
 }
 
 // ── DELETE /api/v1/suggestions/:account_id ────────────────────────────────
@@ -2846,7 +2848,7 @@ pub async fn get_endorsements(
     )
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    Ok(Json(batch_accounts_to_api(&state, &accounts).await))
 }
 
 // ── GET /api/v1/endorsements ──────────────────────────────────────────────
@@ -2866,7 +2868,7 @@ pub async fn get_my_endorsements(
     )
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    Ok(Json(batch_accounts_to_api(&state, &accounts).await))
 }
 
 // ── GET /api/v1/accounts/:id/featured_tags ───────────────────────────────
@@ -3020,7 +3022,7 @@ pub async fn get_familiar_followers(
 
         result.push(super::types::FamiliarFollowers {
             id: target_id.to_string(),
-            accounts: accounts.iter().map(account_from_db).collect(),
+            accounts: batch_accounts_to_api(&state, &accounts).await,
         });
     }
     Ok(Json(result))
@@ -3085,7 +3087,7 @@ pub async fn get_directory(
         .await?
     };
 
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    Ok(Json(batch_accounts_to_api(&state, &accounts).await))
 }
 
 // ── GET /api/v1/accounts (batch lookup) ──────────────────────────────────
@@ -3113,7 +3115,7 @@ pub async fn get_accounts_batch(
     )
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(accounts.iter().map(account_from_db).collect()))
+    Ok(Json(batch_accounts_to_api(&state, &accounts).await))
 }
 
 // ── GET /api/v1/accounts/:id/lists ───────────────────────────────────────
@@ -3836,6 +3838,19 @@ pub(super) async fn fetch_status_card(
         missing_attribution: None,
         history: None,
     })
+}
+
+/// Convert a slice of DB accounts to API accounts with profile emojis populated.
+pub async fn batch_accounts_to_api(
+    state: &AppState,
+    accounts: &[Account],
+) -> Vec<super::types::Account> {
+    let emojis_map = batch_account_emojis(state, accounts).await;
+    accounts.iter().map(|a| {
+        let mut api = super::convert::account_from_db(a);
+        api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
+        api
+    }).collect()
 }
 
 /// Spawn a background task to fetch a preview card for a newly-created status.

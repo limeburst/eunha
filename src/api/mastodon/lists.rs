@@ -13,6 +13,7 @@ use crate::{
     state::AppState,
 };
 use super::{
+    accounts::batch_account_emojis,
     convert::account_from_db,
     types::{Account, List},
 };
@@ -179,7 +180,12 @@ pub async fn get_list_accounts(
     .fetch_all(&state.db)
     .await?;
 
-    let result: Vec<Account> = accounts.iter().map(account_from_db).collect();
+    let account_emojis_map = batch_account_emojis(&state, &accounts).await;
+    let result: Vec<Account> = accounts.iter().map(|a| {
+        let mut api = account_from_db(a);
+        api.emojis = account_emojis_map.get(&a.id).cloned().unwrap_or_default();
+        api
+    }).collect();
     let link = result.first().zip(result.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
