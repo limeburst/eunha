@@ -1,7 +1,6 @@
 /// Mastodon REST API serialization types.
 /// Reference: https://docs.joinmastodon.org/entities/
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // ── Account ────────────────────────────────────────────────────────────────
 
@@ -49,6 +48,8 @@ pub struct Account {
     pub memorial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<AccountSource>,  // only on CredentialAccount
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,  // only on CredentialAccount
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +72,8 @@ pub struct Role {
     pub id: String,
     pub name: String,
     pub color: String,
+    pub permissions: String,
+    pub highlighted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,6 +223,8 @@ pub struct InstanceThumbnail {
     pub blurhash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub versions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -369,6 +374,7 @@ pub struct CredentialApplication {
     pub redirect_uris: Vec<String>,
     pub client_id: String,
     pub client_secret: String,
+    pub client_secret_expires_at: i64,
     pub vapid_key: Option<String>,
 }
 
@@ -642,7 +648,7 @@ pub struct FeaturedTag {
     pub id: String,
     pub name: String,
     pub url: String,
-    pub statuses_count: i64,
+    pub statuses_count: String,
     pub last_status_at: Option<String>,
 }
 
@@ -664,15 +670,14 @@ pub struct AnnouncementReaction {
 #[derive(Debug, Serialize)]
 pub struct Announcement {
     pub id: String,
-    pub text: String,
-    pub published: bool,
+    pub content: String,
     pub all_day: bool,
-    pub created_at: String,
-    pub updated_at: String,
-    pub published_at: String,
     pub starts_at: Option<String>,
     pub ends_at: Option<String>,
-    pub read: bool,
+    pub published_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
     pub reactions: Vec<AnnouncementReaction>,
     pub statuses: Vec<serde_json::Value>,
     pub tags: Vec<serde_json::Value>,
@@ -802,9 +807,13 @@ pub struct SuggestionV2 {
 
 #[derive(Debug, Serialize)]
 pub struct AppCredentials {
+    pub id: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub website: Option<String>,
+    pub scopes: Vec<String>,
+    pub redirect_uri: String,
+    pub redirect_uris: Vec<String>,
     pub vapid_key: Option<String>,
 }
 
@@ -814,16 +823,6 @@ pub struct AppCredentials {
 pub struct ExtendedDescription {
     pub updated_at: String,
     pub content: String,
-}
-
-// ── Push Subscription ───────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-pub struct WebPushSubscription {
-    pub id: String,
-    pub endpoint: String,
-    pub alerts: HashMap<String, bool>,
-    pub server_key: String,
 }
 
 /// Query parameters used by timeline/list endpoints.

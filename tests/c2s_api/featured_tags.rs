@@ -215,7 +215,8 @@ async fn test_featured_tag_statuses_count() {
         &json!({"name": "cnttest"}),
     ).await.json().await.unwrap();
     let tag_id = tag["id"].as_str().unwrap();
-    assert_eq!(tag["statuses_count"].as_i64(), Some(0), "initial count should be 0");
+    // Mastodon returns statuses_count as a string
+    assert_eq!(tag["statuses_count"].as_str(), Some("0"), "initial count should be 0");
 
     let status: Value = ctx.api.post_json(
         "/api/v1/statuses",
@@ -228,7 +229,7 @@ async fn test_featured_tag_statuses_count() {
         .await.json().await.unwrap();
     let ft = list.iter().find(|t| t["id"].as_str() == Some(tag_id))
         .expect("featured tag not found after posting");
-    assert_eq!(ft["statuses_count"].as_i64(), Some(1), "statuses_count should be 1 after posting");
+    assert_eq!(ft["statuses_count"].as_str(), Some("1"), "statuses_count should be 1 after posting");
     assert!(ft["last_status_at"].as_str().is_some(), "last_status_at should be set");
 
     ctx.api.delete(&format!("/api/v1/statuses/{status_id}"), &ctx.alice_token).await;
@@ -237,5 +238,5 @@ async fn test_featured_tag_statuses_count() {
         .await.json().await.unwrap();
     let ft2 = list2.iter().find(|t| t["id"].as_str() == Some(tag_id))
         .expect("featured tag not found after deleting");
-    assert_eq!(ft2["statuses_count"].as_i64(), Some(0), "statuses_count should be 0 after deleting");
+    assert_eq!(ft2["statuses_count"].as_str(), Some("0"), "statuses_count should be 0 after deleting");
 }

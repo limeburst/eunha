@@ -59,7 +59,7 @@ pub async fn verify_app_credentials(
         .ok_or(AppError::Unauthorized)?;
 
     let row = sqlx::query!(
-        r#"SELECT a.name, a.website
+        r#"SELECT a.id, a.name, a.website, a.scopes, a.redirect_uri
            FROM oauth_access_tokens t
            JOIN oauth_applications a ON a.id = t.application_id
            WHERE t.token = $1 AND t.revoked_at IS NULL
@@ -70,9 +70,15 @@ pub async fn verify_app_credentials(
     .await?
     .ok_or(AppError::Unauthorized)?;
 
+    let uris: Vec<String> = row.redirect_uri.lines().map(str::to_owned).collect();
+    let redirect_uri = uris.first().cloned().unwrap_or_else(|| row.redirect_uri.clone());
     Ok(Json(AppCredentials {
+        id: row.id.to_string(),
         name: row.name,
         website: row.website,
+        scopes: normalize_scopes(&row.scopes).split_whitespace().map(str::to_owned).collect(),
+        redirect_uri,
+        redirect_uris: uris,
         vapid_key: None,
     }))
 }
@@ -129,6 +135,7 @@ fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
         redirect_uris: uris,
         client_id: app.uid.clone(),
         client_secret: app.secret.clone(),
+        client_secret_expires_at: 0,
         vapid_key: None,
     }
 }

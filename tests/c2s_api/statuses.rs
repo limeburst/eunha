@@ -3347,27 +3347,22 @@ async fn test_get_status_text_field_for_author_and_others() {
     let status = ctx.api.post_status(&ctx.alice_token, "source text test", "public").await;
     let sid = status["id"].as_str().unwrap();
 
-    // Author sees source text.
+    // Per Mastodon API: GET /api/v1/statuses/:id never includes `text`.
+    // Source text is available via GET /api/v1/statuses/:id/source.
     let as_author: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert_eq!(
-        as_author["text"].as_str(),
-        Some("source text test"),
-        "author should see the source text",
-    );
-
-    // Another user gets null text.
-    let as_other: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), Some(&ctx.bob_token))
-        .await.json().await.unwrap();
     assert!(
-        as_other["text"].is_null(),
-        "non-author should get null text, got: {:?}", as_other["text"]
+        as_author["text"].is_null(),
+        "GET /statuses/:id should not include text field, got: {:?}", as_author["text"]
     );
 
-    // Unauthenticated also gets null.
-    let as_anon: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}"), None)
+    let source: Value = ctx.api.get(&format!("/api/v1/statuses/{sid}/source"), Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    assert!(as_anon["text"].is_null(), "unauthenticated should get null text");
+    assert_eq!(
+        source["text"].as_str(),
+        Some("source text test"),
+        "source endpoint should return raw text",
+    );
 }
 
 /// Local status url should be the human-readable /@username/id format, not the AP URI.

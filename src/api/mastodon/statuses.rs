@@ -1032,10 +1032,7 @@ pub async fn get_status(
         None
     };
 
-    let mut s = super::accounts::build_status_with_app(&state, &status, &account, media, reblog, viewer_ctx, application).await?;
-    if viewer_id == Some(status.account_id) {
-        s.text = Some(status.text.clone());
-    }
+    let s = super::accounts::build_status_with_app(&state, &status, &account, media, reblog, viewer_ctx, application).await?;
     Ok(Json(s))
 }
 
@@ -2300,15 +2297,17 @@ pub async fn update_interaction_policy(
     body: Option<Json<InteractionPolicyForm>>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
-    // Verify ownership before updating
-    let _status = sqlx::query_as!(
-        DbStatus,
-        "SELECT * FROM statuses WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
-        id, auth.account_id,
+    // Verify the status exists and belongs to the authenticated user
+    let status = sqlx::query!(
+        "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
+        id,
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::NotFound)?;
+    if status.account_id != auth.account_id {
+        return Err(AppError::Forbidden);
+    }
 
     if let Some(Json(form)) = body {
         if let Some(cq) = form.can_quote {

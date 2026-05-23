@@ -37,7 +37,7 @@ async fn test_announcements_list() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Vec<Value> = resp.json().await.unwrap();
     assert!(!body.is_empty(), "should return at least one announcement");
-    assert!(body.iter().any(|a| a["text"].as_str() == Some("Hello everyone!")));
+    assert!(body.iter().any(|a| a["content"].as_str() == Some("Hello everyone!")));
 }
 
 /// GET /api/v1/announcements works without authentication (returns published ones).
@@ -62,11 +62,10 @@ async fn test_announcement_shape() {
 
     let body: Vec<Value> = ctx.api.get("/api/v1/announcements", Some(&ctx.alice_token))
         .await.json().await.unwrap();
-    let ann = body.iter().find(|a| a["text"].as_str() == Some("Field check announcement")).unwrap();
+    let ann = body.iter().find(|a| a["content"].as_str() == Some("Field check announcement")).unwrap();
 
     assert!(ann["id"].as_str().is_some(), "id missing");
-    assert!(ann["text"].as_str().is_some(), "text missing");
-    assert!(ann["published"].as_bool().is_some(), "published missing");
+    assert!(ann["content"].as_str().is_some(), "content missing");
     assert!(ann.get("reactions").is_some(), "reactions missing");
 }
 

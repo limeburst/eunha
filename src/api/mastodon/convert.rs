@@ -34,7 +34,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         display_name: a.display_name.clone(),
         locked: a.locked,
         bot: a.bot,
-        group: false,
+        group: a.actor_type.as_deref() == Some("Group"),
         discoverable: a.discoverable,
         indexable: a.indexable,
         hide_collections: Some(a.hide_collections),
@@ -62,8 +62,9 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         suspended: if a.suspended_at.is_some() { Some(true) } else { None },
         limited: if a.silenced_at.is_some() { Some(true) } else { None },
         noindex: if a.domain.is_none() { Some(!a.indexable) } else { None },
-        memorial: None,
+        memorial: if a.memorial { Some(true) } else { None },
         source: None,
+        role: None,
     }
 }
 
@@ -232,7 +233,19 @@ pub fn status_from_db_with_app(
                 Some(ctx.reblogged),
                 Some(ctx.muted),
                 Some(ctx.bookmarked),
-                if is_author { Some(ctx.pinned) } else { None },
+                if is_author
+                    && s.reblog_of_id.is_none()
+                    && matches!(
+                        s.visibility,
+                        crate::db::models::vis::PUBLIC
+                            | crate::db::models::vis::UNLISTED
+                            | crate::db::models::vis::PRIVATE
+                    )
+                {
+                    Some(ctx.pinned)
+                } else {
+                    None
+                },
                 Some(vec![]),
             )
         } else {

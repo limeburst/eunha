@@ -66,6 +66,7 @@ pub async fn verify_credentials(
     });
 
     api_account.roles = fetch_account_roles(&state, account.id).await;
+    api_account.role = fetch_account_role(&state, account.id).await;
 
     Ok(Json(api_account))
 }
@@ -85,11 +86,37 @@ async fn fetch_account_roles(state: &AppState, account_id: i64) -> Vec<super::ty
     match role.as_deref() {
         Some("admin") => vec![super::types::Role {
             id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
+            permissions: "2031612".into(), highlighted: true,
         }],
         Some("moderator") => vec![super::types::Role {
             id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
+            permissions: "1049884".into(), highlighted: true,
         }],
         _ => vec![],
+    }
+}
+
+/// Fetch the single current role for a local account (used in CredentialAccount).
+pub async fn fetch_account_role(state: &AppState, account_id: i64) -> Option<super::types::Role> {
+    let role = sqlx::query_scalar!(
+        "SELECT role FROM users WHERE account_id = $1",
+        account_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    match role.as_deref() {
+        Some("admin") => Some(super::types::Role {
+            id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
+            permissions: "2031612".into(), highlighted: true,
+        }),
+        Some("moderator") => Some(super::types::Role {
+            id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
+            permissions: "1049884".into(), highlighted: true,
+        }),
+        _ => None,
     }
 }
 
@@ -1414,6 +1441,8 @@ pub async fn update_credentials(
         attribution_domains: account.attribution_domains.clone(),
         quote_policy: default_quote_policy,
     });
+    api_account.roles = fetch_account_roles(&state, auth.account_id).await;
+    api_account.role = fetch_account_role(&state, auth.account_id).await;
     Ok(Json(api_account))
 }
 
@@ -2785,7 +2814,7 @@ pub async fn get_account_featured_tags(
             id: r.id.to_string(),
             name: r.name.clone(),
             url: format!("https://{}/tags/{}", domain, r.name),
-            statuses_count: r.statuses_count,
+            statuses_count: r.statuses_count.to_string(),
             last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         })
         .collect();

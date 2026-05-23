@@ -299,9 +299,13 @@ pub async fn get_instance_v2(
             url: instance.icon_url.clone().unwrap_or_else(|| format!("{base_url}/instance-thumbnail.png")),
             blurhash: None,
             versions: None,
+            description: None,
         },
         icon: instance.icon_url.as_ref().map(|url| {
-            vec![serde_json::json!({ "src": url })]
+            vec![
+                serde_json::json!({ "src": url, "size": "192x192" }),
+                serde_json::json!({ "src": url, "size": "512x512" }),
+            ]
         }).unwrap_or_default(),
         languages: vec!["ko".to_string(), "en".to_string()],
         configuration: InstanceConfiguration {
@@ -310,7 +314,7 @@ pub async fn get_instance_v2(
                 status: None,
                 about: Some(format!("{base_url}/about")),
                 privacy_policy: if instance.privacy_policy.is_empty() { None } else { Some(format!("{base_url}/api/v1/instance/privacy_policy")) },
-                terms_of_service: None,
+                terms_of_service: if instance.terms_of_service.is_empty() { None } else { Some(format!("{base_url}/api/v1/instance/terms_of_service")) },
             },
             vapid: VapidConfiguration { public_key: instance.vapid_public_key.clone() },
             accounts: AccountsConfiguration {
