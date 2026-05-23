@@ -785,7 +785,7 @@ pub struct NotificationGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<bool>,
+    pub fallback: Option<serde_json::Value>,
 }
 
 // ── Notification Policy ─────────────────────────────────────────────────────
