@@ -1702,23 +1702,40 @@ pub async fn get_blocks(
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN blocks b ON b.target_account_id = a.id
+    // Paginate by block.id (matching Mastodon's Block.paginate_by_max_id)
+    let rows = sqlx::query!(
+        r#"SELECT b.id AS block_id, b.target_account_id FROM blocks b
            WHERE b.account_id = $1
-             AND ($2::bigint IS NULL OR a.id < $2)
-             AND ($3::bigint IS NULL OR a.id > $3)
-             AND ($5::bigint IS NULL OR a.id > $5)
-           ORDER BY a.id DESC LIMIT $4"#,
+             AND ($2::bigint IS NULL OR b.id < $2)
+             AND ($3::bigint IS NULL OR b.id > $3)
+             AND ($5::bigint IS NULL OR b.id > $5)
+           ORDER BY b.id DESC LIMIT $4"#,
         auth.account_id, max_id, since_id, limit, min_id,
     )
     .fetch_all(&state.db)
     .await?;
-    let api_accounts = batch_accounts_to_api(&state, &accounts).await;
-    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+
+    let first_block_id = rows.first().map(|r| r.block_id.to_string());
+    let last_block_id = rows.last().map(|r| r.block_id.to_string());
+    let target_ids: Vec<i64> = rows.iter().map(|r| r.target_account_id).collect();
+
+    let accounts = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+        &target_ids,
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let account_map: std::collections::HashMap<i64, Account> =
+        accounts.into_iter().map(|a| (a.id, a)).collect();
+    let accounts_ordered: Vec<Account> = target_ids.iter()
+        .filter_map(|id| account_map.get(id).cloned())
+        .collect();
+
+    let api_accounts = batch_accounts_to_api(&state, &accounts_ordered).await;
+    let link = first_block_id.zip(last_block_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
@@ -1743,33 +1760,44 @@ pub async fn get_mutes(
     let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN mutes m ON m.target_account_id = a.id
+    // Paginate by mute.id (matching Mastodon's Mute.paginate_by_max_id)
+    let rows = sqlx::query!(
+        r#"SELECT m.id AS mute_id, m.target_account_id, m.expires_at FROM mutes m
            WHERE m.account_id = $1
              AND (m.expires_at IS NULL OR m.expires_at > now())
-             AND ($2::bigint IS NULL OR a.id < $2)
-             AND ($3::bigint IS NULL OR a.id > $3)
-             AND ($5::bigint IS NULL OR a.id > $5)
-           ORDER BY a.id DESC LIMIT $4"#,
+             AND ($2::bigint IS NULL OR m.id < $2)
+             AND ($3::bigint IS NULL OR m.id > $3)
+             AND ($5::bigint IS NULL OR m.id > $5)
+           ORDER BY m.id DESC LIMIT $4"#,
         auth.account_id, max_id, since_id, limit, min_id,
     )
     .fetch_all(&state.db)
     .await?;
-    let account_ids: Vec<i64> = accounts.iter().map(|a| a.id).collect();
-    let mute_expiries: std::collections::HashMap<i64, Option<chrono::DateTime<chrono::Utc>>> = sqlx::query!(
-        "SELECT target_account_id, expires_at FROM mutes WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
-        auth.account_id, &account_ids,
+
+    let first_mute_id = rows.first().map(|r| r.mute_id.to_string());
+    let last_mute_id = rows.last().map(|r| r.mute_id.to_string());
+
+    let mute_expiries: std::collections::HashMap<i64, Option<chrono::DateTime<chrono::Utc>>> =
+        rows.iter().map(|r| (r.target_account_id, r.expires_at)).collect();
+    let target_ids: Vec<i64> = rows.iter().map(|r| r.target_account_id).collect();
+
+    let accounts = sqlx::query_as!(
+        Account,
+        "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+        &target_ids,
     )
     .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .map(|r| (r.target_account_id, r.expires_at))
-    .collect();
-    let mute_emojis_map = batch_account_emojis(&state, &accounts).await;
-    let mute_roles_map = batch_account_roles(&state, &accounts).await;
-    let api_accounts: Vec<ApiAccount> = accounts.iter().map(|a| {
+    .await?;
+    // Restore mute-ordered sequence
+    let account_map: std::collections::HashMap<i64, Account> =
+        accounts.into_iter().map(|a| (a.id, a)).collect();
+    let accounts_ordered: Vec<Account> = target_ids.iter()
+        .filter_map(|id| account_map.get(id).cloned())
+        .collect();
+
+    let mute_emojis_map = batch_account_emojis(&state, &accounts_ordered).await;
+    let mute_roles_map = batch_account_roles(&state, &accounts_ordered).await;
+    let api_accounts: Vec<ApiAccount> = accounts_ordered.iter().map(|a| {
         let mut api = account_from_db(a);
         api.emojis = mute_emojis_map.get(&a.id).cloned().unwrap_or_default();
         api.roles = mute_roles_map.get(&a.id).cloned().unwrap_or_default();
@@ -1778,9 +1806,9 @@ pub async fn get_mutes(
         }
         api
     }).collect();
-    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+    let link = first_mute_id.zip(last_mute_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
