@@ -10,7 +10,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media},
+    accounts::{batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media},
     convert::{account_from_db, status_from_db},
     types::{SearchResults, Status, Tag},
 };
@@ -261,6 +261,15 @@ pub async fn search(
         .await?;
         let account_map: std::collections::HashMap<i64, crate::db::models::Account> =
             accounts.into_iter().map(|a| (a.id, a)).collect();
+        let all_accounts_for_emoji: Vec<crate::db::models::Account> = {
+            let mut seen = std::collections::HashSet::new();
+            account_map.values()
+                .chain(reblog_map.values().map(|(_, ra, _)| ra))
+                .filter(|a| seen.insert(a.id))
+                .cloned()
+                .collect()
+        };
+        let account_emojis_map = batch_account_emojis(&state, &all_accounts_for_emoji).await;
 
         let mut result: Vec<Status> = Vec::with_capacity(rows.len());
         for s in &rows {
@@ -274,6 +283,7 @@ pub async fn search(
                 .unwrap_or_default();
             let ctx = ctxs.get(&s.id).cloned();
             let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            api.account.emojis = account_emojis_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -281,6 +291,7 @@ pub async fn search(
             api.card = cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
                 rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();

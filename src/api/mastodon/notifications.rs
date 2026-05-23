@@ -14,9 +14,9 @@ use crate::{
 };
 use super::{
     accounts::{
-        batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media,
-        batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status,
-        fetch_reblog_data, fetch_status_media,
+        batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis,
+        batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
+        build_status, fetch_reblog_data, fetch_status_media,
     },
     convert::{account_from_db, status_from_db},
     types::{
@@ -172,6 +172,10 @@ pub async fn get_notifications(
     .await?;
     let from_account_map: std::collections::HashMap<i64, Account> =
         from_accounts_vec.into_iter().map(|a| (a.id, a)).collect();
+    let from_account_emojis_map = {
+        let accs: Vec<Account> = from_account_map.values().cloned().collect();
+        batch_account_emojis(&state, &accs).await
+    };
 
     let notif_status_ids: Vec<i64> = notifications.iter()
         .filter_map(|n| n.status_id)
@@ -219,6 +223,15 @@ pub async fn get_notifications(
         let cards_map = batch_status_cards(&state, &enrich_ids).await?;
         let viewer_ctxs = super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
         let notif_filter_map = super::timelines::compute_filter_results(&state, auth.account_id, &statuses, "notifications").await;
+        let all_accounts_for_emoji: Vec<Account> = {
+            let mut seen = std::collections::HashSet::new();
+            stat_account_map.values()
+                .chain(reblog_map.values().map(|(_, ra, _)| ra))
+                .filter(|a| seen.insert(a.id))
+                .cloned()
+                .collect()
+        };
+        let stat_account_emojis_map = batch_account_emojis(&state, &all_accounts_for_emoji).await;
 
         let mut map = std::collections::HashMap::new();
         for s in &statuses {
@@ -235,6 +248,7 @@ pub async fn get_notifications(
                 .unwrap_or_default();
             let ctx = viewer_ctxs.get(&s.id).cloned();
             let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            api.account.emojis = stat_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -242,6 +256,7 @@ pub async fn get_notifications(
             api.card = cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = stat_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
                 rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -276,12 +291,14 @@ pub async fn get_notifications(
         let status = n.status_id.and_then(|sid| status_api_map.get(&sid)).cloned();
         let report = n.report_id.and_then(|rid| report_map.get(&rid)).cloned();
         let filtered = status.as_ref().and_then(|s| s.filtered.clone());
+        let mut notif_account = account_from_db(account);
+        notif_account.emojis = from_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
         result.push(Notification {
             id: n.id.to_string(),
             notification_type: n.r#type.clone(),
             created_at: super::convert::mastodon_date(n.created_at),
             group_key: format!("ungrouped-{}", n.id),
-            account: account_from_db(account),
+            account: notif_account,
             status,
             report,
             filtered,
@@ -430,6 +447,10 @@ pub async fn get_notifications_v2(
     .await?;
     let from_account_map: std::collections::HashMap<i64, Account> =
         from_accounts_vec.into_iter().map(|a| (a.id, a)).collect();
+    let from_account_emojis_map_v2 = {
+        let accs: Vec<Account> = from_account_map.values().cloned().collect();
+        batch_account_emojis(&state, &accs).await
+    };
 
     // Batch-fetch reports for admin.report groups
     let report_ids_v2: Vec<i64> = notifications.iter()
@@ -490,6 +511,15 @@ pub async fn get_notifications_v2(
         let cards_map = batch_status_cards(&state, &enrich_ids).await?;
         let viewer_ctxs = super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
         let notif_filter_map = super::timelines::compute_filter_results(&state, auth.account_id, &statuses, "notifications").await;
+        let all_accounts_for_emoji_v2: Vec<Account> = {
+            let mut seen = std::collections::HashSet::new();
+            stat_account_map.values()
+                .chain(reblog_map.values().map(|(_, ra, _)| ra))
+                .filter(|a| seen.insert(a.id))
+                .cloned()
+                .collect()
+        };
+        let stat_account_emojis_map_v2 = batch_account_emojis(&state, &all_accounts_for_emoji_v2).await;
 
         let mut map = std::collections::HashMap::new();
         for s in &statuses {
@@ -506,6 +536,7 @@ pub async fn get_notifications_v2(
                 .unwrap_or_default();
             let ctx = viewer_ctxs.get(&s.id).cloned();
             let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            api.account.emojis = stat_account_emojis_map_v2.get(&account.id).cloned().unwrap_or_default();
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -513,6 +544,7 @@ pub async fn get_notifications_v2(
             api.card = cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = stat_account_emojis_map_v2.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
                 rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -537,7 +569,9 @@ pub async fn get_notifications_v2(
     let mut accounts_map: std::collections::HashMap<String, super::types::Account> =
         std::collections::HashMap::new();
     for a in from_account_map.values() {
-        accounts_map.insert(a.id.to_string(), account_from_db(a));
+        let mut api_account = account_from_db(a);
+        api_account.emojis = from_account_emojis_map_v2.get(&a.id).cloned().unwrap_or_default();
+        accounts_map.insert(a.id.to_string(), api_account);
     }
     let mut statuses_resp_map: std::collections::HashMap<String, super::types::Status> =
         std::collections::HashMap::new();
@@ -1028,6 +1062,15 @@ pub async fn get_notification_requests(
         .await?;
         let ls_account_map: std::collections::HashMap<i64, Account> =
             ls_accounts.into_iter().map(|a| (a.id, a)).collect();
+        let ls_all_accounts_for_emoji: Vec<Account> = {
+            let mut seen = std::collections::HashSet::new();
+            ls_account_map.values()
+                .chain(ls_reblog_map.values().map(|(_, ra, _)| ra))
+                .filter(|a| seen.insert(a.id))
+                .cloned()
+                .collect()
+        };
+        let ls_account_emojis_map = batch_account_emojis(&state, &ls_all_accounts_for_emoji).await;
 
         for s in &ls_statuses {
             let Some(account) = ls_account_map.get(&s.account_id) else { continue };
@@ -1039,6 +1082,7 @@ pub async fn get_notification_requests(
                 .cloned()
                 .unwrap_or_default();
             let mut api = status_from_db(s, account, media, reblog, None, &mentions, &rb_mentions);
+            api.account.emojis = ls_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = ls_tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = ls_emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -1046,6 +1090,7 @@ pub async fn get_notification_requests(
             api.card = ls_cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = ls_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
                 rb.tags = ls_tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = ls_emojis_map.get(&rid).cloned().unwrap_or_default();

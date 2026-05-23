@@ -493,6 +493,16 @@ pub async fn get_account_statuses(
     let polls_map = batch_status_polls(&state, &enrich_ids, viewer_id).await?;
     let cards_map = batch_status_cards(&state, &enrich_ids).await?;
 
+    let all_accounts_for_emoji: Vec<crate::db::models::Account> = {
+        let mut seen = std::collections::HashSet::new();
+        std::iter::once(&account)
+            .chain(reblog_map.values().map(|(_, ra, _)| ra))
+            .filter(|a| seen.insert(a.id))
+            .cloned()
+            .collect()
+    };
+    let account_emojis_map = batch_account_emojis(&state, &all_accounts_for_emoji).await;
+
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
         let media = media_map.get(&s.id).cloned().unwrap_or_default();
@@ -505,6 +515,7 @@ pub async fn get_account_statuses(
             .cloned()
             .unwrap_or_default();
         let mut api = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+        api.account.emojis = account_emojis_map.get(&account.id).cloned().unwrap_or_default();
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -513,6 +524,7 @@ pub async fn get_account_statuses(
         api.quote = quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.account.emojis = account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
             rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -3636,6 +3648,120 @@ pub async fn fetch_account_emojis(
         category: None,
         featured: None,
     }).collect()
+}
+
+/// Extract emoji shortcodes from account profile text.
+fn extract_account_shortcodes(a: &Account) -> Vec<String> {
+    let mut combined = format!("{} {}", a.display_name, a.note);
+    if let Some(fields) = a.fields.as_array() {
+        for f in fields {
+            if let (Some(n), Some(v)) = (f["name"].as_str(), f["value"].as_str()) {
+                combined.push(' ');
+                combined.push_str(n);
+                combined.push(' ');
+                combined.push_str(v);
+            }
+        }
+    }
+    let mut codes = Vec::new();
+    let mut rest = combined.as_str();
+    while let Some(start) = rest.find(':') {
+        rest = &rest[start + 1..];
+        if let Some(end) = rest.find(':') {
+            let code = &rest[..end];
+            if !code.is_empty() && code.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                codes.push(code.to_string());
+            }
+            rest = &rest[end + 1..];
+        } else {
+            break;
+        }
+    }
+    codes
+}
+
+/// Batch-fetch account profile emojis for multiple accounts in one DB query.
+pub async fn batch_account_emojis(
+    state: &AppState,
+    accounts: &[Account],
+) -> std::collections::HashMap<i64, Vec<super::types::CustomEmoji>> {
+    if accounts.is_empty() {
+        return std::collections::HashMap::new();
+    }
+
+    // Collect all shortcodes needed, per instance_id bucket
+    let mut instance_shortcodes: std::collections::HashMap<uuid::Uuid, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    let mut account_shortcodes: std::collections::HashMap<i64, (uuid::Uuid, Vec<String>)> =
+        std::collections::HashMap::new();
+
+    for a in accounts {
+        let codes = extract_account_shortcodes(a);
+        if !codes.is_empty() {
+            instance_shortcodes
+                .entry(a.instance_id)
+                .or_default()
+                .extend(codes.iter().cloned());
+            account_shortcodes.insert(a.id, (a.instance_id, codes));
+        }
+    }
+
+    // Fetch all emojis for all instances at once via a single query
+    // We join instance_id with shortcode via unnest
+    let mut all_instance_ids: Vec<uuid::Uuid> = Vec::new();
+    let mut all_shortcodes: Vec<String> = Vec::new();
+    for (iid, codes) in &instance_shortcodes {
+        for code in codes {
+            all_instance_ids.push(*iid);
+            all_shortcodes.push(code.clone());
+        }
+    }
+
+    if all_shortcodes.is_empty() {
+        return std::collections::HashMap::new();
+    }
+
+    let rows = sqlx::query!(
+        r#"SELECT ce.instance_id, ce.shortcode, ce.image_url, ce.static_image_url, ce.visible_in_picker
+           FROM custom_emojis ce
+           WHERE ce.disabled = false
+             AND (ce.instance_id, ce.shortcode) IN (SELECT * FROM UNNEST($1::uuid[], $2::text[]))"#,
+        &all_instance_ids as &[uuid::Uuid],
+        &all_shortcodes as &[String],
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    // Build a map: (instance_id, shortcode) → CustomEmoji
+    let emoji_lookup: std::collections::HashMap<(uuid::Uuid, String), super::types::CustomEmoji> = rows
+        .into_iter()
+        .map(|r| {
+            let emoji = super::types::CustomEmoji {
+                shortcode: r.shortcode.clone(),
+                url: r.image_url.clone(),
+                static_url: r.static_image_url.unwrap_or(r.image_url),
+                visible_in_picker: r.visible_in_picker,
+                category: None,
+                featured: None,
+            };
+            ((r.instance_id, r.shortcode), emoji)
+        })
+        .collect();
+
+    // Build result map: account_id → emojis
+    let mut result = std::collections::HashMap::new();
+    for a in accounts {
+        if let Some((iid, codes)) = account_shortcodes.get(&a.id) {
+            let emojis: Vec<_> = codes.iter()
+                .filter_map(|code| emoji_lookup.get(&(*iid, code.clone())).cloned())
+                .collect();
+            if !emojis.is_empty() {
+                result.insert(a.id, emojis);
+            }
+        }
+    }
+    result
 }
 
 /// Look up an already-cached preview card for a status. Never does network I/O.
