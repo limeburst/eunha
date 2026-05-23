@@ -14,7 +14,7 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_account_emojis, batch_quote_data, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags},
+    accounts::{batch_account_emojis, batch_account_roles, batch_quote_data, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags},
     convert::status_from_db,
     types::{PaginationParams, Status},
 };
@@ -1013,7 +1013,7 @@ async fn build_status_list(
     let polls_map = batch_status_polls(state, &enrich_ids, viewer_id).await?;
     let cards_map = batch_status_cards(state, &enrich_ids).await?;
 
-    // Collect all unique accounts (main + reblog) for emoji batch-fetch
+    // Collect all unique accounts (main + reblog) for emoji and role batch-fetch
     let all_accounts_for_emoji: Vec<Account> = {
         let mut seen = std::collections::HashSet::new();
         account_map.values()
@@ -1023,6 +1023,7 @@ async fn build_status_list(
             .collect()
     };
     let account_emojis_map = batch_account_emojis(state, &all_accounts_for_emoji).await;
+    let account_roles_map = batch_account_roles(state, &all_accounts_for_emoji).await;
 
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
@@ -1038,6 +1039,7 @@ async fn build_status_list(
             .unwrap_or_default();
         let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
         api.account.emojis = account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+        api.account.roles = account_roles_map.get(&account.id).cloned().unwrap_or_default();
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -1046,7 +1048,9 @@ async fn build_status_list(
         api.quote = quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
-            rb.account.emojis = account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+            let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+            rb.account.emojis = account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+            rb.account.roles = account_roles_map.get(&rb_id).cloned().unwrap_or_default();
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
             rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();

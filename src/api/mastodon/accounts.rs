@@ -519,6 +519,7 @@ pub async fn get_account_statuses(
             .collect()
     };
     let account_emojis_map = batch_account_emojis(&state, &all_accounts_for_emoji).await;
+    let statuses_roles_map = batch_account_roles(&state, &all_accounts_for_emoji).await;
 
     let mut result = Vec::with_capacity(statuses.len());
     for s in &statuses {
@@ -533,6 +534,7 @@ pub async fn get_account_statuses(
             .unwrap_or_default();
         let mut api = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
         api.account.emojis = account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+        api.account.roles = statuses_roles_map.get(&account.id).cloned().unwrap_or_default();
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -541,7 +543,9 @@ pub async fn get_account_statuses(
         api.quote = quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
-            rb.account.emojis = account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+            let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+            rb.account.emojis = account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+            rb.account.roles = statuses_roles_map.get(&rb_id).cloned().unwrap_or_default();
             rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
             rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -1682,19 +1686,7 @@ pub async fn get_mutes(
     .map(|r| (r.target_account_id, r.expires_at))
     .collect();
     let mute_emojis_map = batch_account_emojis(&state, &accounts).await;
-    let local_mute_ids: Vec<i64> = accounts.iter().filter(|a| a.domain.is_none()).map(|a| a.id).collect();
-    let mute_roles_map: std::collections::HashMap<i64, Vec<super::types::AccountRole>> = if !local_mute_ids.is_empty() {
-        sqlx::query!("SELECT account_id, role FROM users WHERE account_id = ANY($1::bigint[])", &local_mute_ids)
-            .fetch_all(&state.db).await.unwrap_or_default()
-            .into_iter().map(|r| {
-                let roles = match r.role.as_str() {
-                    "admin" => vec![super::types::AccountRole { id: "1".into(), name: "Admin".into(), color: "#6364ff".into() }],
-                    "moderator" => vec![super::types::AccountRole { id: "2".into(), name: "Moderator".into(), color: "#6364ff".into() }],
-                    _ => vec![],
-                };
-                (r.account_id, roles)
-            }).collect()
-    } else { std::collections::HashMap::new() };
+    let mute_roles_map = batch_account_roles(&state, &accounts).await;
     let api_accounts: Vec<ApiAccount> = accounts.iter().map(|a| {
         let mut api = account_from_db(a);
         api.emojis = mute_emojis_map.get(&a.id).cloned().unwrap_or_default();
@@ -3585,6 +3577,7 @@ pub async fn build_status_with_app(
     );
     let id: i64 = api.id.parse().unwrap_or(0);
     api.account.emojis = fetch_account_emojis(state, account).await;
+    api.account.roles = fetch_account_roles(state, account.id).await;
     api.tags = fetch_statuses_tags(state, id).await?;
     api.mentions = mentions;
     api.emojis = status_emojis;
@@ -3603,6 +3596,7 @@ pub async fn build_status_with_app(
         if rb_account_id != 0 {
             if let Ok(rb_db_acct) = fetch_account(state, rb_account_id).await {
                 rb.account.emojis = fetch_account_emojis(state, &rb_db_acct).await;
+                rb.account.roles = fetch_account_roles(state, rb_account_id).await;
             }
         }
         rb.tags = fetch_statuses_tags(state, rid).await?;
@@ -3831,6 +3825,38 @@ pub async fn batch_account_emojis(
     result
 }
 
+/// Batch-fetch role badges for a set of accounts. Only local accounts (domain IS NULL)
+/// can have roles. Returns a map of account_id → role list (empty for non-admin/moderator).
+pub async fn batch_account_roles(
+    state: &AppState,
+    accounts: &[Account],
+) -> std::collections::HashMap<i64, Vec<super::types::AccountRole>> {
+    let local_ids: Vec<i64> = accounts.iter()
+        .filter(|a| a.domain.is_none())
+        .map(|a| a.id)
+        .collect();
+    if local_ids.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    sqlx::query!(
+        "SELECT account_id, role FROM users WHERE account_id = ANY($1::bigint[])",
+        &local_ids,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| {
+        let roles = match r.role.as_str() {
+            "admin" => vec![super::types::AccountRole { id: "1".into(), name: "Admin".into(), color: "#6364ff".into() }],
+            "moderator" => vec![super::types::AccountRole { id: "2".into(), name: "Moderator".into(), color: "#6364ff".into() }],
+            _ => vec![],
+        };
+        (r.account_id, roles)
+    })
+    .collect()
+}
+
 /// Look up an already-cached preview card for a status. Never does network I/O.
 pub(super) async fn fetch_status_card(
     state: &AppState,
@@ -3882,36 +3908,7 @@ pub async fn batch_accounts_to_api(
     accounts: &[Account],
 ) -> Vec<super::types::Account> {
     let emojis_map = batch_account_emojis(state, accounts).await;
-
-    // Batch-fetch roles for local accounts (those without a domain).
-    let local_ids: Vec<i64> = accounts.iter()
-        .filter(|a| a.domain.is_none())
-        .map(|a| a.id)
-        .collect();
-    let roles_map: std::collections::HashMap<i64, Vec<super::types::AccountRole>> = if !local_ids.is_empty() {
-        let rows = sqlx::query!(
-            "SELECT account_id, role FROM users WHERE account_id = ANY($1::bigint[])",
-            &local_ids,
-        )
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-        rows.into_iter().map(|r| {
-            let role_list = match r.role.as_str() {
-                "admin" => vec![super::types::AccountRole {
-                    id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
-                }],
-                "moderator" => vec![super::types::AccountRole {
-                    id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
-                }],
-                _ => vec![],
-            };
-            (r.account_id, role_list)
-        }).collect()
-    } else {
-        std::collections::HashMap::new()
-    };
-
+    let roles_map = batch_account_roles(state, accounts).await;
     accounts.iter().map(|a| {
         let mut api = super::convert::account_from_db(a);
         api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
