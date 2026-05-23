@@ -1446,6 +1446,7 @@ pub async fn update_credentials(
     let account = fetch_account(&state, auth.account_id).await?;
     let fields = super::convert::fields_from_db(&account.fields);
     let mut api_account = account_from_db(&account);
+    api_account.emojis = fetch_account_emojis(&state, &account).await;
     let follow_requests_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM follow_requests WHERE target_account_id = $1",
         auth.account_id,
@@ -3861,15 +3862,46 @@ pub(super) async fn fetch_status_card(
     })
 }
 
-/// Convert a slice of DB accounts to API accounts with profile emojis populated.
+/// Convert a slice of DB accounts to API accounts with profile emojis and roles populated.
 pub async fn batch_accounts_to_api(
     state: &AppState,
     accounts: &[Account],
 ) -> Vec<super::types::Account> {
     let emojis_map = batch_account_emojis(state, accounts).await;
+
+    // Batch-fetch roles for local accounts (those without a domain).
+    let local_ids: Vec<i64> = accounts.iter()
+        .filter(|a| a.domain.is_none())
+        .map(|a| a.id)
+        .collect();
+    let roles_map: std::collections::HashMap<i64, Vec<super::types::AccountRole>> = if !local_ids.is_empty() {
+        let rows = sqlx::query!(
+            "SELECT account_id, role FROM users WHERE account_id = ANY($1::bigint[])",
+            &local_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        rows.into_iter().map(|r| {
+            let role_list = match r.role.as_str() {
+                "admin" => vec![super::types::AccountRole {
+                    id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
+                }],
+                "moderator" => vec![super::types::AccountRole {
+                    id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
+                }],
+                _ => vec![],
+            };
+            (r.account_id, role_list)
+        }).collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     accounts.iter().map(|a| {
         let mut api = super::convert::account_from_db(a);
         api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
+        api.roles = roles_map.get(&a.id).cloned().unwrap_or_default();
         api
     }).collect()
 }
