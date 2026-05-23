@@ -534,5 +534,9 @@ async fn fetch_contact_account(state: &AppState, instance_id: uuid::Uuid) -> Opt
     .flatten()?;
     let mut api = super::convert::account_from_db(&account);
     api.emojis = super::accounts::fetch_account_emojis(state, &account).await;
+    api.roles = {
+        let m = super::accounts::batch_account_roles(state, std::slice::from_ref(&account)).await;
+        m.get(&account.id).cloned().unwrap_or_default()
+    };
     Some(api)
 }

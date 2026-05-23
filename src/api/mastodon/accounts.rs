@@ -160,6 +160,7 @@ pub async fn lookup_account(
     if let Some(account) = found {
         let mut api = account_from_db(&account);
         api.emojis = fetch_account_emojis(&state, &account).await;
+        api.roles = fetch_account_roles(&state, account.id).await;
         return Ok(Json(api));
     }
 
@@ -202,6 +203,7 @@ pub async fn lookup_account(
                         .await?;
                         let mut api = account_from_db(&account);
                         api.emojis = fetch_account_emojis(&state, &account).await;
+                        api.roles = fetch_account_roles(&state, account.id).await;
                         return Ok(Json(api));
                     }
                 }
@@ -2626,11 +2628,13 @@ pub async fn get_suggestions_v2(
     .await?;
 
     let emojis_map = batch_account_emojis(&state, &accounts).await;
+    let roles_map = batch_account_roles(&state, &accounts).await;
     let suggestions = accounts
         .iter()
         .map(|a| {
             let mut api = account_from_db(a);
             api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
+            api.roles = roles_map.get(&a.id).cloned().unwrap_or_default();
             SuggestionV2 {
                 source: "friends_of_friends".to_string(),
                 sources: vec!["friends_of_friends".to_string()],
@@ -2957,6 +2961,7 @@ pub async fn update_profile_settings(
     .await?;
     let mut api = account_from_db(&account);
     api.emojis = fetch_account_emojis(&state, &account).await;
+    api.roles = fetch_account_roles(&state, account.id).await;
     Ok(Json(api))
 }
 
@@ -2982,6 +2987,7 @@ pub async fn delete_profile_avatar(
     .await?;
     let mut api = account_from_db(&account);
     api.emojis = fetch_account_emojis(&state, &account).await;
+    api.roles = fetch_account_roles(&state, account.id).await;
     Ok(Json(api))
 }
 
@@ -3007,6 +3013,7 @@ pub async fn delete_profile_header(
     .await?;
     let mut api = account_from_db(&account);
     api.emojis = fetch_account_emojis(&state, &account).await;
+    api.roles = fetch_account_roles(&state, account.id).await;
     Ok(Json(api))
 }
 

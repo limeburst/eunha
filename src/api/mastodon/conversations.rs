@@ -13,9 +13,9 @@ use crate::{
 };
 use super::{
     accounts::{
-        batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis,
-        batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
-        build_status, fetch_account, fetch_status_media,
+        batch_account_emojis, batch_account_roles, batch_reblog_data, batch_status_cards,
+        batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls,
+        batch_statuses_tags, build_status, fetch_account, fetch_status_media,
     },
     convert::{account_from_db, status_from_db},
     statuses::{batch_viewer_contexts, build_viewer_context},
@@ -164,6 +164,7 @@ pub async fn get_conversations(
                 .collect()
         };
         let status_account_emojis_map = batch_account_emojis(&state, &all_stat_accounts_for_emoji).await;
+        let status_account_roles_map = batch_account_roles(&state, &all_stat_accounts_for_emoji).await;
 
         for s in &last_statuses {
             let Some(conv_id) = s.conversation_id else { continue };
@@ -178,6 +179,7 @@ pub async fn get_conversations(
                 .unwrap_or_default();
             let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
             api.account.emojis = status_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+            api.account.roles = status_account_roles_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -185,7 +187,9 @@ pub async fn get_conversations(
             api.card = cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
-                rb.account.emojis = status_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+                let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+                rb.account.emojis = status_account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+                rb.account.roles = status_account_roles_map.get(&rb_id).cloned().unwrap_or_default();
                 rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -196,6 +200,7 @@ pub async fn get_conversations(
         }
     }
 
+    let participant_roles_map = batch_account_roles(&state, &participant_acct_map.values().cloned().collect::<Vec<_>>()).await;
     let mut result = Vec::with_capacity(rows.len());
     for row in &rows {
         result.push(Conversation {
@@ -206,6 +211,7 @@ pub async fn get_conversations(
                 .map(|a| {
                     let mut api_acct = account_from_db(a);
                     api_acct.emojis = participant_emojis_map.get(&a.id).cloned().unwrap_or_default();
+                    api_acct.roles = participant_roles_map.get(&a.id).cloned().unwrap_or_default();
                     api_acct
                 })
                 .collect(),
@@ -348,12 +354,14 @@ async fn build_conversation_response(
     };
 
     let participant_emojis_map = batch_account_emojis(state, &participants).await;
+    let participant_roles_map = batch_account_roles(state, &participants).await;
     Ok(Conversation {
         id: conversation_id.to_string(),
         unread,
         accounts: participants.iter().map(|a| {
             let mut api = account_from_db(a);
             api.emojis = participant_emojis_map.get(&a.id).cloned().unwrap_or_default();
+            api.roles = participant_roles_map.get(&a.id).cloned().unwrap_or_default();
             api
         }).collect(),
         last_status,

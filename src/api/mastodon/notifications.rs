@@ -176,9 +176,9 @@ pub async fn get_notifications(
     .await?;
     let from_account_map: std::collections::HashMap<i64, Account> =
         from_accounts_vec.into_iter().map(|a| (a.id, a)).collect();
-    let from_account_emojis_map = {
+    let (from_account_emojis_map, from_account_roles_map) = {
         let accs: Vec<Account> = from_account_map.values().cloned().collect();
-        batch_account_emojis(&state, &accs).await
+        (batch_account_emojis(&state, &accs).await, batch_account_roles(&state, &accs).await)
     };
 
     let notif_status_ids: Vec<i64> = notifications.iter()
@@ -301,6 +301,7 @@ pub async fn get_notifications(
         let filtered = status.as_ref().and_then(|s| s.filtered.clone());
         let mut notif_account = account_from_db(account);
         notif_account.emojis = from_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+        notif_account.roles = from_account_roles_map.get(&account.id).cloned().unwrap_or_default();
         result.push(Notification {
             id: n.id.to_string(),
             notification_type: n.r#type.clone(),
@@ -455,9 +456,9 @@ pub async fn get_notifications_v2(
     .await?;
     let from_account_map: std::collections::HashMap<i64, Account> =
         from_accounts_vec.into_iter().map(|a| (a.id, a)).collect();
-    let from_account_emojis_map_v2 = {
+    let (from_account_emojis_map_v2, from_account_roles_map_v2) = {
         let accs: Vec<Account> = from_account_map.values().cloned().collect();
-        batch_account_emojis(&state, &accs).await
+        (batch_account_emojis(&state, &accs).await, batch_account_roles(&state, &accs).await)
     };
 
     // Batch-fetch reports for admin.report groups
@@ -583,6 +584,7 @@ pub async fn get_notifications_v2(
     for a in from_account_map.values() {
         let mut api_account = account_from_db(a);
         api_account.emojis = from_account_emojis_map_v2.get(&a.id).cloned().unwrap_or_default();
+        api_account.roles = from_account_roles_map_v2.get(&a.id).cloned().unwrap_or_default();
         accounts_map.insert(a.id.to_string(), api_account);
     }
     let mut statuses_resp_map: std::collections::HashMap<String, super::types::Status> =
@@ -753,6 +755,10 @@ pub async fn get_notification_group_accounts(
 
     let mut api_account = super::convert::account_from_db(&account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
+    api_account.roles = {
+        let m = batch_account_roles(&state, std::slice::from_ref(&account)).await;
+        m.get(&account.id).cloned().unwrap_or_default()
+    };
     Ok(Json(vec![api_account]))
 }
 
@@ -1085,6 +1091,7 @@ pub async fn get_notification_requests(
                 .collect()
         };
         let ls_account_emojis_map = batch_account_emojis(&state, &ls_all_accounts_for_emoji).await;
+        let ls_account_roles_map = batch_account_roles(&state, &ls_all_accounts_for_emoji).await;
 
         for s in &ls_statuses {
             let Some(account) = ls_account_map.get(&s.account_id) else { continue };
@@ -1097,6 +1104,7 @@ pub async fn get_notification_requests(
                 .unwrap_or_default();
             let mut api = status_from_db(s, account, media, reblog, None, &mentions, &rb_mentions);
             api.account.emojis = ls_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+            api.account.roles = ls_account_roles_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = ls_tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = ls_emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -1104,7 +1112,9 @@ pub async fn get_notification_requests(
             api.card = ls_cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
-                rb.account.emojis = ls_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+                let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+                rb.account.emojis = ls_account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+                rb.account.roles = ls_account_roles_map.get(&rb_id).cloned().unwrap_or_default();
                 rb.tags = ls_tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = ls_emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -1115,7 +1125,7 @@ pub async fn get_notification_requests(
         }
     }
 
-    // Batch-fetch account emojis for notification request senders
+    // Batch-fetch account emojis/roles for notification request senders
     let req_account_ids: Vec<i64> = rows.iter().map(|r| r.from_account_id).collect();
     let req_db_accounts: Vec<Account> = if !req_account_ids.is_empty() {
         sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &req_account_ids)
@@ -1124,6 +1134,7 @@ pub async fn get_notification_requests(
         vec![]
     };
     let req_acc_emojis_map = batch_account_emojis(&state, &req_db_accounts).await;
+    let req_acc_roles_map = batch_account_roles(&state, &req_db_accounts).await;
 
     let mut result: Vec<NotificationRequest> = Vec::with_capacity(rows.len());
     for r in rows {
@@ -1200,6 +1211,7 @@ pub async fn get_notification_requests(
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
         let mut api_account = super::convert::account_from_db(&acc);
         api_account.emojis = req_acc_emojis_map.get(&acc.id).cloned().unwrap_or_default();
+        api_account.roles = req_acc_roles_map.get(&acc.id).cloned().unwrap_or_default();
         result.push(NotificationRequest {
             id: r.id.to_string(),
             created_at: super::convert::mastodon_date(r.created_at),
@@ -1401,6 +1413,10 @@ pub async fn get_notification_request(
     let last_status = fetch_last_status(&state, r.last_status_id).await;
     let mut api_account = super::convert::account_from_db(&acc);
     api_account.emojis = fetch_account_emojis(&state, &acc).await;
+    api_account.roles = {
+        let m = batch_account_roles(&state, std::slice::from_ref(&acc)).await;
+        m.get(&acc.id).cloned().unwrap_or_default()
+    };
     Ok(Json(NotificationRequest {
         id: r.id.to_string(),
         created_at: super::convert::mastodon_date(r.created_at),
@@ -1528,6 +1544,10 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         if let Some(ta) = ta {
             let mut ta_api = account_from_db(&ta);
             ta_api.emojis = fetch_account_emojis(state, &ta).await;
+            ta_api.roles = {
+                let m = batch_account_roles(state, std::slice::from_ref(&ta)).await;
+                m.get(&ta.id).cloned().unwrap_or_default()
+            };
             Some(super::types::Report {
                 id: rid.to_string(),
                 action_taken: action_taken_at.is_some(),
@@ -1546,6 +1566,10 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
 
     let mut notif_account = account_from_db(&from_account);
     notif_account.emojis = fetch_account_emojis(state, &from_account).await;
+    notif_account.roles = {
+        let m = batch_account_roles(state, std::slice::from_ref(&from_account)).await;
+        m.get(&from_account.id).cloned().unwrap_or_default()
+    };
     Ok(Notification {
         id: n.id.to_string(),
         notification_type: n.r#type.clone(),

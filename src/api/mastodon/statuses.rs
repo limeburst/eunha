@@ -19,9 +19,10 @@ use crate::{
 };
 use super::{
     accounts::{
-        batch_account_emojis, batch_accounts_to_api, batch_reblog_data, batch_status_cards,
-        batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls,
-        batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media, spawn_card_fetch,
+        batch_account_emojis, batch_account_roles, batch_accounts_to_api, batch_reblog_data,
+        batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions,
+        batch_status_polls, batch_statuses_tags, build_status, fetch_reblog_data,
+        fetch_status_media, spawn_card_fetch,
     },
     convert::{account_from_db, status_from_db},
     formatting::{HASHTAG_RE, MENTION_RE, render_content},
@@ -1567,6 +1568,7 @@ pub async fn get_status_context(
                     .collect()
             };
             let account_emojis_map = batch_account_emojis(&state, &all_accounts_for_emoji).await;
+            let account_roles_map = batch_account_roles(&state, &all_accounts_for_emoji).await;
 
             let mut result = Vec::with_capacity(visible.len());
             for s in &visible {
@@ -1581,6 +1583,7 @@ pub async fn get_status_context(
                 let ctx = viewer_ctxs.get(&s.id).cloned();
                 let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
                 api.account.emojis = account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+                api.account.roles = account_roles_map.get(&account.id).cloned().unwrap_or_default();
                 api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
                 api.mentions = mentions;
                 api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -1588,7 +1591,9 @@ pub async fn get_status_context(
                 api.card = cards_map.get(&s.id).cloned();
                 if let Some(ref mut rb) = api.reblog {
                     let rid: i64 = rb.id.parse().unwrap_or(0);
-                    rb.account.emojis = account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+                    let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+                    rb.account.emojis = account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+                    rb.account.roles = account_roles_map.get(&rb_id).cloned().unwrap_or_default();
                     rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
                     rb.mentions = rb_mentions;
                     rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -2157,8 +2162,10 @@ pub async fn get_status_history(
     };
 
     let account_emojis = batch_account_emojis(&state, std::slice::from_ref(&account)).await;
+    let account_roles = batch_account_roles(&state, std::slice::from_ref(&account)).await;
     let mut api_account = account_from_db(&account);
     api_account.emojis = account_emojis.get(&account.id).cloned().unwrap_or_default();
+    api_account.roles = account_roles.get(&account.id).cloned().unwrap_or_default();
 
     // Collect all media attachment IDs needed across all edits, then batch-fetch them.
     let all_media_ids: Vec<i64> = edits.iter()
