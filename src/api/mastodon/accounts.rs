@@ -2645,7 +2645,7 @@ pub async fn get_suggestions_v2(
             api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
             api.roles = roles_map.get(&a.id).cloned().unwrap_or_default();
             SuggestionV2 {
-                source: "friends_of_friends".to_string(),
+                source: "past_interactions".to_string(),
                 sources: vec!["friends_of_friends".to_string()],
                 account: api,
             }

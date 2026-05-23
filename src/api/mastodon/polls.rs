@@ -125,8 +125,8 @@ async fn poll_from_db(state: &AppState, poll: &models::Poll, viewer_id: Option<i
         (None, None)
     };
 
-    // Per Mastodon: option vote counts are hidden until expired or the viewer has voted/owns the poll
-    let show_results = expired || voted.unwrap_or(false);
+    // Per Mastodon show_totals_now?: expired? || !hide_totals?
+    let show_results = expired || !poll.hide_totals;
 
     let per_option_counts = if show_results {
         sqlx::query!(
