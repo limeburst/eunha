@@ -44,14 +44,15 @@ pub async fn get_conversations(
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
+    // Mastodon paginates conversations by last_status_id
     let rows: Vec<ConvRow> = if min_id.is_some() {
         sqlx::query_as!(
             ConvRow,
             r#"SELECT ac.conversation_id, ac.unread, ac.participant_account_ids, ac.last_status_id
                FROM account_conversations ac
                WHERE ac.account_id = $1
-                 AND ($2::bigint IS NULL OR ac.conversation_id > $2)
-               ORDER BY ac.conversation_id ASC
+                 AND ($2::bigint IS NULL OR ac.last_status_id > $2)
+               ORDER BY ac.last_status_id ASC NULLS LAST
                LIMIT $3"#,
             auth.account_id,
             min_id,
@@ -65,9 +66,9 @@ pub async fn get_conversations(
             r#"SELECT ac.conversation_id, ac.unread, ac.participant_account_ids, ac.last_status_id
                FROM account_conversations ac
                WHERE ac.account_id = $1
-                 AND ($2::bigint IS NULL OR ac.conversation_id < $2)
-                 AND ($4::bigint IS NULL OR ac.conversation_id > $4)
-               ORDER BY ac.conversation_id DESC
+                 AND ($2::bigint IS NULL OR ac.last_status_id < $2)
+                 AND ($4::bigint IS NULL OR ac.last_status_id > $4)
+               ORDER BY ac.last_status_id DESC NULLS LAST
                LIMIT $3"#,
             auth.account_id,
             max_id,
@@ -219,9 +220,12 @@ pub async fn get_conversations(
         });
     }
 
-    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+    // Link header cursors use last_status_id (matching Mastodon's pagination_max_id/since_id)
+    let newest_cursor = rows.first().and_then(|r| r.last_status_id).map(|id| id.to_string());
+    let oldest_cursor = rows.last().and_then(|r| r.last_status_id).map(|id| id.to_string());
+    let link = newest_cursor.zip(oldest_cursor).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
