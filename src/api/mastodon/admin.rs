@@ -107,22 +107,43 @@ fn role_for(role_str: &str) -> AdminRole {
 
 async fn build_admin_account(state: &AppState, account: &models::Account) -> AppResult<AdminAccount> {
     let user = sqlx::query!(
-        "SELECT email, confirmed_at, approved_at, reason, role FROM users WHERE account_id = $1",
+        "SELECT id, email, confirmed_at, approved_at, reason, role FROM users WHERE account_id = $1",
         account.id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    let (email, confirmed, approved, reason, role_str) = match user {
+    let (user_id, email, confirmed, approved, reason, role_str) = match user {
         Some(u) => (
+            Some(u.id),
             u.email,
             u.confirmed_at.is_some(),
             u.approved_at.is_some(),
             u.reason,
             u.role,
         ),
-        None => (String::new(), true, true, None, "user".to_string()),
+        None => (None, String::new(), true, true, None, "user".to_string()),
     };
+
+    // Fetch IP addresses from user_ips view for local accounts
+    let ips: Vec<serde_json::Value> = if let Some(uid) = user_id {
+        sqlx::query!(
+            "SELECT ip::text AS ip, used_at FROM user_ips WHERE user_id = $1 ORDER BY used_at DESC LIMIT 20",
+            uid,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| serde_json::json!({
+            "ip": r.ip.unwrap_or_default(),
+            "used_at": r.used_at.map(super::convert::mastodon_date),
+        }))
+        .collect()
+    } else {
+        vec![]
+    };
+    let first_ip = ips.first().and_then(|v| v["ip"].as_str().map(str::to_string));
 
     Ok(AdminAccount {
         id: account.id.to_string(),
@@ -130,8 +151,8 @@ async fn build_admin_account(state: &AppState, account: &models::Account) -> App
         domain: account.domain.clone(),
         created_at: super::convert::mastodon_date(account.created_at),
         email,
-        ip: None,
-        ips: vec![],
+        ip: first_ip,
+        ips,
         role: role_for(&role_str),
         confirmed,
         suspended: account.suspended_at.is_some(),
