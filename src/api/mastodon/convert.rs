@@ -93,8 +93,8 @@ pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
         url: m.file_url.clone()
             .or_else(|| m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
         preview_url: m.preview_url.clone(),
-        remote_url: m.remote_url.clone(),
-        preview_remote_url: None,
+        remote_url: m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string),
+        preview_remote_url: m.thumbnail_remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string),
         text_url: None,
         description: m.description.clone(),
         blurhash: m.blurhash.clone(),

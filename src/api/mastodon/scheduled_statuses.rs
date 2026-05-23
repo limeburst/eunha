@@ -14,7 +14,22 @@ pub struct ScheduledStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_at: Option<String>,
     pub params: serde_json::Value,
-    pub media_attachments: Vec<serde_json::Value>,
+    pub media_attachments: Vec<super::types::MediaAttachment>,
+}
+
+async fn fetch_scheduled_media(
+    state: &AppState,
+    scheduled_status_id: i64,
+) -> Vec<super::types::MediaAttachment> {
+    let rows = sqlx::query_as!(
+        crate::db::models::MediaAttachment,
+        "SELECT * FROM media_attachments WHERE scheduled_status_id = $1 ORDER BY id",
+        scheduled_status_id,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    rows.iter().map(super::convert::media_from_db).collect()
 }
 
 pub async fn list_scheduled_statuses(
@@ -32,15 +47,16 @@ pub async fn list_scheduled_statuses(
     .fetch_all(&state.db)
     .await?;
 
-    let statuses = rows
-        .into_iter()
-        .map(|r| ScheduledStatus {
+    let mut statuses = Vec::with_capacity(rows.len());
+    for r in rows {
+        let media_attachments = fetch_scheduled_media(&state, r.id).await;
+        statuses.push(ScheduledStatus {
             id: r.id.to_string(),
             scheduled_at: r.scheduled_at.map(super::convert::mastodon_date),
             params: r.params.unwrap_or(serde_json::Value::Null),
-            media_attachments: vec![],
-        })
-        .collect();
+            media_attachments,
+        });
+    }
 
     Ok(Json(statuses))
 }
@@ -61,11 +77,12 @@ pub async fn get_scheduled_status(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    let media_attachments = fetch_scheduled_media(&state, row.id).await;
     Ok(Json(ScheduledStatus {
         id: row.id.to_string(),
         scheduled_at: row.scheduled_at.map(super::convert::mastodon_date),
         params: row.params.unwrap_or(serde_json::Value::Null),
-        media_attachments: vec![],
+        media_attachments,
     }))
 }
 
@@ -101,11 +118,12 @@ pub async fn update_scheduled_status(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    let media_attachments = fetch_scheduled_media(&state, row.id).await;
     Ok(Json(ScheduledStatus {
         id: row.id.to_string(),
         scheduled_at: row.scheduled_at.map(super::convert::mastodon_date),
         params: row.params.unwrap_or(serde_json::Value::Null),
-        media_attachments: vec![],
+        media_attachments,
     }))
 }
 

@@ -38,14 +38,14 @@ pub struct PushAlerts {
 fn alerts_from_data(data: &serde_json::Value) -> PushAlerts {
     let a = &data["alerts"];
     PushAlerts {
-        follow:          a["follow"]         .as_bool().unwrap_or(true),
-        follow_request:  a["follow_request"] .as_bool().unwrap_or(false),
-        favourite:       a["favourite"]      .as_bool().unwrap_or(true),
-        reblog:          a["reblog"]         .as_bool().unwrap_or(true),
-        mention:         a["mention"]        .as_bool().unwrap_or(true),
-        poll:            a["poll"]           .as_bool().unwrap_or(false),
-        status:          a["status"]         .as_bool().unwrap_or(false),
-        update:          a["update"]         .as_bool().unwrap_or(false),
+        follow:         a["follow"]        .as_bool().unwrap_or(true),
+        follow_request: a["follow_request"].as_bool().unwrap_or(false),
+        favourite:      a["favourite"]     .as_bool().unwrap_or(true),
+        reblog:         a["reblog"]        .as_bool().unwrap_or(true),
+        mention:        a["mention"]       .as_bool().unwrap_or(true),
+        poll:           a["poll"]          .as_bool().unwrap_or(false),
+        status:         a["status"]        .as_bool().unwrap_or(false),
+        update:         a["update"]        .as_bool().unwrap_or(false),
     }
 }
 
@@ -87,6 +87,8 @@ pub struct AlertsInput {
     #[serde(default)]
     pub follow: Option<bool>,
     #[serde(default)]
+    pub follow_request: Option<bool>,
+    #[serde(default)]
     pub favourite: Option<bool>,
     #[serde(default)]
     pub reblog: Option<bool>,
@@ -96,6 +98,8 @@ pub struct AlertsInput {
     pub poll: Option<bool>,
     #[serde(default)]
     pub status: Option<bool>,
+    #[serde(default)]
+    pub update: Option<bool>,
 }
 
 pub async fn create_subscription(
@@ -121,12 +125,14 @@ pub async fn create_subscription(
     let policy = body.data.policy.as_deref().unwrap_or("all");
     let data = serde_json::json!({
         "alerts": {
-            "follow":    alerts.follow.unwrap_or(true),
-            "favourite": alerts.favourite.unwrap_or(true),
-            "reblog":    alerts.reblog.unwrap_or(true),
-            "mention":   alerts.mention.unwrap_or(true),
-            "poll":      alerts.poll.unwrap_or(false),
-            "status":    alerts.status.unwrap_or(false),
+            "follow":          alerts.follow.unwrap_or(true),
+            "follow_request":  alerts.follow_request.unwrap_or(false),
+            "favourite":       alerts.favourite.unwrap_or(true),
+            "reblog":          alerts.reblog.unwrap_or(true),
+            "mention":         alerts.mention.unwrap_or(true),
+            "poll":            alerts.poll.unwrap_or(false),
+            "status":          alerts.status.unwrap_or(false),
+            "update":          alerts.update.unwrap_or(false),
         },
         "policy": policy,
     });
@@ -228,24 +234,28 @@ pub async fn update_subscription(
         r#"UPDATE web_push_subscriptions SET
              data = jsonb_build_object(
                'alerts', jsonb_build_object(
-                 'follow',    COALESCE($1::boolean, (data->'alerts'->>'follow')::boolean, true),
-                 'favourite', COALESCE($2::boolean, (data->'alerts'->>'favourite')::boolean, true),
-                 'reblog',    COALESCE($3::boolean, (data->'alerts'->>'reblog')::boolean, true),
-                 'mention',   COALESCE($4::boolean, (data->'alerts'->>'mention')::boolean, true),
-                 'poll',      COALESCE($5::boolean, (data->'alerts'->>'poll')::boolean, false),
-                 'status',    COALESCE($6::boolean, (data->'alerts'->>'status')::boolean, false)
+                 'follow',          COALESCE($1::boolean, (data->'alerts'->>'follow')::boolean, true),
+                 'follow_request',  COALESCE($2::boolean, (data->'alerts'->>'follow_request')::boolean, false),
+                 'favourite',       COALESCE($3::boolean, (data->'alerts'->>'favourite')::boolean, true),
+                 'reblog',          COALESCE($4::boolean, (data->'alerts'->>'reblog')::boolean, true),
+                 'mention',         COALESCE($5::boolean, (data->'alerts'->>'mention')::boolean, true),
+                 'poll',            COALESCE($6::boolean, (data->'alerts'->>'poll')::boolean, false),
+                 'status',          COALESCE($7::boolean, (data->'alerts'->>'status')::boolean, false),
+                 'update',          COALESCE($8::boolean, (data->'alerts'->>'update')::boolean, false)
                ),
-               'policy', $7::text
+               'policy', $9::text
              ),
              updated_at = now()
-           WHERE access_token_id = $8
+           WHERE access_token_id = $10
            RETURNING id, endpoint, data as "data: serde_json::Value""#,
         alerts.follow,
+        alerts.follow_request,
         alerts.favourite,
         alerts.reblog,
         alerts.mention,
         alerts.poll,
         alerts.status,
+        alerts.update,
         policy,
         auth.token_id,
     )

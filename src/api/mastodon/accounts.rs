@@ -1668,22 +1668,22 @@ pub async fn get_preferences(
 ) -> AppResult<Json<Preferences>> {
     auth.require_scope("read:accounts")?;
     let user = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language FROM users WHERE account_id = $1",
+        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
         auth.account_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    let (privacy, sensitive, language) = user.map_or(
-        ("public".to_string(), false, None),
-        |u| (u.default_privacy, u.default_sensitive, u.default_language),
+    let (privacy, sensitive, language, quote_policy) = user.map_or(
+        ("public".to_string(), false, None, "public".to_string()),
+        |u| (u.default_privacy, u.default_sensitive, u.default_language, u.default_quote_policy),
     );
 
     Ok(Json(Preferences {
         posting_default_visibility: privacy,
         posting_default_sensitive: sensitive,
         posting_default_language: language,
-        posting_default_quote_policy: "allow".into(),
+        posting_default_quote_policy: quote_policy,
         reading_expand_media: "default".into(),
         reading_expand_spoilers: false,
         reading_autoplay_gifs: false,
