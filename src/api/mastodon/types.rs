@@ -47,6 +47,8 @@ pub struct Account {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memorial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub mute_expires_at: Option<String>,  // only on MutedAccount (GET /api/v1/mutes)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<AccountSource>,  // only on CredentialAccount
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,  // only on CredentialAccount

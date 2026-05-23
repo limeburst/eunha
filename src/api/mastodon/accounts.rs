@@ -1630,7 +1630,23 @@ pub async fn get_mutes(
     )
     .fetch_all(&state.db)
     .await?;
-    let api_accounts: Vec<ApiAccount> = accounts.iter().map(account_from_db).collect();
+    let account_ids: Vec<i64> = accounts.iter().map(|a| a.id).collect();
+    let mute_expiries: std::collections::HashMap<i64, Option<chrono::DateTime<chrono::Utc>>> = sqlx::query!(
+        "SELECT target_account_id, expires_at FROM mutes WHERE account_id = $1 AND target_account_id = ANY($2::bigint[])",
+        auth.account_id, &account_ids,
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|r| (r.target_account_id, r.expires_at))
+    .collect();
+    let api_accounts: Vec<ApiAccount> = accounts.iter().map(|a| {
+        let mut api = account_from_db(a);
+        if let Some(expires_at) = mute_expiries.get(&a.id).and_then(|e| *e) {
+            api.mute_expires_at = Some(super::convert::mastodon_date(expires_at));
+        }
+        api
+    }).collect();
     let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
         super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)

@@ -63,6 +63,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         limited: if a.silenced_at.is_some() { Some(true) } else { None },
         noindex: if a.domain.is_none() { Some(!a.indexable) } else { None },
         memorial: if a.memorial { Some(true) } else { None },
+        mute_expires_at: None,
         source: None,
         role: None,
     }
