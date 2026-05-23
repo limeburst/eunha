@@ -11,7 +11,7 @@ use crate::{
     push::notify_admins,
 };
 use super::{
-    accounts::fetch_account_emojis,
+    accounts::{batch_account_roles, fetch_account_emojis},
     convert::account_from_db,
     types::Report,
 };
@@ -108,6 +108,10 @@ pub async fn file_report(
 
     let mut ta_api = account_from_db(&target_account);
     ta_api.emojis = fetch_account_emojis(&state, &target_account).await;
+    ta_api.roles = {
+        let m = batch_account_roles(&state, std::slice::from_ref(&target_account)).await;
+        m.get(&target_account.id).cloned().unwrap_or_default()
+    };
     Ok(Json(Report {
         id: report.id.to_string(),
         action_taken: false,

@@ -234,6 +234,7 @@ pub async fn get_account(
         .await {
             let mut moved_api = account_from_db(&moved);
             moved_api.emojis = fetch_account_emojis(&state, &moved).await;
+            moved_api.roles = fetch_account_roles(&state, moved.id).await;
             api_account.moved = Some(Box::new(moved_api));
         }
     }
