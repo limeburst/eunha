@@ -333,6 +333,15 @@ pub async fn get_account_statuses(
         let pin_emojis_map = batch_status_emojis(&state, &all_pin_statuses).await?;
         let pin_polls_map = batch_status_polls(&state, &pin_enrich_ids, viewer_id).await?;
         let pin_cards_map = batch_status_cards(&state, &pin_enrich_ids).await?;
+        let pin_all_accounts_for_emoji: Vec<crate::db::models::Account> = {
+            let mut seen = std::collections::HashSet::new();
+            std::iter::once(&account)
+                .chain(pin_reblog_map.values().map(|(_, ra, _)| ra))
+                .filter(|a| seen.insert(a.id))
+                .cloned()
+                .collect()
+        };
+        let pin_account_emojis_map = batch_account_emojis(&state, &pin_all_accounts_for_emoji).await;
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
@@ -345,6 +354,7 @@ pub async fn get_account_statuses(
                 .cloned()
                 .unwrap_or_default();
             let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+            api_status.account.emojis = pin_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
             api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
             api_status.mentions = mentions;
             api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -353,6 +363,7 @@ pub async fn get_account_statuses(
             api_status.quote = pin_quote_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api_status.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = pin_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
                 rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -846,6 +857,15 @@ pub async fn get_account_pins(
     let pin_emojis_map = batch_status_emojis(&state, &all_pin_statuses).await?;
     let pin_polls_map = batch_status_polls(&state, &pin_enrich_ids, viewer_id).await?;
     let pin_cards_map = batch_status_cards(&state, &pin_enrich_ids).await?;
+    let pin_all_accounts_for_emoji: Vec<crate::db::models::Account> = {
+        let mut seen = std::collections::HashSet::new();
+        std::iter::once(&account)
+            .chain(pin_reblog_map.values().map(|(_, ra, _)| ra))
+            .filter(|a| seen.insert(a.id))
+            .cloned()
+            .collect()
+    };
+    let pin_account_emojis_map = batch_account_emojis(&state, &pin_all_accounts_for_emoji).await;
 
     let mut result = Vec::with_capacity(pinned_statuses.len());
     for s in &pinned_statuses {
@@ -859,6 +879,7 @@ pub async fn get_account_pins(
             .cloned()
             .unwrap_or_default();
         let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+        api_status.account.emojis = pin_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
         api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
         api_status.mentions = mentions;
         api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -867,6 +888,7 @@ pub async fn get_account_pins(
         api_status.quote = pin_quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api_status.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
+            rb.account.emojis = pin_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
             rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
             rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
