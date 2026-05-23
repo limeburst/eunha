@@ -286,7 +286,7 @@ pub async fn get_account_statuses(
     }
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
-    // If target has blocked the viewer, return 403.
+    // If target has blocked the viewer, return empty list (matches Mastodon's Status.none).
     if let Some(vid) = viewer_id {
         if vid != account.id {
             let blocked = sqlx::query_scalar!(
@@ -297,7 +297,7 @@ pub async fn get_account_statuses(
             .await?
             .is_some();
             if blocked {
-                return Err(AppError::Forbidden);
+                return Ok((HeaderMap::new(), Json(Vec::<super::types::Status>::new())));
             }
         }
     }
@@ -981,6 +981,21 @@ pub async fn get_account_followers(
     if target.hide_collections && viewer_id != Some(id) {
         return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
+    // If target has blocked the viewer, return empty list
+    if let Some(vid) = viewer_id {
+        if vid != id {
+            let blocked = sqlx::query_scalar!(
+                "SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2",
+                id, vid,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if blocked {
+                return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
+            }
+        }
+    }
 
     let limit = q.pagination.limit_clamped(40, 80);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -999,6 +1014,9 @@ pub async fn get_account_followers(
                  SELECT 1 FROM blocks b
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                     OR (b.account_id = a.id AND b.target_account_id = $4)
+             ))
+             AND ($4::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM mutes WHERE account_id = $4 AND target_account_id = a.id
              ))
            ORDER BY a.id DESC LIMIT $5"#,
         id, max_id, since_id, viewer_id, limit, min_id
@@ -1039,6 +1057,21 @@ pub async fn get_account_following(
     if target.hide_collections && viewer_id != Some(id) {
         return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
+    // If target has blocked the viewer, return empty list
+    if let Some(vid) = viewer_id {
+        if vid != id {
+            let blocked = sqlx::query_scalar!(
+                "SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2",
+                id, vid,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .is_some();
+            if blocked {
+                return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
+            }
+        }
+    }
 
     let limit = q.pagination.limit_clamped(40, 80);
     let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
@@ -1057,6 +1090,9 @@ pub async fn get_account_following(
                  SELECT 1 FROM blocks b
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
                     OR (b.account_id = a.id AND b.target_account_id = $4)
+             ))
+             AND ($4::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM mutes WHERE account_id = $4 AND target_account_id = a.id
              ))
            ORDER BY a.id DESC LIMIT $5"#,
         id, max_id, since_id, viewer_id, limit, min_id
