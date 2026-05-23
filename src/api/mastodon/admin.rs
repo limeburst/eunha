@@ -11,7 +11,7 @@ use crate::{
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
-use super::accounts::fetch_account_emojis;
+use super::accounts::{batch_account_roles, fetch_account_emojis};
 use super::convert::account_from_db;
 use super::types::Account as ApiAccount;
 
@@ -168,6 +168,10 @@ async fn build_admin_account(state: &AppState, account: &models::Account) -> App
         account: {
             let mut api = account_from_db(account);
             api.emojis = fetch_account_emojis(state, account).await;
+            api.roles = {
+                let m = batch_account_roles(state, std::slice::from_ref(account)).await;
+                m.get(&account.id).cloned().unwrap_or_default()
+            };
             api
         },
     })
@@ -560,8 +564,16 @@ async fn build_admin_report(
 
     let mut account_api = account_from_db(&account);
     account_api.emojis = fetch_account_emojis(state, &account).await;
+    account_api.roles = {
+        let m = batch_account_roles(state, std::slice::from_ref(&account)).await;
+        m.get(&account.id).cloned().unwrap_or_default()
+    };
     let mut target_api = account_from_db(&target);
     target_api.emojis = fetch_account_emojis(state, &target).await;
+    target_api.roles = {
+        let m = batch_account_roles(state, std::slice::from_ref(&target)).await;
+        m.get(&target.id).cloned().unwrap_or_default()
+    };
     Ok(AdminReport {
         id: report.id.to_string(),
         action_taken: report.action_taken_at.is_some(),
