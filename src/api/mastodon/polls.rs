@@ -48,22 +48,32 @@ pub async fn vote_poll(
         return Err(AppError::Unprocessable("You cannot vote on your own poll".into()));
     }
 
-    let already_voted = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM poll_votes WHERE poll_id = $1 AND account_id = $2)",
-        id, auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?
-    .unwrap_or(false);
-
-    if already_voted {
-        return Err(AppError::Unprocessable("Already voted".into()));
-    }
-
     let option_count = poll.options.len() as i32;
     if !poll.multiple && form.choices.len() > 1 {
         return Err(AppError::Unprocessable("Multiple choices not allowed".into()));
     }
+
+    // Single-choice: block re-voting entirely. Multi-choice: only block same choice (ON CONFLICT).
+    if !poll.multiple {
+        let already_voted = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM poll_votes WHERE poll_id = $1 AND account_id = $2)",
+            id, auth.account_id,
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(false);
+        if already_voted {
+            return Err(AppError::Unprocessable("Already voted".into()));
+        }
+    }
+
+    let was_first_vote = sqlx::query_scalar!(
+        "SELECT NOT EXISTS(SELECT 1 FROM poll_votes WHERE poll_id = $1 AND account_id = $2)",
+        id, auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(true);
 
     for choice in &form.choices {
         if *choice < 0 || *choice >= option_count {
@@ -77,12 +87,21 @@ pub async fn vote_poll(
         .await?;
     }
 
+    // Recount votes_count; increment voters_count for multi-choice if this is a new voter.
     sqlx::query!(
         "UPDATE polls SET votes_count = (SELECT COUNT(*) FROM poll_votes WHERE poll_id = $1) WHERE id = $1",
         id,
     )
     .execute(&state.db)
     .await?;
+    if poll.multiple && was_first_vote {
+        sqlx::query!(
+            "UPDATE polls SET voters_count = COALESCE(voters_count, 0) + 1 WHERE id = $1",
+            id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
 
     let poll = fetch_poll(&state, id).await?;
     poll_from_db(&state, &poll, Some(auth.account_id)).await.map(Json)
