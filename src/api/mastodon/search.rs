@@ -10,8 +10,8 @@ use crate::{
     state::AppState,
 };
 use super::{
-    accounts::{batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media},
-    convert::{account_from_db, status_from_db},
+    accounts::{batch_account_emojis, batch_accounts_to_api, batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags, build_status, fetch_reblog_data, fetch_status_media},
+    convert::status_from_db,
     types::{SearchResults, Status, Tag},
 };
 
@@ -75,7 +75,8 @@ pub async fn search(
             )
             .fetch_optional(&state.db)
             .await {
-                return Ok(Json(SearchResults { accounts: vec![account_from_db(&a)], statuses: vec![], hashtags: vec![], collections: vec![] }));
+                let api_accounts = batch_accounts_to_api(&state, &[a]).await;
+                return Ok(Json(SearchResults { accounts: api_accounts, statuses: vec![], hashtags: vec![], collections: vec![] }));
             }
         }
     }
@@ -95,7 +96,7 @@ pub async fn search(
         }
     };
 
-    let accounts = if search_type.is_none() || search_type == Some("accounts") {
+    let db_accounts: Vec<crate::db::models::Account> = if search_type.is_none() || search_type == Some("accounts") {
         let following_filter = q.following.unwrap_or(false);
 
         // If query is a handle (user@domain), do an exact acct lookup first
@@ -124,7 +125,7 @@ pub async fn search(
                 .await?
             };
             if !exact.is_empty() {
-                exact.iter().map(account_from_db).collect()
+                exact
             } else if following_filter {
                 let vid = viewer_id.ok_or(crate::error::AppError::Unauthorized)?;
                 sqlx::query_as!(
@@ -140,9 +141,6 @@ pub async fn search(
                 )
                 .fetch_all(&state.db)
                 .await?
-                .iter()
-                .map(account_from_db)
-                .collect()
             } else {
                 sqlx::query_as!(
                     crate::db::models::Account,
@@ -155,9 +153,6 @@ pub async fn search(
                 )
                 .fetch_all(&state.db)
                 .await?
-                .iter()
-                .map(account_from_db)
-                .collect()
             }
         } else if following_filter {
             let vid = viewer_id.ok_or(crate::error::AppError::Unauthorized)?;
@@ -174,9 +169,6 @@ pub async fn search(
             )
             .fetch_all(&state.db)
             .await?
-            .iter()
-            .map(account_from_db)
-            .collect()
         } else {
             sqlx::query_as!(
                 crate::db::models::Account,
@@ -189,13 +181,11 @@ pub async fn search(
             )
             .fetch_all(&state.db)
             .await?
-            .iter()
-            .map(account_from_db)
-            .collect()
         }
     } else {
         vec![]
     };
+    let accounts = batch_accounts_to_api(&state, &db_accounts).await;
 
     let statuses = if (search_type.is_none() || search_type == Some("statuses")) && auth.is_some() {
         let fts_query = q.q.trim().to_string();

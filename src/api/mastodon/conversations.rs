@@ -347,10 +347,15 @@ async fn build_conversation_response(
         None
     };
 
+    let participant_emojis_map = batch_account_emojis(state, &participants).await;
     Ok(Conversation {
         id: conversation_id.to_string(),
         unread,
-        accounts: participants.iter().map(account_from_db).collect(),
+        accounts: participants.iter().map(|a| {
+            let mut api = account_from_db(a);
+            api.emojis = participant_emojis_map.get(&a.id).cloned().unwrap_or_default();
+            api
+        }).collect(),
         last_status,
     })
 }
