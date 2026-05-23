@@ -127,6 +127,47 @@ fn linkify_entities(
     result
 }
 
+/// Convert plain announcement text to HTML, wrapping paragraphs and linkifying URLs.
+/// Mirrors Mastodon's `AnnouncementSerializer#content` which calls `linkify(object.text)`.
+pub fn text_to_html(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    text.split("\n\n")
+        .map(|para| {
+            let linked = linkify_urls(para);
+            format!("<p>{}</p>", linked.replace('\n', "<br />"))
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn linkify_urls(text: &str) -> String {
+    struct Span { start: usize, end: usize, html: String }
+    let mut spans: Vec<Span> = Vec::new();
+    for m in URL_RE.find_iter(text) {
+        let url = m.as_str();
+        spans.push(Span {
+            start: m.start(),
+            end: m.end(),
+            html: format!(
+                r#"<a href="{}" target="_blank" rel="nofollow noopener noreferrer">{}</a>"#,
+                html_escape_attr(url),
+                html_escape_text(url),
+            ),
+        });
+    }
+    let mut result = String::with_capacity(text.len() * 2);
+    let mut last_end = 0usize;
+    for span in &spans {
+        result.push_str(&html_escape_text(&text[last_end..span.start]));
+        result.push_str(&span.html);
+        last_end = span.end;
+    }
+    result.push_str(&html_escape_text(&text[last_end..]));
+    result
+}
+
 /// Build a mention lookup map from a `StatusMention` slice.
 /// Keys are the lowercase acct handle (`user` or `user@domain`).
 pub fn mention_map_from_api(mentions: &[StatusMention]) -> HashMap<String, (String, String)> {

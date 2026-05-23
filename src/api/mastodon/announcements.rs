@@ -9,6 +9,7 @@ use crate::{
     middleware::AuthenticatedUser,
     state::AppState,
 };
+use super::formatting::text_to_html;
 use super::types::{Announcement, AnnouncementReaction};
 
 // ── GET /api/v1/announcements ─────────────────────────────────────────────
@@ -95,7 +96,7 @@ pub async fn get_announcements(
     for r in &rows {
         result.push(Announcement {
             id: r.id.to_string(),
-            content: r.text.clone(),
+            content: text_to_html(&r.text),
             all_day: r.all_day,
             starts_at: r.starts_at.map(super::convert::mastodon_date),
             ends_at: r.ends_at.map(super::convert::mastodon_date),
