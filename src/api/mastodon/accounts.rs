@@ -351,6 +351,7 @@ pub async fn get_account_statuses(
                 .collect()
         };
         let pin_account_emojis_map = batch_account_emojis(&state, &pin_all_accounts_for_emoji).await;
+        let pin_account_roles_map = batch_account_roles(&state, &pin_all_accounts_for_emoji).await;
         let mut result = Vec::with_capacity(pinned_statuses.len());
         for s in &pinned_statuses {
             let media = pin_media_map.get(&s.id).cloned().unwrap_or_default();
@@ -364,6 +365,7 @@ pub async fn get_account_statuses(
                 .unwrap_or_default();
             let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
             api_status.account.emojis = pin_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+            api_status.account.roles = pin_account_roles_map.get(&account.id).cloned().unwrap_or_default();
             api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
             api_status.mentions = mentions;
             api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -372,7 +374,9 @@ pub async fn get_account_statuses(
             api_status.quote = pin_quote_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api_status.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
-                rb.account.emojis = pin_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+                let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+                rb.account.emojis = pin_account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+                rb.account.roles = pin_account_roles_map.get(&rb_id).cloned().unwrap_or_default();
                 rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -879,6 +883,7 @@ pub async fn get_account_pins(
             .collect()
     };
     let pin_account_emojis_map = batch_account_emojis(&state, &pin_all_accounts_for_emoji).await;
+    let pin_account_roles_map = batch_account_roles(&state, &pin_all_accounts_for_emoji).await;
 
     let mut result = Vec::with_capacity(pinned_statuses.len());
     for s in &pinned_statuses {
@@ -893,6 +898,7 @@ pub async fn get_account_pins(
             .unwrap_or_default();
         let mut api_status = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
         api_status.account.emojis = pin_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
+        api_status.account.roles = pin_account_roles_map.get(&account.id).cloned().unwrap_or_default();
         api_status.tags = pin_tags_map.get(&s.id).cloned().unwrap_or_default();
         api_status.mentions = mentions;
         api_status.emojis = pin_emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -901,7 +907,9 @@ pub async fn get_account_pins(
         api_status.quote = pin_quote_map.get(&s.id).cloned();
         if let Some(ref mut rb) = api_status.reblog {
             let rid: i64 = rb.id.parse().unwrap_or(0);
-            rb.account.emojis = pin_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
+            let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+            rb.account.emojis = pin_account_emojis_map.get(&rb_id).cloned().unwrap_or_default();
+            rb.account.roles = pin_account_roles_map.get(&rb_id).cloned().unwrap_or_default();
             rb.tags = pin_tags_map.get(&rid).cloned().unwrap_or_default();
             rb.mentions = rb_mentions;
             rb.emojis = pin_emojis_map.get(&rid).cloned().unwrap_or_default();
