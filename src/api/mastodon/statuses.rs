@@ -2146,16 +2146,63 @@ pub async fn get_status_history(
     };
 
     let api_account = account_from_db(&account);
-    let mut result: Vec<StatusEdit> = edits.iter().map(|e| StatusEdit {
-        content: e.content.clone(),
-        spoiler_text: e.spoiler_text.clone(),
-        sensitive: e.sensitive,
-        created_at: super::convert::mastodon_date(e.created_at),
-        account: api_account.clone(),
-        media_attachments: vec![],
-        emojis: vec![],
-        poll: None,
+
+    // Collect all media attachment IDs needed across all edits, then batch-fetch them.
+    let all_media_ids: Vec<i64> = edits.iter()
+        .filter_map(|e| e.ordered_media_attachment_ids.as_ref())
+        .flat_map(|ids| ids.iter().copied())
+        .chain(status.ordered_media_attachment_ids.iter().flat_map(|ids| ids.iter().copied()))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let fetched_media: Vec<crate::db::models::MediaAttachment> = if all_media_ids.is_empty() {
+        vec![]
+    } else {
+        sqlx::query_as!(
+            crate::db::models::MediaAttachment,
+            "SELECT * FROM media_attachments WHERE id = ANY($1)",
+            &all_media_ids,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
+    let media_map: std::collections::HashMap<i64, &crate::db::models::MediaAttachment> =
+        fetched_media.iter().map(|m| (m.id, m)).collect();
+
+    let ordered_media = |ids: Option<&Vec<i64>>| -> Vec<super::types::MediaAttachment> {
+        ids.map(|list| {
+            list.iter()
+                .filter_map(|id| media_map.get(id))
+                .map(|m| super::convert::media_from_db(m))
+                .filter(|m| m.url.is_some() || m.remote_url.as_deref().map_or(false, |u| !u.is_empty()))
+                .collect()
+        })
+        .unwrap_or_default()
+    };
+
+    let mut result: Vec<StatusEdit> = edits.iter().map(|e| {
+        let poll = e.poll_options.as_ref().filter(|o| !o.is_empty()).map(|opts| {
+            serde_json::json!({ "options": opts.iter().map(|t| serde_json::json!({"title": t})).collect::<Vec<_>>() })
+        });
+        StatusEdit {
+            content: e.content.clone(),
+            spoiler_text: e.spoiler_text.clone(),
+            sensitive: e.sensitive,
+            created_at: super::convert::mastodon_date(e.created_at),
+            account: api_account.clone(),
+            media_attachments: ordered_media(e.ordered_media_attachment_ids.as_ref()),
+            emojis: vec![],
+            poll,
+            quote: None,
+        }
     }).collect();
+
+    // Current version poll
+    let current_poll = status.poll_id.and_then(|_| {
+        // We don't have poll options in the status itself; omit for now.
+        None::<serde_json::Value>
+    });
 
     // Append current version
     result.push(StatusEdit {
@@ -2164,9 +2211,10 @@ pub async fn get_status_history(
         sensitive: status.sensitive,
         created_at: super::convert::mastodon_date(status.edited_at.unwrap_or(status.created_at)),
         account: api_account,
-        media_attachments: vec![],
+        media_attachments: ordered_media(status.ordered_media_attachment_ids.as_ref()),
         emojis: vec![],
-        poll: None,
+        poll: current_poll,
+        quote: None,
     });
 
     Ok(Json(result))

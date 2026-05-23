@@ -63,7 +63,7 @@ pub async fn search(
                 let media = fetch_status_media(&state, s.id).await?;
                 let reblog = fetch_reblog_data(&state, &s).await?;
                 let status = build_status(&state, &s, &account, media, reblog, None).await?;
-                return Ok(Json(SearchResults { accounts: vec![], statuses: vec![status], hashtags: vec![] }));
+                return Ok(Json(SearchResults { accounts: vec![], statuses: vec![status], hashtags: vec![], collections: vec![] }));
             }
         }
         // Try to find an account with this URL or URI
@@ -75,7 +75,7 @@ pub async fn search(
             )
             .fetch_optional(&state.db)
             .await {
-                return Ok(Json(SearchResults { accounts: vec![account_from_db(&a)], statuses: vec![], hashtags: vec![] }));
+                return Ok(Json(SearchResults { accounts: vec![account_from_db(&a)], statuses: vec![], hashtags: vec![], collections: vec![] }));
             }
         }
     }
@@ -315,5 +315,5 @@ pub async fn search(
         vec![]
     };
 
-    Ok(Json(SearchResults { accounts, statuses, hashtags }))
+    Ok(Json(SearchResults { accounts, statuses, hashtags, collections: vec![] }))
 }

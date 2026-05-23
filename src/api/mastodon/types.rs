@@ -35,7 +35,7 @@ pub struct Account {
     pub last_status_at: Option<String>,
     pub emojis: Vec<CustomEmoji>,
     pub fields: Vec<Field>,
-    pub roles: Vec<Role>,
+    pub roles: Vec<AccountRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moved: Option<Box<Account>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,6 +67,15 @@ pub struct AccountSource {
     pub quote_policy: String,
 }
 
+/// Simplified role used in the Account.roles array (REST::AccountSerializer::RoleSerializer).
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountRole {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+}
+
+/// Full role used in CredentialAccount.role (REST::RoleSerializer).
 #[derive(Debug, Clone, Serialize)]
 pub struct Role {
     pub id: String,
@@ -204,6 +213,7 @@ pub struct InstanceV2 {
     pub contact: InstanceContact,
     pub rules: Vec<Rule>,
     pub api_versions: serde_json::Value,
+    pub wrapstodon: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -468,7 +478,6 @@ pub struct Relationship {
     pub blocked_by: bool,
     pub muting: bool,
     pub muting_notifications: bool,
-    #[serde(rename = "mute_expires_at")]
     pub muting_expires_at: Option<String>,
     pub requested: bool,
     pub requested_by: bool,
@@ -484,6 +493,7 @@ pub struct SearchResults {
     pub accounts: Vec<Account>,
     pub statuses: Vec<Status>,
     pub hashtags: Vec<Tag>,
+    pub collections: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -539,10 +549,14 @@ pub struct Preferences {
     pub posting_default_sensitive: bool,
     #[serde(rename = "posting:default:language")]
     pub posting_default_language: Option<String>,
+    #[serde(rename = "posting:default:quote_policy")]
+    pub posting_default_quote_policy: String,
     #[serde(rename = "reading:expand:media")]
     pub reading_expand_media: String,
     #[serde(rename = "reading:expand:spoilers")]
     pub reading_expand_spoilers: bool,
+    #[serde(rename = "reading:autoplay:gifs")]
+    pub reading_autoplay_gifs: bool,
 }
 
 // ── List ───────────────────────────────────────────────────────────────────
@@ -567,6 +581,8 @@ pub struct StatusEdit {
     pub media_attachments: Vec<MediaAttachment>,
     pub emojis: Vec<CustomEmoji>,
     pub poll: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quote: Option<serde_json::Value>,
 }
 
 // ── Instance V1 ────────────────────────────────────────────────────────────

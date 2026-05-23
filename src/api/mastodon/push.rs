@@ -26,22 +26,26 @@ pub struct PushSubscription {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct PushAlerts {
     pub follow: bool,
+    pub follow_request: bool,
     pub favourite: bool,
     pub reblog: bool,
     pub mention: bool,
     pub poll: bool,
     pub status: bool,
+    pub update: bool,
 }
 
 fn alerts_from_data(data: &serde_json::Value) -> PushAlerts {
     let a = &data["alerts"];
     PushAlerts {
-        follow:    a["follow"]   .as_bool().unwrap_or(true),
-        favourite: a["favourite"].as_bool().unwrap_or(true),
-        reblog:    a["reblog"]   .as_bool().unwrap_or(true),
-        mention:   a["mention"]  .as_bool().unwrap_or(true),
-        poll:      a["poll"]     .as_bool().unwrap_or(false),
-        status:    a["status"]   .as_bool().unwrap_or(false),
+        follow:          a["follow"]         .as_bool().unwrap_or(true),
+        follow_request:  a["follow_request"] .as_bool().unwrap_or(false),
+        favourite:       a["favourite"]      .as_bool().unwrap_or(true),
+        reblog:          a["reblog"]         .as_bool().unwrap_or(true),
+        mention:         a["mention"]        .as_bool().unwrap_or(true),
+        poll:            a["poll"]           .as_bool().unwrap_or(false),
+        status:          a["status"]         .as_bool().unwrap_or(false),
+        update:          a["update"]         .as_bool().unwrap_or(false),
     }
 }
 

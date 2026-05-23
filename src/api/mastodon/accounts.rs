@@ -73,7 +73,7 @@ pub async fn verify_credentials(
 
 /// Fetch highlighted roles for a local account.  Returns an empty vec for
 /// remote accounts (they have no row in `users`).
-async fn fetch_account_roles(state: &AppState, account_id: i64) -> Vec<super::types::Role> {
+async fn fetch_account_roles(state: &AppState, account_id: i64) -> Vec<super::types::AccountRole> {
     let role = sqlx::query_scalar!(
         "SELECT role FROM users WHERE account_id = $1",
         account_id,
@@ -84,13 +84,11 @@ async fn fetch_account_roles(state: &AppState, account_id: i64) -> Vec<super::ty
     .flatten();
 
     match role.as_deref() {
-        Some("admin") => vec![super::types::Role {
+        Some("admin") => vec![super::types::AccountRole {
             id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
-            permissions: "2031612".into(), highlighted: true,
         }],
-        Some("moderator") => vec![super::types::Role {
+        Some("moderator") => vec![super::types::AccountRole {
             id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
-            permissions: "1049884".into(), highlighted: true,
         }],
         _ => vec![],
     }
@@ -1669,8 +1667,10 @@ pub async fn get_preferences(
         posting_default_visibility: privacy,
         posting_default_sensitive: sensitive,
         posting_default_language: language,
+        posting_default_quote_policy: "allow".into(),
         reading_expand_media: "default".into(),
         reading_expand_spoilers: false,
+        reading_autoplay_gifs: false,
     }))
 }
 

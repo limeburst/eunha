@@ -1462,7 +1462,7 @@ async fn test_mute_with_duration_sets_expires_at() {
     assert_eq!(resp.status(), StatusCode::OK);
     let rel: Value = resp.json().await.unwrap();
     assert_eq!(rel["muting"].as_bool(), Some(true));
-    assert!(rel["mute_expires_at"].as_str().is_some(), "mute_expires_at should be set");
+    assert!(rel["muting_expires_at"].as_str().is_some(), "muting_expires_at should be set");
 }
 
 /// Re-muting an account updates hide_notifications in place.
