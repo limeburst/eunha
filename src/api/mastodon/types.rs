@@ -176,7 +176,10 @@ pub struct QuoteApproval {
 #[derive(Debug, Clone, Serialize)]
 pub struct QuoteInfo {
     pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quoted_status: Option<Box<Status>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quoted_status_id: Option<String>,
 }
 
 // ── Media ──────────────────────────────────────────────────────────────────
@@ -738,10 +741,24 @@ pub struct Report {
 // ── Notification v2 ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
+pub struct PartialAccount {
+    pub id: String,
+    pub acct: String,
+    pub locked: bool,
+    pub bot: bool,
+    pub url: String,
+    pub avatar: String,
+    pub avatar_static: String,
+    pub avatar_description: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct NotificationGroupsResponse {
     pub notification_groups: Vec<NotificationGroup>,
     pub accounts: Vec<Account>,
     pub statuses: Vec<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_accounts: Option<Vec<PartialAccount>>,
 }
 
 #[derive(Debug, Serialize)]

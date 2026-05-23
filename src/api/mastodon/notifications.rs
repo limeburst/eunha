@@ -21,7 +21,8 @@ use super::{
     convert::{account_from_db, status_from_db},
     types::{
         Notification, NotificationGroup, NotificationGroupsResponse, NotificationPagination,
-        NotificationPolicy, NotificationPolicySummary, NotificationPolicyV1, NotificationRequest, PaginationParams,
+        NotificationPolicy, NotificationPolicySummary, NotificationPolicyV1, NotificationRequest,
+        PaginationParams, PartialAccount,
     },
 };
 
@@ -374,6 +375,17 @@ pub async fn get_notifications_v2(
     let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
+    let expand_accounts = qs.as_deref()
+        .and_then(|q| {
+            q.split('&').find_map(|part| {
+                let mut kv = part.splitn(2, '=');
+                let k = kv.next()?;
+                let v = kv.next()?;
+                if k == "expand_accounts" { Some(v.to_string()) } else { None }
+            })
+        })
+        .unwrap_or_default();
+
     let (types, exclude_types, account_id) = parse_notif_filters(qs.as_deref());
 
     let notifications: Vec<DbNotification> = sqlx::query_as(
@@ -563,10 +575,27 @@ pub async fn get_notifications_v2(
         });
     }
 
+    let accounts_vec: Vec<_> = accounts_map.into_values().collect();
+    let partial_accounts = if expand_accounts == "partial_avatars" {
+        Some(accounts_vec.iter().map(|a| PartialAccount {
+            id: a.id.clone(),
+            acct: a.acct.clone(),
+            locked: a.locked,
+            bot: a.bot,
+            url: a.url.clone(),
+            avatar: a.avatar.clone(),
+            avatar_static: a.avatar_static.clone(),
+            avatar_description: a.avatar_description.clone(),
+        }).collect())
+    } else {
+        None
+    };
+
     Ok(Json(NotificationGroupsResponse {
         notification_groups: groups,
-        accounts: accounts_map.into_values().collect(),
+        accounts: accounts_vec,
         statuses: statuses_resp_map.into_values().collect(),
+        partial_accounts,
     }))
 }
 

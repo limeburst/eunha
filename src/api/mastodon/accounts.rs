@@ -2020,6 +2020,25 @@ pub async fn batch_quote_data(
         HashSet::new()
     };
 
+    // Fetch shallow quote states for nested quotes (quoted_status's own quote_of_id).
+    // These correspond to REST::ShallowQuoteSerializer: {state, quoted_status_id}.
+    let nested_quoting_ids: Vec<i64> = quoted_statuses.iter()
+        .filter(|qs| qs.quote_of_id.is_some())
+        .map(|qs| qs.id)
+        .collect();
+    let nested_quote_states: HashMap<i64, String> = if !nested_quoting_ids.is_empty() {
+        let rows = sqlx::query!(
+            "SELECT status_id, state FROM quotes WHERE status_id = ANY($1::bigint[])",
+            &nested_quoting_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        rows.into_iter().map(|r| (r.status_id, crate::db::models::quote_state::to_str(r.state).to_owned())).collect()
+    } else {
+        HashMap::new()
+    };
+
     // Build a map from quoted status id → API Status
     let mut qs_map: HashMap<i64, super::types::Status> = HashMap::new();
     for qs in &quoted_statuses {
@@ -2033,6 +2052,15 @@ pub async fn batch_quote_data(
         api.emojis = emojis_map.get(&qs.id).cloned().unwrap_or_default();
         api.poll = polls_map.get(&qs.id).cloned();
         api.card = cards_map.get(&qs.id).cloned();
+        // Attach shallow quote info for the nested quote (ShallowQuoteSerializer behavior)
+        if let Some(nested_qid) = qs.quote_of_id {
+            let state_str = nested_quote_states.get(&qs.id).cloned().unwrap_or_else(|| "accepted".to_string());
+            api.quote = Some(super::types::QuoteInfo {
+                state: state_str,
+                quoted_status: None,
+                quoted_status_id: Some(nested_qid.to_string()),
+            });
+        }
         qs_map.insert(qs.id, api);
     }
 
@@ -2062,6 +2090,7 @@ pub async fn batch_quote_data(
         result.insert(s.id, super::types::QuoteInfo {
             state: effective_state,
             quoted_status: quoted_status.map(Box::new),
+            quoted_status_id: None,
         });
     }
     Ok(result)
