@@ -51,6 +51,10 @@ pub struct AdminAccount {
     pub approved: bool,
     pub locale: Option<String>,
     pub invite_request: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by_application_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invited_by_account_id: Option<String>,
     pub account: ApiAccount,
 }
 
@@ -137,6 +141,8 @@ async fn build_admin_account(state: &AppState, account: &models::Account) -> App
         approved,
         locale: None,
         invite_request: reason,
+        created_by_application_id: None,
+        invited_by_account_id: None,
         account: account_from_db(account),
     })
 }
@@ -501,9 +507,10 @@ pub struct AdminReport {
     pub updated_at: String,
     pub account: ApiAccount,
     pub target_account: ApiAccount,
-    pub status_ids: Vec<String>,
-    pub rules_violated: Vec<serde_json::Value>,
+    pub assigned_account: Option<ApiAccount>,
+    pub action_taken_by_account: Option<ApiAccount>,
     pub statuses: Vec<serde_json::Value>,
+    pub rules: Vec<serde_json::Value>,
 }
 
 async fn build_admin_report(
@@ -536,9 +543,10 @@ async fn build_admin_report(
         updated_at: super::convert::mastodon_date(report.updated_at),
         account: account_from_db(&account),
         target_account: account_from_db(&target),
-        status_ids: report.status_ids.iter().map(|id| id.to_string()).collect(),
-        rules_violated: vec![],
+        assigned_account: None,
+        action_taken_by_account: None,
         statuses: vec![],
+        rules: vec![],
     })
 }
 
@@ -546,7 +554,6 @@ struct AdminReportRow {
     id: i64,
     account_id: i64,
     target_account_id: i64,
-    status_ids: Vec<i64>,
     comment: String,
     forwarded: Option<bool>,
     category: String,
@@ -589,7 +596,7 @@ pub async fn list_admin_reports(
     let since_id = params.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
-        r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
+        r#"SELECT r.id, r.account_id, r.target_account_id,
                   r.comment, r.forwarded, r.action_taken_at,
                   r.created_at, r.updated_at,
                   CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
@@ -613,7 +620,6 @@ pub async fn list_admin_reports(
             id: r.id,
             account_id: r.account_id,
             target_account_id: r.target_account_id,
-            status_ids: r.status_ids.clone(),
             comment: r.comment.clone(),
             forwarded: r.forwarded,
             category: r.category.clone(),
@@ -646,7 +652,7 @@ pub async fn get_admin_report(
 ) -> AppResult<Json<AdminReport>> {
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
-        r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
+        r#"SELECT r.id, r.account_id, r.target_account_id,
                   r.comment, r.forwarded, r.action_taken_at,
                   r.created_at, r.updated_at,
                   CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
@@ -661,7 +667,6 @@ pub async fn get_admin_report(
         id: r.id,
         account_id: r.account_id,
         target_account_id: r.target_account_id,
-        status_ids: r.status_ids.clone(),
         comment: r.comment.clone(),
         forwarded: r.forwarded,
         category: r.category.clone(),
@@ -687,7 +692,7 @@ pub async fn resolve_report(
     .execute(&state.db)
     .await?;
     let r = sqlx::query!(
-        r#"SELECT r.id, r.account_id, r.target_account_id, r.status_ids,
+        r#"SELECT r.id, r.account_id, r.target_account_id,
                   r.comment, r.forwarded, r.action_taken_at,
                   r.created_at, r.updated_at,
                   CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!"
@@ -702,7 +707,6 @@ pub async fn resolve_report(
         id: r.id,
         account_id: r.account_id,
         target_account_id: r.target_account_id,
-        status_ids: r.status_ids.clone(),
         comment: r.comment.clone(),
         forwarded: r.forwarded,
         category: r.category.clone(),
