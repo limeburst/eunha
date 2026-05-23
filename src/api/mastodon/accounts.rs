@@ -158,7 +158,9 @@ pub async fn lookup_account(
     };
 
     if let Some(account) = found {
-        return Ok(Json(account_from_db(&account)));
+        let mut api = account_from_db(&account);
+        api.emojis = fetch_account_emojis(&state, &account).await;
+        return Ok(Json(api));
     }
 
     // Not found locally — attempt WebFinger resolution if requested and domain is known
@@ -198,7 +200,9 @@ pub async fn lookup_account(
                         )
                         .fetch_one(&state.db)
                         .await?;
-                        return Ok(Json(account_from_db(&account)));
+                        let mut api = account_from_db(&account);
+                        api.emojis = fetch_account_emojis(&state, &account).await;
+                        return Ok(Json(api));
                     }
                 }
             }
@@ -2614,12 +2618,17 @@ pub async fn get_suggestions_v2(
     .fetch_all(&state.db)
     .await?;
 
+    let emojis_map = batch_account_emojis(&state, &accounts).await;
     let suggestions = accounts
         .iter()
-        .map(|a| SuggestionV2 {
-            source: "friends_of_friends".to_string(),
-            sources: vec!["friends_of_friends".to_string()],
-            account: account_from_db(a),
+        .map(|a| {
+            let mut api = account_from_db(a);
+            api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
+            SuggestionV2 {
+                source: "friends_of_friends".to_string(),
+                sources: vec!["friends_of_friends".to_string()],
+                account: api,
+            }
         })
         .collect();
 
@@ -2939,7 +2948,9 @@ pub async fn update_profile_settings(
     )
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(account_from_db(&account)))
+    let mut api = account_from_db(&account);
+    api.emojis = fetch_account_emojis(&state, &account).await;
+    Ok(Json(api))
 }
 
 // ── DELETE /api/v1/profile/avatar ────────────────────────────────────────
@@ -2962,7 +2973,9 @@ pub async fn delete_profile_avatar(
     )
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(account_from_db(&account)))
+    let mut api = account_from_db(&account);
+    api.emojis = fetch_account_emojis(&state, &account).await;
+    Ok(Json(api))
 }
 
 // ── DELETE /api/v1/profile/header ────────────────────────────────────────
@@ -2985,7 +2998,9 @@ pub async fn delete_profile_header(
     )
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(account_from_db(&account)))
+    let mut api = account_from_db(&account);
+    api.emojis = fetch_account_emojis(&state, &account).await;
+    Ok(Json(api))
 }
 
 // ── GET /api/v1/accounts/familiar_followers ──────────────────────────────
