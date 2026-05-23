@@ -56,11 +56,10 @@ pub async fn get_instance_domain_blocks(
 }
 
 fn domain_digest(domain: &str) -> String {
-    let mut h: u128 = 0x9e3779b97f4a7c15;
-    for b in domain.bytes() {
-        h = h.wrapping_mul(0x6c62272e07bb0142).wrapping_add(b as u128);
-    }
-    hex::encode(h.to_le_bytes())
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(domain.as_bytes());
+    hex::encode(h.finalize())
 }
 
 fn obfuscate_domain(domain: &str) -> String {

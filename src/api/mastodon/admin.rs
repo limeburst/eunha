@@ -1357,7 +1357,7 @@ pub async fn list_domain_blocks(
     .await?;
     Ok(Json(rows.into_iter().map(|r| AdminDomainBlock {
         id: r.id.to_string(),
-        digest: hex::encode(md5_bytes(&r.domain)),
+        digest: sha256_hex(&r.domain),
         domain: r.domain,
         created_at: super::convert::mastodon_date(r.created_at),
         severity: r.severity,
@@ -1407,7 +1407,7 @@ pub async fn create_domain_block(
     .await?;
     Ok(Json(AdminDomainBlock {
         id: row.id.to_string(),
-        digest: hex::encode(md5_bytes(&row.domain)),
+        digest: sha256_hex(&row.domain),
         domain: row.domain,
         created_at: super::convert::mastodon_date(row.created_at),
         severity: row.severity,
@@ -1438,7 +1438,7 @@ pub async fn get_admin_domain_block(
     .ok_or(AppError::NotFound)?;
     Ok(Json(AdminDomainBlock {
         id: r.id.to_string(),
-        digest: hex::encode(md5_bytes(&r.domain)),
+        digest: sha256_hex(&r.domain),
         domain: r.domain,
         created_at: super::convert::mastodon_date(r.created_at),
         severity: r.severity,
@@ -1485,7 +1485,7 @@ pub async fn update_admin_domain_block(
     .ok_or(AppError::NotFound)?;
     Ok(Json(AdminDomainBlock {
         id: r.id.to_string(),
-        digest: hex::encode(md5_bytes(&r.domain)),
+        digest: sha256_hex(&r.domain),
         domain: r.domain,
         created_at: super::convert::mastodon_date(r.created_at),
         severity: r.severity,
@@ -2123,7 +2123,7 @@ pub async fn create_canonical_email_block(
         h
     } else if let Some(email) = form.email {
         let normalized = email.trim().to_lowercase();
-        hex::encode(md5_bytes(&normalized))
+        sha256_hex(&normalized)
     } else {
         return Err(AppError::Unprocessable("email or canonical_email_hash required".into()));
     };
@@ -2182,7 +2182,7 @@ pub async fn test_canonical_email_block(
         h
     } else if let Some(email) = form.email {
         let normalized = email.trim().to_lowercase();
-        hex::encode(md5_bytes(&normalized))
+        sha256_hex(&normalized)
     } else {
         return Err(AppError::Unprocessable("email or canonical_email_hash required".into()));
     };
@@ -2336,11 +2336,9 @@ pub async fn update_admin_tag(
     }))
 }
 
-fn md5_bytes(s: &str) -> [u8; 16] {
-    // Simple deterministic digest (not security-sensitive — Mastodon uses it for obfuscation display)
-    let mut h: u128 = 0x9e3779b97f4a7c15;
-    for b in s.bytes() {
-        h = h.wrapping_mul(0x6c62272e07bb0142).wrapping_add(b as u128);
-    }
-    h.to_le_bytes()
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
 }
