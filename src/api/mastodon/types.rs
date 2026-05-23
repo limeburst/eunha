@@ -763,6 +763,10 @@ pub struct NotificationGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moderation_warning: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub annual_report: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback: Option<bool>,
 }
 

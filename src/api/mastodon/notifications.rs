@@ -557,6 +557,8 @@ pub async fn get_notifications_v2(
             report,
             event: None,
             moderation_warning: None,
+            annual_report: None,
+            collection: None,
             fallback: None,
         });
     }
@@ -614,6 +616,8 @@ pub async fn get_notification_group(
         report,
         event: None,
         moderation_warning: None,
+        annual_report: None,
+        collection: None,
         fallback: None,
     }))
 }
