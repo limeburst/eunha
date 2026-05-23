@@ -13,8 +13,8 @@ use crate::{
 };
 use super::{
     accounts::{
-        batch_reblog_data, batch_status_cards, batch_status_emojis, batch_status_media,
-        batch_status_mentions, batch_status_polls, batch_statuses_tags,
+        batch_account_emojis, batch_reblog_data, batch_status_cards, batch_status_emojis,
+        batch_status_media, batch_status_mentions, batch_status_polls, batch_statuses_tags,
         build_status, fetch_account, fetch_status_media,
     },
     convert::{account_from_db, status_from_db},
@@ -102,6 +102,10 @@ pub async fn get_conversations(
     };
     let participant_acct_map: std::collections::HashMap<i64, Account> =
         participant_accounts.into_iter().map(|a| (a.id, a)).collect();
+    let participant_emojis_map = {
+        let accs: Vec<Account> = participant_acct_map.values().cloned().collect();
+        batch_account_emojis(&state, &accs).await
+    };
 
     // Fetch last statuses by ID (already known from last_status_id)
     let last_status_ids: Vec<i64> = rows.iter().filter_map(|r| r.last_status_id).collect();
@@ -151,6 +155,15 @@ pub async fn get_conversations(
         .await?;
         let status_account_map: std::collections::HashMap<i64, Account> =
             status_accounts.into_iter().map(|a| (a.id, a)).collect();
+        let all_stat_accounts_for_emoji: Vec<Account> = {
+            let mut seen = std::collections::HashSet::new();
+            status_account_map.values()
+                .chain(reblog_map.values().map(|(_, ra, _)| ra))
+                .filter(|a| seen.insert(a.id))
+                .cloned()
+                .collect()
+        };
+        let status_account_emojis_map = batch_account_emojis(&state, &all_stat_accounts_for_emoji).await;
 
         for s in &last_statuses {
             let Some(conv_id) = s.conversation_id else { continue };
@@ -164,6 +177,7 @@ pub async fn get_conversations(
                 .cloned()
                 .unwrap_or_default();
             let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            api.account.emojis = status_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
             api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
             api.mentions = mentions;
             api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -171,6 +185,7 @@ pub async fn get_conversations(
             api.card = cards_map.get(&s.id).cloned();
             if let Some(ref mut rb) = api.reblog {
                 let rid: i64 = rb.id.parse().unwrap_or(0);
+                rb.account.emojis = status_account_emojis_map.get(&rb.account.id.parse().unwrap_or(0)).cloned().unwrap_or_default();
                 rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
                 rb.mentions = rb_mentions;
                 rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
@@ -188,7 +203,11 @@ pub async fn get_conversations(
             unread: row.unread,
             accounts: row.participant_account_ids.iter()
                 .filter_map(|id| participant_acct_map.get(id))
-                .map(account_from_db)
+                .map(|a| {
+                    let mut api_acct = account_from_db(a);
+                    api_acct.emojis = participant_emojis_map.get(&a.id).cloned().unwrap_or_default();
+                    api_acct
+                })
                 .collect(),
             last_status: enriched_map.remove(&row.conversation_id),
         });
