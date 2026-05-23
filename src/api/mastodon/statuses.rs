@@ -2156,7 +2156,9 @@ pub async fn get_status_history(
         ammonia::clean(&status.text)
     };
 
-    let api_account = account_from_db(&account);
+    let account_emojis = batch_account_emojis(&state, std::slice::from_ref(&account)).await;
+    let mut api_account = account_from_db(&account);
+    api_account.emojis = account_emojis.get(&account.id).cloned().unwrap_or_default();
 
     // Collect all media attachment IDs needed across all edits, then batch-fetch them.
     let all_media_ids: Vec<i64> = edits.iter()

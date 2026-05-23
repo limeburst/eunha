@@ -11,6 +11,7 @@ use crate::{
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
+use super::accounts::fetch_account_emojis;
 use super::convert::account_from_db;
 use super::types::Account as ApiAccount;
 
@@ -164,7 +165,11 @@ async fn build_admin_account(state: &AppState, account: &models::Account) -> App
         invite_request: reason,
         created_by_application_id: None,
         invited_by_account_id: None,
-        account: account_from_db(account),
+        account: {
+            let mut api = account_from_db(account);
+            api.emojis = fetch_account_emojis(state, account).await;
+            api
+        },
     })
 }
 
@@ -553,6 +558,10 @@ async fn build_admin_report(
     .fetch_one(&state.db)
     .await?;
 
+    let mut account_api = account_from_db(&account);
+    account_api.emojis = fetch_account_emojis(state, &account).await;
+    let mut target_api = account_from_db(&target);
+    target_api.emojis = fetch_account_emojis(state, &target).await;
     Ok(AdminReport {
         id: report.id.to_string(),
         action_taken: report.action_taken_at.is_some(),
@@ -562,8 +571,8 @@ async fn build_admin_report(
         forwarded: report.forwarded.unwrap_or(false),
         created_at: super::convert::mastodon_date(report.created_at),
         updated_at: super::convert::mastodon_date(report.updated_at),
-        account: account_from_db(&account),
-        target_account: account_from_db(&target),
+        account: account_api,
+        target_account: target_api,
         assigned_account: None,
         action_taken_by_account: None,
         statuses: vec![],

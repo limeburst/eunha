@@ -11,6 +11,7 @@ use crate::{
     push::notify_admins,
 };
 use super::{
+    accounts::fetch_account_emojis,
     convert::account_from_db,
     types::Report,
 };
@@ -105,6 +106,8 @@ pub async fn file_report(
         });
     }
 
+    let mut ta_api = account_from_db(&target_account);
+    ta_api.emojis = fetch_account_emojis(&state, &target_account).await;
     Ok(Json(Report {
         id: report.id.to_string(),
         action_taken: false,
@@ -116,6 +119,6 @@ pub async fn file_report(
         status_ids: status_id_strings,
         rule_ids: vec![],
         collection_ids: vec![],
-        target_account: account_from_db(&target_account),
+        target_account: ta_api,
     }))
 }
