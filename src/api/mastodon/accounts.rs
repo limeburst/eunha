@@ -3546,6 +3546,7 @@ pub async fn build_status_with_app(
         s, account, media, reblog, viewer_ctx, application, &mentions, &reblog_mentions,
     );
     let id: i64 = api.id.parse().unwrap_or(0);
+    api.account.emojis = fetch_account_emojis(state, account).await;
     api.tags = fetch_statuses_tags(state, id).await?;
     api.mentions = mentions;
     api.emojis = status_emojis;
@@ -3560,6 +3561,12 @@ pub async fn build_status_with_app(
     }
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
+        let rb_account_id: i64 = rb.account.id.parse().unwrap_or(0);
+        if rb_account_id != 0 {
+            if let Ok(rb_db_acct) = fetch_account(state, rb_account_id).await {
+                rb.account.emojis = fetch_account_emojis(state, &rb_db_acct).await;
+            }
+        }
         rb.tags = fetch_statuses_tags(state, rid).await?;
         rb.mentions = reblog_mentions;
         rb.emojis = reblog_emojis;
