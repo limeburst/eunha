@@ -1720,6 +1720,7 @@ pub struct AdminEmailDomainBlock {
     pub domain: String,
     pub created_at: String,
     pub history: Vec<AdminEmailDomainBlockHistory>,
+    pub allow_with_approval: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1740,7 +1741,7 @@ pub async fn list_email_domain_blocks(
 ) -> AppResult<Json<Vec<AdminEmailDomainBlock>>> {
     require_admin(&state, auth.account_id).await?;
     let rows = sqlx::query!(
-        "SELECT id, domain, created_at FROM email_domain_blocks ORDER BY domain"
+        "SELECT id, domain, created_at, allow_with_approval FROM email_domain_blocks ORDER BY domain"
     )
     .fetch_all(&state.db)
     .await?;
@@ -1749,6 +1750,7 @@ pub async fn list_email_domain_blocks(
         domain: r.domain,
         created_at: super::convert::mastodon_date(r.created_at),
         history: vec![],
+        allow_with_approval: r.allow_with_approval,
     }).collect()))
 }
 
@@ -1759,7 +1761,7 @@ pub async fn get_email_domain_block(
 ) -> AppResult<Json<AdminEmailDomainBlock>> {
     require_admin(&state, auth.account_id).await?;
     let r = sqlx::query!(
-        "SELECT id, domain, created_at FROM email_domain_blocks WHERE id = $1",
+        "SELECT id, domain, created_at, allow_with_approval FROM email_domain_blocks WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -1770,6 +1772,7 @@ pub async fn get_email_domain_block(
         domain: r.domain,
         created_at: super::convert::mastodon_date(r.created_at),
         history: vec![],
+        allow_with_approval: r.allow_with_approval,
     }))
 }
 
@@ -1782,7 +1785,7 @@ pub async fn create_email_domain_block(
     let r = sqlx::query!(
         r#"INSERT INTO email_domain_blocks (domain) VALUES ($1)
            ON CONFLICT (domain) DO UPDATE SET updated_at = now()
-           RETURNING id, domain, created_at"#,
+           RETURNING id, domain, created_at, allow_with_approval"#,
         form.domain,
     )
     .fetch_one(&state.db)
@@ -1792,6 +1795,7 @@ pub async fn create_email_domain_block(
         domain: r.domain,
         created_at: super::convert::mastodon_date(r.created_at),
         history: vec![],
+        allow_with_approval: r.allow_with_approval,
     }))
 }
 
