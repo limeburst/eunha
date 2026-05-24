@@ -1984,7 +1984,7 @@ pub async fn admin_trending_tags(
     auth: axum::extract::Extension<AuthenticatedUser>,
 ) -> AppResult<axum::Json<Vec<super::types::Tag>>> {
     require_admin(&state, auth.account_id).await?;
-    super::trends::trending_tags(state, instance, query).await
+    super::trends::trending_tags(state, instance, query, None).await
 }
 
 pub async fn admin_trending_statuses(

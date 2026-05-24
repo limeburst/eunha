@@ -2291,14 +2291,10 @@ pub async fn get_status_source(
 pub async fn translate_status(
     Path(_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
-) -> AppResult<axum::response::Response> {
-    use axum::response::IntoResponse;
+) -> AppResult<()> {
     auth.require_scope("read:statuses")?;
-    // Translation is not supported; return 503 as Mastodon does when disabled.
-    Ok((
-        axum::http::StatusCode::SERVICE_UNAVAILABLE,
-        axum::Json(serde_json::json!({"error": "Translation is not supported"})),
-    ).into_response())
+    // Translation is not configured; Mastodon returns 404 via NotConfiguredError rescue.
+    Err(crate::error::AppError::NotFound)
 }
 
 // ── GET /api/v1/statuses/:id/card ─────────────────────────────────────────

@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::{
     error::AppResult,
-    middleware::ResolvedInstance,
+    middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
 use super::{
@@ -27,10 +27,12 @@ pub async fn trending_tags(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<TrendParams>,
+    auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<Tag>>> {
     let limit = params.limit.unwrap_or(10).min(20).max(1);
     let offset = params.offset.unwrap_or(0).max(0);
     let domain = &instance.domain;
+    let viewer_id = auth.map(|Extension(a)| a.account_id);
 
     // Tags with most status uses in the last 7 days
     let rows = sqlx::query!(
@@ -52,17 +54,45 @@ pub async fn trending_tags(
     let tag_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let histories = super::tags::fetch_tags_histories(&state.db, &tag_ids).await;
 
+    let (following_set, featuring_set) = if let Some(vid) = viewer_id {
+        let followed: std::collections::HashSet<i64> = sqlx::query_scalar!(
+            "SELECT tag_id FROM tag_follows WHERE account_id = $1 AND tag_id = ANY($2::bigint[])",
+            vid, &tag_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+        let featured: std::collections::HashSet<i64> = sqlx::query_scalar!(
+            "SELECT tag_id FROM featured_tags WHERE account_id = $1 AND tag_id = ANY($2::bigint[])",
+            vid, &tag_ids,
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+        (Some(followed), Some(featured))
+    } else {
+        (None, None)
+    };
+
     let tags: Vec<Tag> = rows
         .into_iter()
         .map(|r| {
             let name_lower = r.name.to_lowercase();
+            let following = following_set.as_ref().map(|s| s.contains(&r.id));
+            let featuring = featuring_set.as_ref().map(|s| s.contains(&r.id));
             Tag {
                 id: r.id.to_string(),
                 history: histories.get(&r.id).cloned().unwrap_or_default(),
                 name: r.name,
                 url: format!("https://{}/tags/{}", domain, urlencoding::encode(&name_lower)),
-                following: None,
-                featuring: None,
+                following,
+                featuring,
             }
         })
         .collect();
