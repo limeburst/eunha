@@ -11,8 +11,8 @@ use crate::{
 };
 use super::types::FeaturedTag;
 
-fn tag_url(domain: &str, name: &str) -> String {
-    format!("https://{domain}/tags/{name}")
+fn tag_url(domain: &str, username: &str, name: &str) -> String {
+    format!("https://{domain}/@{username}/tagged/{name}")
 }
 
 // ── GET /api/v1/featured_tags ─────────────────────────────────────────────
@@ -25,12 +25,19 @@ pub async fn list_featured_tags(
     auth.require_scope("read:accounts")?;
     let domain = &instance.domain;
 
+    let username = sqlx::query_scalar!(
+        "SELECT username FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
     let rows = sqlx::query!(
         r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
            FROM featured_tags ft
            JOIN tags t ON t.id = ft.tag_id
            WHERE ft.account_id = $1
-           ORDER BY ft.id"#,
+           ORDER BY ft.statuses_count DESC"#,
         auth.account_id,
     )
     .fetch_all(&state.db)
@@ -41,7 +48,7 @@ pub async fn list_featured_tags(
         .map(|r| FeaturedTag {
             id: r.id.to_string(),
             name: r.name.clone(),
-            url: tag_url(domain, &r.name),
+            url: format!("https://{}/@{}/tagged/{}", domain, username, r.name),
             statuses_count: r.statuses_count.to_string(),
             last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         })
@@ -68,6 +75,13 @@ pub async fn feature_tag(
     let name = form.name.to_lowercase();
     let name = name.trim_start_matches('#');
 
+    let username = sqlx::query_scalar!(
+        "SELECT username FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
     let tag_id = sqlx::query_scalar!(
         r#"INSERT INTO tags (name) VALUES ($1)
            ON CONFLICT ((lower(name))) DO UPDATE SET name = EXCLUDED.name
@@ -92,7 +106,7 @@ pub async fn feature_tag(
     Ok(Json(FeaturedTag {
         id: row.id.to_string(),
         name: name.to_string(),
-        url: tag_url(domain, name),
+        url: tag_url(domain, &username, name),
         statuses_count: row.statuses_count.to_string(),
         last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
     }))
@@ -134,6 +148,13 @@ pub async fn feature_tag_by_name(
     let name = name.to_lowercase();
     let name = name.trim_start_matches('#');
 
+    let username = sqlx::query_scalar!(
+        "SELECT username FROM accounts WHERE id = $1",
+        auth.account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
     let tag_id = sqlx::query_scalar!(
         r#"INSERT INTO tags (name) VALUES ($1)
            ON CONFLICT ((lower(name))) DO UPDATE SET name = EXCLUDED.name
@@ -158,7 +179,7 @@ pub async fn feature_tag_by_name(
     Ok(Json(FeaturedTag {
         id: row.id.to_string(),
         name: name.to_string(),
-        url: tag_url(domain, name),
+        url: tag_url(domain, &username, name),
         statuses_count: row.statuses_count.to_string(),
         last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
     }))
