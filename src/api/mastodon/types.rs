@@ -677,13 +677,15 @@ pub struct FilterV1 {
 pub struct Profile {
     pub id: String,
     pub display_name: String,
-    pub note: String,
+    pub note: String,               // plain text
     pub fields: Vec<Field>,
-    pub avatar: String,
-    pub avatar_static: String,
+    pub formatted_note: String,     // HTML
+    pub formatted_fields: Vec<Field>,
+    pub avatar: Option<String>,
+    pub avatar_static: Option<String>,
     pub avatar_description: String,
-    pub header: String,
-    pub header_static: String,
+    pub header: Option<String>,
+    pub header_static: Option<String>,
     pub header_description: String,
     pub locked: bool,
     pub bot: bool,

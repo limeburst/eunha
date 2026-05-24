@@ -1628,16 +1628,24 @@ pub async fn patch_profile(
         .collect();
 
     let a = &account;
+    let fields = super::convert::fields_from_db(&a.fields);
+    let formatted_fields = fields.iter().map(|f| super::types::Field {
+        name: f.name.clone(),
+        value: super::formatting::format_field_value(&f.value),
+        verified_at: f.verified_at.clone(),
+    }).collect();
     Ok(Json(super::types::Profile {
         id: a.id.to_string(),
         display_name: a.display_name.clone(),
-        note: a.note.clone(),
-        fields: super::convert::fields_from_db(&a.fields),
-        avatar: a.avatar.clone().unwrap_or_else(|| super::convert::missing_avatar().to_string()),
-        avatar_static: a.avatar_static.clone().unwrap_or_else(|| super::convert::missing_avatar().to_string()),
+        note: a.note_text.clone(),
+        fields,
+        formatted_note: a.note.clone(),
+        formatted_fields,
+        avatar: a.avatar.clone(),
+        avatar_static: a.avatar_static.clone(),
         avatar_description: a.avatar_description.clone(),
-        header: a.header.clone().unwrap_or_else(|| super::convert::missing_header().to_string()),
-        header_static: a.header_static.clone().unwrap_or_else(|| super::convert::missing_header().to_string()),
+        header: a.header.clone(),
+        header_static: a.header_static.clone(),
         header_description: a.header_description.clone(),
         locked: a.locked,
         bot: a.bot,
@@ -3278,16 +3286,24 @@ pub async fn get_profile(
         .collect();
 
     let a = &account;
+    let fields = super::convert::fields_from_db(&a.fields);
+    let formatted_fields = fields.iter().map(|f| super::types::Field {
+        name: f.name.clone(),
+        value: super::formatting::format_field_value(&f.value),
+        verified_at: f.verified_at.clone(),
+    }).collect();
     let profile = super::types::Profile {
         id: a.id.to_string(),
         display_name: a.display_name.clone(),
-        note: a.note.clone(),
-        fields: super::convert::fields_from_db(&a.fields),
-        avatar: a.avatar.clone().unwrap_or_else(|| super::convert::missing_avatar().to_string()),
-        avatar_static: a.avatar_static.clone().unwrap_or_else(|| super::convert::missing_avatar().to_string()),
+        note: a.note_text.clone(),
+        fields,
+        formatted_note: a.note.clone(),
+        formatted_fields,
+        avatar: a.avatar.clone(),
+        avatar_static: a.avatar_static.clone(),
         avatar_description: a.avatar_description.clone(),
-        header: a.header.clone().unwrap_or_else(|| super::convert::missing_header().to_string()),
-        header_static: a.header_static.clone().unwrap_or_else(|| super::convert::missing_header().to_string()),
+        header: a.header.clone(),
+        header_static: a.header_static.clone(),
         header_description: a.header_description.clone(),
         locked: a.locked,
         bot: a.bot,

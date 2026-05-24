@@ -142,6 +142,13 @@ pub fn text_to_html(text: &str) -> String {
         .join("")
 }
 
+pub fn format_field_value(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    linkify_urls(value)
+}
+
 fn linkify_urls(text: &str) -> String {
     struct Span { start: usize, end: usize, html: String }
     let mut spans: Vec<Span> = Vec::new();
