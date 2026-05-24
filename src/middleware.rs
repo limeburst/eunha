@@ -61,6 +61,12 @@ impl AuthenticatedUser {
                 return true;
             }
         }
+        // "profile" is a narrow scope that covers read:accounts (for verify_credentials)
+        if required == "read:accounts" {
+            if self.scopes.iter().any(|s| s == "profile") {
+                return true;
+            }
+        }
         false
     }
 }

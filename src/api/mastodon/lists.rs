@@ -155,7 +155,8 @@ pub async fn get_list_accounts(
     auth.require_scope("read:lists")?;
     fetch_list(&state, id, auth.account_id).await?;
 
-    let limit = pagination.limit_clamped(40, 80);
+    let unlimited = pagination.limit.as_deref() == Some("0");
+    let limit = if unlimited { i64::MAX } else { pagination.limit_clamped(40, 80) };
     let max_id: Option<i64> = pagination.max_id.as_deref().and_then(|s| s.parse().ok());
     let since_id: Option<i64> = pagination.since_id.as_deref().and_then(|s| s.parse().ok());
     let min_id: Option<i64> = pagination.min_id.as_deref().and_then(|s| s.parse().ok());
@@ -187,10 +188,12 @@ pub async fn get_list_accounts(
         api.roles = account_roles_map.get(&a.id).cloned().unwrap_or_default();
         api
     }).collect();
-    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
-        let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
-    });
+    let link = if unlimited { None } else {
+        result.first().zip(result.last()).map(|(newest, oldest)| {
+            let extra = super::non_pagination_query(uri.query());
+            super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        })
+    };
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
         if let Ok(val) = v.parse() {
