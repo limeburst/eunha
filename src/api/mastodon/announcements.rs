@@ -121,7 +121,7 @@ pub async fn dismiss_announcement(
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {
-    auth.require_scope("write")?;
+    auth.require_scope("write:accounts")?;
 
     let exists = sqlx::query_scalar!(
         "SELECT EXISTS(SELECT 1 FROM announcements WHERE id = $1 AND published = true)",
@@ -151,7 +151,7 @@ pub async fn add_reaction(
     Path((id, name)): Path<(i64, String)>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {
-    auth.require_scope("write")?;
+    auth.require_scope("write:favourites")?;
     let custom_emoji_id = sqlx::query_scalar!(
         r#"SELECT id FROM custom_emojis
            WHERE shortcode = $1
@@ -180,7 +180,7 @@ pub async fn remove_reaction(
     Path((id, name)): Path<(i64, String)>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {
-    auth.require_scope("write")?;
+    auth.require_scope("write:favourites")?;
     sqlx::query!(
         "DELETE FROM announcement_reactions WHERE announcement_id = $1 AND account_id = $2 AND name = $3",
         id, auth.account_id, name,
