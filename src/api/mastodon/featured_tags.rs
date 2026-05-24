@@ -9,10 +9,14 @@ use crate::{
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
-use super::types::FeaturedTag;
+use super::types::{FeaturedTag, Tag};
 
-fn tag_url(domain: &str, username: &str, name: &str) -> String {
+fn featured_tag_url(domain: &str, username: &str, name: &str) -> String {
     format!("https://{domain}/@{username}/tagged/{name}")
+}
+
+fn tag_url(domain: &str, name: &str) -> String {
+    format!("https://{domain}/tags/{name}")
 }
 
 // ── GET /api/v1/featured_tags ─────────────────────────────────────────────
@@ -106,7 +110,7 @@ pub async fn feature_tag(
     Ok(Json(FeaturedTag {
         id: row.id.to_string(),
         name: name.to_string(),
-        url: tag_url(domain, &username, name),
+        url: featured_tag_url(domain, &username, name),
         statuses_count: row.statuses_count.to_string(),
         last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
     }))
@@ -142,18 +146,11 @@ pub async fn feature_tag_by_name(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
-) -> AppResult<Json<FeaturedTag>> {
+) -> AppResult<Json<Tag>> {
     auth.require_scope("write:accounts")?;
     let domain = &instance.domain;
     let name = name.to_lowercase();
     let name = name.trim_start_matches('#');
-
-    let username = sqlx::query_scalar!(
-        "SELECT username FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
 
     let tag_id = sqlx::query_scalar!(
         r#"INSERT INTO tags (name) VALUES ($1)
@@ -164,24 +161,34 @@ pub async fn feature_tag_by_name(
     .fetch_one(&state.db)
     .await?;
 
-    let row = sqlx::query!(
+    sqlx::query!(
         r#"INSERT INTO featured_tags (account_id, tag_id, name)
            VALUES ($1, $2, $3)
-           ON CONFLICT (account_id, tag_id) DO UPDATE SET name = EXCLUDED.name
-           RETURNING id, statuses_count, last_status_at"#,
+           ON CONFLICT (account_id, tag_id) DO UPDATE SET name = EXCLUDED.name"#,
         auth.account_id,
         tag_id,
         name,
     )
-    .fetch_one(&state.db)
+    .execute(&state.db)
     .await?;
 
-    Ok(Json(FeaturedTag {
-        id: row.id.to_string(),
+    let following = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM tag_follows WHERE account_id = $1 AND tag_id = $2)",
+        auth.account_id, tag_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+
+    let history = super::tags::fetch_tag_history(&state.db, tag_id).await;
+
+    Ok(Json(Tag {
+        id: tag_id.to_string(),
+        url: tag_url(domain, name),
         name: name.to_string(),
-        url: tag_url(domain, &username, name),
-        statuses_count: row.statuses_count.to_string(),
-        last_status_at: row.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        history,
+        following: Some(following),
+        featuring: Some(true),
     }))
 }
 
@@ -189,23 +196,58 @@ pub async fn feature_tag_by_name(
 
 pub async fn unfeature_tag_by_name(
     State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<Tag>> {
     auth.require_scope("write:accounts")?;
+    let domain = &instance.domain;
     let name = name.to_lowercase();
 
-    sqlx::query!(
-        r#"DELETE FROM featured_tags
-           WHERE account_id = $1
-             AND tag_id = (SELECT id FROM tags WHERE name = $2)"#,
-        auth.account_id,
+    let tag = sqlx::query!(
+        "SELECT id FROM tags WHERE name = $1",
         name,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(tag) = tag else {
+        return Ok(Json(Tag {
+            id: String::new(),
+            url: tag_url(domain, &name),
+            name,
+            history: vec![],
+            following: Some(false),
+            featuring: Some(false),
+        }));
+    };
+
+    sqlx::query!(
+        "DELETE FROM featured_tags WHERE account_id = $1 AND tag_id = $2",
+        auth.account_id,
+        tag.id,
     )
     .execute(&state.db)
     .await?;
 
-    Ok(Json(serde_json::json!({})))
+    let following = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM tag_follows WHERE account_id = $1 AND tag_id = $2)",
+        auth.account_id, tag.id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+
+    let history = super::tags::fetch_tag_history(&state.db, tag.id).await;
+
+    Ok(Json(Tag {
+        id: tag.id.to_string(),
+        url: tag_url(domain, &name),
+        name,
+        history,
+        following: Some(following),
+        featuring: Some(false),
+    }))
 }
 
 // ── GET /api/v1/featured_tags/suggestions ────────────────────────────────
