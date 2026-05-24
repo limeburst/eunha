@@ -1,7 +1,7 @@
 /// Conversions from DB models → Mastodon API types.
 use std::sync::OnceLock;
 use crate::db::models;
-use super::formatting::{mention_map_from_api, render_content};
+use super::formatting::{format_field_value, mention_map_from_api, render_content};
 use super::types;
 
 static DEFAULT_AVATAR: OnceLock<String> = OnceLock::new();
@@ -74,7 +74,18 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         statuses_count: a.statuses_count,
         last_status_at: a.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
         emojis: vec![],
-        fields: if suspended { vec![] } else { fields_from_db(&a.fields) },
+        fields: if suspended {
+            vec![]
+        } else if a.domain.is_none() {
+            // Local accounts: format field values as HTML (linkify URLs) matching Mastodon's FieldSerializer
+            fields_from_db(&a.fields).into_iter().map(|f| types::Field {
+                name: f.name,
+                value: format_field_value(&f.value),
+                verified_at: f.verified_at,
+            }).collect()
+        } else {
+            fields_from_db(&a.fields)
+        },
         roles: vec![],
         moved: None,
         suspended: if suspended { Some(true) } else { None },
