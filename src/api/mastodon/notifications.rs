@@ -773,11 +773,19 @@ pub async fn get_notification_group_accounts(
 
 // ── GET /api/v1/notifications/unread_count ───────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct UnreadCountParams {
+    pub limit: Option<i64>,
+}
+
 pub async fn get_notifications_unread_count(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
+    Query(params): Query<UnreadCountParams>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("read:notifications")?;
+
+    let limit = params.limit.unwrap_or(100).min(1000).max(1);
 
     // Find last read ID from markers (0 means never read)
     let last_read_id: Option<i64> = sqlx::query_scalar!(
@@ -790,22 +798,20 @@ pub async fn get_notifications_unread_count(
 
     let count: i64 = if let Some(last_id) = last_read_id {
         sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM notifications WHERE account_id = $1 AND id > $2",
-            auth.account_id, last_id,
+            "SELECT COUNT(*) FROM (SELECT 1 FROM notifications WHERE account_id = $1 AND id > $2 LIMIT $3) sub",
+            auth.account_id, last_id, limit,
         )
         .fetch_one(&state.db)
         .await?
         .unwrap_or(0)
-        .min(100)
     } else {
         sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM notifications WHERE account_id = $1",
-            auth.account_id,
+            "SELECT COUNT(*) FROM (SELECT 1 FROM notifications WHERE account_id = $1 LIMIT $2) sub",
+            auth.account_id, limit,
         )
         .fetch_one(&state.db)
         .await?
         .unwrap_or(0)
-        .min(100)
     };
 
     Ok(Json(serde_json::json!({ "count": count })))

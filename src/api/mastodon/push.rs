@@ -65,6 +65,8 @@ pub struct CreateSubscriptionBody {
 pub struct SubscriptionInput {
     pub endpoint: String,
     pub keys: SubscriptionKeys,
+    #[serde(default)]
+    pub standard: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,23 +126,26 @@ pub async fn create_subscription(
         "policy": policy,
     });
 
+    let standard = body.subscription.standard.unwrap_or(false);
     let row = sqlx::query!(
         r#"INSERT INTO web_push_subscriptions
-             (account_id, access_token_id, endpoint, key_p256dh, key_auth, data)
-           VALUES ($1, $2, $3, $4, $5, $6)
+             (account_id, access_token_id, endpoint, key_p256dh, key_auth, data, standard)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (access_token_id) DO UPDATE SET
              endpoint   = EXCLUDED.endpoint,
              key_p256dh = EXCLUDED.key_p256dh,
              key_auth   = EXCLUDED.key_auth,
              data       = EXCLUDED.data,
+             standard   = EXCLUDED.standard,
              updated_at = now()
-           RETURNING id, data as "data: serde_json::Value""#,
+           RETURNING id, standard, data as "data: serde_json::Value""#,
         auth.account_id,
         auth.token_id,
         body.subscription.endpoint,
         body.subscription.keys.p256dh,
         body.subscription.keys.auth,
         data,
+        standard,
     )
     .fetch_one(&state.db)
     .await?;
@@ -148,7 +153,7 @@ pub async fn create_subscription(
     Ok(Json(PushSubscription {
         id: row.id.to_string(),
         endpoint: body.subscription.endpoint,
-        standard: false,
+        standard: row.standard,
         alerts: alerts_from_data(&row.data),
         policy: policy_from_data(&row.data),
         server_key: state.instance.vapid_public_key.clone(),
@@ -164,7 +169,7 @@ pub async fn get_subscription(
     auth.require_scope("push")?;
 
     let row = sqlx::query!(
-        r#"SELECT id, endpoint, data as "data: serde_json::Value"
+        r#"SELECT id, endpoint, standard, data as "data: serde_json::Value"
            FROM web_push_subscriptions
            WHERE access_token_id = $1"#,
         auth.token_id,
@@ -176,7 +181,7 @@ pub async fn get_subscription(
     Ok(Json(PushSubscription {
         id: row.id.to_string(),
         endpoint: row.endpoint,
-        standard: false,
+        standard: row.standard,
         alerts: alerts_from_data(&row.data),
         policy: policy_from_data(&row.data),
         server_key: state.instance.vapid_public_key.clone(),
@@ -218,7 +223,7 @@ pub async fn update_subscription(
              ),
              updated_at = now()
            WHERE access_token_id = $10
-           RETURNING id, endpoint, data as "data: serde_json::Value""#,
+           RETURNING id, endpoint, standard, data as "data: serde_json::Value""#,
         alerts.follow,
         alerts.follow_request,
         alerts.favourite,
@@ -237,7 +242,7 @@ pub async fn update_subscription(
     Ok(Json(PushSubscription {
         id: row.id.to_string(),
         endpoint: row.endpoint,
-        standard: false,
+        standard: row.standard,
         alerts: alerts_from_data(&row.data),
         policy: policy_from_data(&row.data),
         server_key: state.instance.vapid_public_key.clone(),

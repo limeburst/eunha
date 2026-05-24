@@ -239,12 +239,23 @@ pub async fn delete_media(
     auth.require_scope("write:media")?;
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
-        "DELETE FROM media_attachments WHERE id = $1 AND account_id = $2 AND status_id IS NULL RETURNING *",
+        "SELECT * FROM media_attachments WHERE id = $1 AND account_id = $2",
         id, auth.account_id,
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::NotFound)?;
+
+    if attachment.status_id.is_some() {
+        return Err(AppError::Unprocessable("Media attachment is currently used by a status".into()));
+    }
+
+    sqlx::query!(
+        "DELETE FROM media_attachments WHERE id = $1",
+        id,
+    )
+    .execute(&state.db)
+    .await?;
 
     if let Some(key) = &attachment.file_key {
         let _ = state.storage.delete(key).await;

@@ -1756,6 +1756,7 @@ pub async fn get_blocks(
     // Paginate by block.id (matching Mastodon's Block.paginate_by_max_id)
     let rows = sqlx::query!(
         r#"SELECT b.id AS block_id, b.target_account_id FROM blocks b
+           JOIN accounts a ON a.id = b.target_account_id AND a.suspended_at IS NULL
            WHERE b.account_id = $1
              AND ($2::bigint IS NULL OR b.id < $2)
              AND ($3::bigint IS NULL OR b.id > $3)
@@ -1814,6 +1815,7 @@ pub async fn get_mutes(
     // Paginate by mute.id (matching Mastodon's Mute.paginate_by_max_id)
     let rows = sqlx::query!(
         r#"SELECT m.id AS mute_id, m.target_account_id, m.expires_at FROM mutes m
+           JOIN accounts a ON a.id = m.target_account_id AND a.suspended_at IS NULL
            WHERE m.account_id = $1
              AND (m.expires_at IS NULL OR m.expires_at > now())
              AND ($2::bigint IS NULL OR m.id < $2)
