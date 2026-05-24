@@ -373,9 +373,9 @@ pub async fn get_instance_v2(
             },
             translation: TranslationConfiguration { enabled: false },
             timelines_access: TimelinesAccess {
-                live_feeds: TimelineAccessControl { local: true, remote: true },
-                hashtag_feeds: TimelineAccessControl { local: true, remote: true },
-                trending_link_feeds: TimelineAccessControl { local: true, remote: true },
+                live_feeds: TimelineAccessControl { local: "public".into(), remote: "public".into() },
+                hashtag_feeds: TimelineAccessControl { local: "public".into(), remote: "public".into() },
+                trending_link_feeds: TimelineAccessControl { local: "public".into(), remote: "public".into() },
             },
             limited_federation: false,
         },

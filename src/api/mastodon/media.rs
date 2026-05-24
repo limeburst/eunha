@@ -177,7 +177,7 @@ pub async fn get_media(
     auth.require_scope("write:media")?;
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
-        "SELECT * FROM media_attachments WHERE id = $1 AND account_id = $2",
+        "SELECT * FROM media_attachments WHERE id = $1 AND account_id = $2 AND status_id IS NULL",
         id, auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -202,7 +202,7 @@ pub async fn update_media(
 ) -> AppResult<Json<MediaAttachment>> {
     auth.require_scope("write:media")?;
     sqlx::query!(
-        "SELECT id FROM media_attachments WHERE id = $1 AND account_id = $2",
+        "SELECT id FROM media_attachments WHERE id = $1 AND account_id = $2 AND status_id IS NULL",
         id, auth.account_id,
     )
     .fetch_optional(&state.db)

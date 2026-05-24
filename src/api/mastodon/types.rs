@@ -264,8 +264,8 @@ pub struct TimelinesAccess {
 
 #[derive(Debug, Serialize)]
 pub struct TimelineAccessControl {
-    pub local: bool,
-    pub remote: bool,
+    pub local: String,
+    pub remote: String,
 }
 
 #[derive(Debug, Serialize)]
