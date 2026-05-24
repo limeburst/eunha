@@ -44,7 +44,7 @@ pub async fn verify_credentials(
     );
 
     let follow_requests: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM follow_requests WHERE target_account_id = $1",
+        "SELECT COUNT(*) FROM (SELECT 1 FROM follow_requests WHERE target_account_id = $1 LIMIT 40) sub",
         account.id
     )
     .fetch_one(&state.db)
@@ -1585,7 +1585,7 @@ pub async fn update_credentials(
     let mut api_account = account_from_db(&account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
     let follow_requests_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM follow_requests WHERE target_account_id = $1",
+        "SELECT COUNT(*) FROM (SELECT 1 FROM follow_requests WHERE target_account_id = $1 LIMIT 40) sub",
         auth.account_id,
     )
     .fetch_one(&state.db)
