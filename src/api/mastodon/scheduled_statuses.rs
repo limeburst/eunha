@@ -1,4 +1,9 @@
-use axum::{extract::{Path, State}, response::Json, Extension};
+use axum::{
+    extract::{Path, Query, State},
+    http::{header, HeaderMap, Uri},
+    response::{IntoResponse, Json},
+    Extension,
+};
 use serde::{Deserialize, Serialize};
 use crate::{
     error::{AppError, AppResult},
@@ -35,17 +40,36 @@ async fn fetch_scheduled_media(
 pub async fn list_scheduled_statuses(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-) -> AppResult<Json<Vec<ScheduledStatus>>> {
+    Query(pagination): Query<super::types::PaginationParams>,
+    uri: Uri,
+    req_headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
     auth.require_scope("read:statuses")?;
+    let limit = pagination.limit_clamped(20, 40);
+    let max_id = pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+
     let rows = sqlx::query!(
         r#"SELECT id, scheduled_at, params
            FROM scheduled_statuses
            WHERE account_id = $1
-           ORDER BY scheduled_at ASC NULLS LAST, created_at ASC"#,
+             AND ($2::bigint IS NULL OR id < $2)
+             AND ($3::bigint IS NULL OR id > $3)
+             AND ($5::bigint IS NULL OR id > $5)
+           ORDER BY id DESC
+           LIMIT $4"#,
         auth.account_id,
+        max_id,
+        since_id,
+        limit,
+        min_id,
     )
     .fetch_all(&state.db)
     .await?;
+
+    let first_id = rows.first().map(|r| r.id.to_string());
+    let last_id = rows.last().map(|r| r.id.to_string());
 
     let mut statuses = Vec::with_capacity(rows.len());
     for r in rows {
@@ -58,7 +82,18 @@ pub async fn list_scheduled_statuses(
         });
     }
 
-    Ok(Json(statuses))
+    let link = first_id.zip(last_id).map(|(newest, oldest)| {
+        let extra = super::non_pagination_query(uri.query());
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
+    });
+    let mut resp_headers = HeaderMap::new();
+    if let Some(v) = link {
+        if let Ok(val) = v.parse() {
+            resp_headers.insert(header::LINK, val);
+        }
+    }
+
+    Ok((resp_headers, Json(statuses)))
 }
 
 // ── GET /api/v1/scheduled_statuses/:id ────────────────────────────────────

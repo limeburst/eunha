@@ -108,6 +108,7 @@ pub async fn trending_statuses(
     auth: Option<Extension<crate::middleware::AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<Status>>> {
     let limit = params.limit.unwrap_or(20).min(40).max(1);
+    let offset = params.offset.unwrap_or(0).max(0);
     let viewer_id = auth.map(|Extension(a)| a.account_id);
 
     let rows = sqlx::query_as!(
@@ -119,19 +120,20 @@ pub async fn trending_statuses(
              AND s.reblog_of_id IS NULL
              AND s.created_at > now() - interval '2 days'
              AND a.suspended_at IS NULL
-             AND ($2::bigint IS NULL OR NOT EXISTS (
+             AND ($3::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM blocks b
-                 WHERE (b.account_id = $2 AND b.target_account_id = s.account_id)
-                    OR (b.account_id = s.account_id AND b.target_account_id = $2)
+                 WHERE (b.account_id = $3 AND b.target_account_id = s.account_id)
+                    OR (b.account_id = s.account_id AND b.target_account_id = $3)
              ))
-             AND ($2::bigint IS NULL OR NOT EXISTS (
+             AND ($3::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM mutes mu
-                 WHERE mu.account_id = $2 AND mu.target_account_id = s.account_id
+                 WHERE mu.account_id = $3 AND mu.target_account_id = s.account_id
                    AND (mu.expires_at IS NULL OR mu.expires_at > now())
              ))
            ORDER BY (s.favourites_count + s.reblogs_count * 2) DESC, s.created_at DESC
-           LIMIT $1"#,
+           LIMIT $1 OFFSET $2"#,
         limit,
+        offset,
         viewer_id,
     )
     .fetch_all(&state.db)
