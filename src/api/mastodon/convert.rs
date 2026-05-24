@@ -3,8 +3,8 @@ use crate::db::models;
 use super::formatting::{mention_map_from_api, render_content};
 use super::types;
 
-const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
-const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
+pub(super) const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
+pub(super) const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
 
 /// Format a timestamp in the Mastodon-standard format: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
 /// Mastodon always uses the `Z` suffix and millisecond precision; `to_rfc3339()` produces

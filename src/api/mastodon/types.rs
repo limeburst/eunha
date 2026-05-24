@@ -670,6 +670,33 @@ pub struct FilterV1 {
     pub irreversible: bool,
 }
 
+// ── Profile ──────────────────────────────────────────────────────────────────
+// Response shape for GET /api/v1/profile (REST::ProfileSerializer)
+
+#[derive(Debug, Serialize)]
+pub struct Profile {
+    pub id: String,
+    pub display_name: String,
+    pub note: String,
+    pub fields: Vec<Field>,
+    pub avatar: String,
+    pub avatar_static: String,
+    pub avatar_description: String,
+    pub header: String,
+    pub header_static: String,
+    pub header_description: String,
+    pub locked: bool,
+    pub bot: bool,
+    pub hide_collections: Option<bool>,
+    pub discoverable: Option<bool>,
+    pub indexable: bool,
+    pub show_media: Option<bool>,
+    pub show_media_replies: Option<bool>,
+    pub show_featured: Option<bool>,
+    pub attribution_domains: Vec<String>,
+    pub featured_tags: Vec<FeaturedTag>,
+}
+
 // ── FeaturedTag ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]

@@ -3167,7 +3167,8 @@ pub async fn get_account_featured_tags(
 pub async fn get_profile(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-) -> AppResult<Json<super::types::Account>> {
+    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+) -> AppResult<Json<super::types::Profile>> {
     auth.require_scope("read:accounts")?;
     let account = sqlx::query_as!(
         Account,
@@ -3176,10 +3177,54 @@ pub async fn get_profile(
     )
     .fetch_one(&state.db)
     .await?;
-    let mut api_account = account_from_db(&account);
-    api_account.emojis = fetch_account_emojis(&state, &account).await;
-    api_account.roles = fetch_account_roles(&state, account.id).await;
-    Ok(Json(api_account))
+
+    let domain = &instance.domain;
+    let featured_tag_rows = sqlx::query!(
+        r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
+           FROM featured_tags ft
+           JOIN tags t ON t.id = ft.tag_id
+           WHERE ft.account_id = $1
+           ORDER BY ft.id"#,
+        account.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let featured_tags = featured_tag_rows
+        .into_iter()
+        .map(|r| super::types::FeaturedTag {
+            id: r.id.to_string(),
+            name: r.name.clone(),
+            url: format!("https://{}/@{}/tagged/{}", domain, account.username, r.name),
+            statuses_count: r.statuses_count.to_string(),
+            last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        })
+        .collect();
+
+    let a = &account;
+    let profile = super::types::Profile {
+        id: a.id.to_string(),
+        display_name: a.display_name.clone(),
+        note: a.note.clone(),
+        fields: super::convert::fields_from_db(&a.fields),
+        avatar: a.avatar.clone().unwrap_or_else(|| super::convert::DEFAULT_AVATAR.to_string()),
+        avatar_static: a.avatar_static.clone().unwrap_or_else(|| super::convert::DEFAULT_AVATAR.to_string()),
+        avatar_description: a.avatar_description.clone(),
+        header: a.header.clone().unwrap_or_else(|| super::convert::DEFAULT_HEADER.to_string()),
+        header_static: a.header_static.clone().unwrap_or_else(|| super::convert::DEFAULT_HEADER.to_string()),
+        header_description: a.header_description.clone(),
+        locked: a.locked,
+        bot: a.bot,
+        hide_collections: Some(a.hide_collections),
+        discoverable: a.discoverable,
+        indexable: a.indexable,
+        show_media: Some(a.show_media),
+        show_media_replies: Some(a.show_media_replies),
+        show_featured: Some(a.show_featured),
+        attribution_domains: a.attribution_domains.clone(),
+        featured_tags,
+    };
+    Ok(Json(profile))
 }
 
 // ── DELETE /api/v1/profile/avatar ────────────────────────────────────────
