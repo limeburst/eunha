@@ -252,7 +252,7 @@ pub fn status_from_db_with_app(
                 Some(vec![]),
             )
         } else {
-            (None, None, None, None, None, None)
+            (None, None, None, None, None, Some(vec![]))
         };
 
     types::Status {

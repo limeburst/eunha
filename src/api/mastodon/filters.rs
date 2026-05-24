@@ -610,31 +610,28 @@ pub async fn get_filters_v1(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterV1>>> {
     auth.require_scope("read:filters")?;
-    let filters = sqlx::query!(
-        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at,
-                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!",
-                  COALESCE(
-                    (SELECT whole_word FROM custom_filter_keywords
-                     WHERE custom_filter_id = cf.id ORDER BY id LIMIT 1),
-                    false
-                  ) AS "whole_word!"
-           FROM custom_filters cf
+    let rows = sqlx::query!(
+        r#"SELECT fk.id, fk.keyword, fk.whole_word,
+                  cf.context, cf.expires_at,
+                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
+           FROM custom_filter_keywords fk
+           JOIN custom_filters cf ON cf.id = fk.custom_filter_id
            WHERE cf.account_id = $1
-           ORDER BY cf.id"#,
+           ORDER BY fk.id"#,
         auth.account_id,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let result = filters
+    let result = rows
         .into_iter()
-        .map(|f| FilterV1 {
-            id: f.id.to_string(),
-            phrase: f.phrase,
-            context: f.context,
-            whole_word: f.whole_word,
-            expires_at: f.expires_at.map(super::convert::mastodon_date),
-            irreversible: f.action == "hide",
+        .map(|r| FilterV1 {
+            id: r.id.to_string(),
+            phrase: r.keyword,
+            context: r.context,
+            whole_word: r.whole_word,
+            expires_at: r.expires_at.map(super::convert::mastodon_date),
+            irreversible: r.action == "hide",
         })
         .collect();
 
@@ -649,16 +646,13 @@ pub async fn get_filter_v1(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterV1>> {
     auth.require_scope("read:filters")?;
-    let f = sqlx::query!(
-        r#"SELECT cf.id, cf.phrase, cf.context, cf.expires_at,
-                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!",
-                  COALESCE(
-                    (SELECT whole_word FROM custom_filter_keywords
-                     WHERE custom_filter_id = cf.id ORDER BY id LIMIT 1),
-                    false
-                  ) AS "whole_word!"
-           FROM custom_filters cf
-           WHERE cf.id = $1 AND cf.account_id = $2"#,
+    let r = sqlx::query!(
+        r#"SELECT fk.id, fk.keyword, fk.whole_word,
+                  cf.context, cf.expires_at,
+                  CASE cf.action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
+           FROM custom_filter_keywords fk
+           JOIN custom_filters cf ON cf.id = fk.custom_filter_id
+           WHERE fk.id = $1 AND cf.account_id = $2"#,
         id, auth.account_id,
     )
     .fetch_optional(&state.db)
@@ -666,12 +660,12 @@ pub async fn get_filter_v1(
     .ok_or(AppError::NotFound)?;
 
     Ok(Json(FilterV1 {
-        id: f.id.to_string(),
-        phrase: f.phrase,
-        context: f.context,
-        whole_word: f.whole_word,
-        expires_at: f.expires_at.map(super::convert::mastodon_date),
-        irreversible: f.action == "hide",
+        id: r.id.to_string(),
+        phrase: r.keyword,
+        context: r.context,
+        whole_word: r.whole_word,
+        expires_at: r.expires_at.map(super::convert::mastodon_date),
+        irreversible: r.action == "hide",
     }))
 }
 
@@ -712,15 +706,15 @@ pub async fn create_filter_v1(
     .await?;
 
     let whole_word = form.whole_word.unwrap_or(false);
-    sqlx::query!(
-        "INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word) VALUES ($1, $2, $3)",
+    let keyword_id = sqlx::query_scalar!(
+        "INSERT INTO custom_filter_keywords (custom_filter_id, keyword, whole_word) VALUES ($1, $2, $3) RETURNING id",
         filter_id, form.phrase, whole_word,
     )
-    .execute(&state.db)
+    .fetch_one(&state.db)
     .await?;
 
     let f = sqlx::query!(
-        r#"SELECT id, phrase, context, expires_at,
+        r#"SELECT context, expires_at,
                   CASE action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
            FROM custom_filters WHERE id = $1"#,
         filter_id,
@@ -730,8 +724,8 @@ pub async fn create_filter_v1(
 
     publish_filters_changed(&state, auth.account_id);
     Ok((StatusCode::OK, Json(FilterV1 {
-        id: f.id.to_string(),
-        phrase: f.phrase,
+        id: keyword_id.to_string(),
+        phrase: form.phrase,
         context: f.context,
         whole_word,
         expires_at: f.expires_at.map(super::convert::mastodon_date),
@@ -751,45 +745,54 @@ pub async fn update_filter_v1(
     let action = crate::db::models::filter_action::from_str(
         if form.irreversible == Some(true) { "hide" } else { "warn" }
     );
-    let updated = sqlx::query_scalar!(
+
+    // id is a keyword ID; find it and its parent filter (ownership check via filter)
+    let existing = sqlx::query!(
+        r#"SELECT fk.id AS keyword_id, cf.id AS filter_id
+           FROM custom_filter_keywords fk
+           JOIN custom_filters cf ON cf.id = fk.custom_filter_id
+           WHERE fk.id = $1 AND cf.account_id = $2"#,
+        id, auth.account_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    let whole_word = form.whole_word.unwrap_or(false);
+
+    sqlx::query!(
         r#"UPDATE custom_filters
            SET phrase = $3, context = $4, action = $5,
                expires_at = CASE WHEN $6::bigint IS NULL THEN NULL
                                  ELSE now() + ($6 * interval '1 second')
                             END,
                updated_at = now()
-           WHERE id = $1 AND account_id = $2
-           RETURNING id"#,
-        id, auth.account_id, form.phrase, &form.context, action, form.expires_in,
+           WHERE id = $1 AND account_id = $2"#,
+        existing.filter_id, auth.account_id, form.phrase, &form.context, action, form.expires_in,
     )
-    .fetch_optional(&state.db)
+    .execute(&state.db)
     .await?;
 
-    if updated.is_none() {
-        return Err(AppError::NotFound);
-    }
-
-    let whole_word = form.whole_word.unwrap_or(false);
     sqlx::query!(
-        "UPDATE custom_filter_keywords SET keyword = $2, whole_word = $3, updated_at = now() WHERE custom_filter_id = $1",
+        "UPDATE custom_filter_keywords SET keyword = $2, whole_word = $3, updated_at = now() WHERE id = $1",
         id, form.phrase, whole_word,
     )
     .execute(&state.db)
     .await?;
 
     let f = sqlx::query!(
-        r#"SELECT id, phrase, context, expires_at,
+        r#"SELECT context, expires_at,
                   CASE action WHEN 0 THEN 'warn' WHEN 1 THEN 'hide' ELSE 'warn' END AS "action!"
            FROM custom_filters WHERE id = $1"#,
-        id,
+        existing.filter_id,
     )
     .fetch_one(&state.db)
     .await?;
 
     publish_filters_changed(&state, auth.account_id);
     Ok(Json(FilterV1 {
-        id: f.id.to_string(),
-        phrase: f.phrase,
+        id: id.to_string(),
+        phrase: form.phrase,
         context: f.context,
         whole_word,
         expires_at: f.expires_at.map(super::convert::mastodon_date),
@@ -805,15 +808,42 @@ pub async fn delete_filter_v1(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:filters")?;
-    let deleted = sqlx::query_scalar!(
-        "DELETE FROM custom_filters WHERE id = $1 AND account_id = $2 RETURNING id",
+
+    // id is a keyword ID; verify ownership via the parent filter
+    let existing = sqlx::query!(
+        r#"SELECT fk.id AS keyword_id, cf.id AS filter_id
+           FROM custom_filter_keywords fk
+           JOIN custom_filters cf ON cf.id = fk.custom_filter_id
+           WHERE fk.id = $1 AND cf.account_id = $2"#,
         id, auth.account_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if deleted.is_none() {
+    if existing.is_none() {
         return Err(AppError::NotFound);
+    }
+    let existing = existing.unwrap();
+
+    sqlx::query!("DELETE FROM custom_filter_keywords WHERE id = $1", id)
+        .execute(&state.db)
+        .await?;
+
+    // Clean up the parent filter if it has no remaining keywords or statuses
+    let has_remaining = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM custom_filter_keywords WHERE custom_filter_id = $1
+                       UNION ALL
+                       SELECT 1 FROM custom_filter_statuses WHERE custom_filter_id = $1)",
+        existing.filter_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+
+    if !has_remaining {
+        sqlx::query!("DELETE FROM custom_filters WHERE id = $1", existing.filter_id)
+            .execute(&state.db)
+            .await?;
     }
 
     publish_filters_changed(&state, auth.account_id);
