@@ -36,7 +36,7 @@ impl AuthenticatedUser {
     /// Scope hierarchy:
     /// - `"read"` covers every `"read:*"` sub-scope.
     /// - `"write"` covers every `"write:*"` sub-scope.
-    /// - `"follow"` covers `"write:follows"`, `"write:blocks"`, and `"write:mutes"`.
+    /// - `"follow"` covers all social-graph operations (read+write on follows/blocks/mutes).
     pub fn require_scope(&self, required: &str) -> crate::error::AppResult<()> {
         if self.has_scope(required) {
             Ok(())
@@ -55,8 +55,9 @@ impl AuthenticatedUser {
                 return true;
             }
         }
-        // "follow" covers social-graph write operations
-        if matches!(required, "write:follows" | "write:blocks" | "write:mutes") {
+        // "follow" covers all social-graph operations (read + write on follows/blocks/mutes)
+        if matches!(required, "write:follows" | "write:blocks" | "write:mutes"
+                             | "read:follows" | "read:blocks" | "read:mutes") {
             if self.scopes.iter().any(|s| s == "follow") {
                 return true;
             }
