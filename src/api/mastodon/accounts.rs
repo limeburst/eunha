@@ -999,14 +999,15 @@ pub async fn get_account_followers(
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN follows f ON f.account_id = a.id
+    // Paginate by follow.id (matching Mastodon's Follow.paginate_by_max_id)
+    let follow_rows = sqlx::query!(
+        r#"SELECT f.id as follow_id, f.account_id FROM follows f
+           JOIN accounts a ON a.id = f.account_id
            WHERE f.target_account_id = $1
-             AND ($2::bigint IS NULL OR a.id < $2)
-             AND ($3::bigint IS NULL OR a.id > $3)
-             AND ($6::bigint IS NULL OR a.id > $6)
+             AND ($2::bigint IS NULL OR f.id < $2)
+             AND ($3::bigint IS NULL OR f.id > $3)
+             AND ($6::bigint IS NULL OR f.id > $6)
+             AND a.suspended_at IS NULL
              AND ($4::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM blocks b
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
@@ -1015,16 +1016,31 @@ pub async fn get_account_followers(
              AND ($4::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM mutes WHERE account_id = $4 AND target_account_id = a.id
              ))
-           ORDER BY a.id DESC LIMIT $5"#,
+           ORDER BY f.id DESC LIMIT $5"#,
         id, max_id, since_id, viewer_id, limit, min_id
     )
     .fetch_all(&state.db)
     .await?;
 
+    let first_follow_id = follow_rows.first().map(|r| r.follow_id.to_string());
+    let last_follow_id = follow_rows.last().map(|r| r.follow_id.to_string());
+    let account_ids: Vec<i64> = follow_rows.iter().map(|r| r.account_id).collect();
+    let account_map: std::collections::HashMap<i64, Account> = if account_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &account_ids)
+            .fetch_all(&state.db).await?
+            .into_iter().map(|a| (a.id, a)).collect()
+    };
+    // Preserve follow-id ordering
+    let accounts: Vec<Account> = follow_rows.iter()
+        .filter_map(|r| account_map.get(&r.account_id).cloned())
+        .collect();
+
     let api_accounts = batch_accounts_to_api(&state, &accounts).await;
-    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+    let link = first_follow_id.zip(last_follow_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
@@ -1075,14 +1091,15 @@ pub async fn get_account_following(
     let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let accounts = sqlx::query_as!(
-        Account,
-        r#"SELECT a.* FROM accounts a
-           JOIN follows f ON f.target_account_id = a.id
+    // Paginate by follow.id (matching Mastodon's Follow.paginate_by_max_id)
+    let follow_rows = sqlx::query!(
+        r#"SELECT f.id as follow_id, f.target_account_id FROM follows f
+           JOIN accounts a ON a.id = f.target_account_id
            WHERE f.account_id = $1
-             AND ($2::bigint IS NULL OR a.id < $2)
-             AND ($3::bigint IS NULL OR a.id > $3)
-             AND ($6::bigint IS NULL OR a.id > $6)
+             AND ($2::bigint IS NULL OR f.id < $2)
+             AND ($3::bigint IS NULL OR f.id > $3)
+             AND ($6::bigint IS NULL OR f.id > $6)
+             AND a.suspended_at IS NULL
              AND ($4::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM blocks b
                  WHERE (b.account_id = $4 AND b.target_account_id = a.id)
@@ -1091,16 +1108,31 @@ pub async fn get_account_following(
              AND ($4::bigint IS NULL OR NOT EXISTS (
                  SELECT 1 FROM mutes WHERE account_id = $4 AND target_account_id = a.id
              ))
-           ORDER BY a.id DESC LIMIT $5"#,
+           ORDER BY f.id DESC LIMIT $5"#,
         id, max_id, since_id, viewer_id, limit, min_id
     )
     .fetch_all(&state.db)
     .await?;
 
+    let first_follow_id = follow_rows.first().map(|r| r.follow_id.to_string());
+    let last_follow_id = follow_rows.last().map(|r| r.follow_id.to_string());
+    let account_ids: Vec<i64> = follow_rows.iter().map(|r| r.target_account_id).collect();
+    let account_map: std::collections::HashMap<i64, Account> = if account_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &account_ids)
+            .fetch_all(&state.db).await?
+            .into_iter().map(|a| (a.id, a)).collect()
+    };
+    // Preserve follow-id ordering
+    let accounts: Vec<Account> = follow_rows.iter()
+        .filter_map(|r| account_map.get(&r.target_account_id).cloned())
+        .collect();
+
     let api_accounts = batch_accounts_to_api(&state, &accounts).await;
-    let link = api_accounts.first().zip(api_accounts.last()).map(|(newest, oldest)| {
+    let link = first_follow_id.zip(last_follow_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
@@ -1117,6 +1149,7 @@ pub async fn get_account_following(
 pub struct AccountSearchQuery {
     pub q: String,
     pub limit: Option<i64>,
+    pub offset: Option<i64>,
     pub resolve: Option<bool>,
     pub following: Option<bool>,
 }
@@ -1127,6 +1160,7 @@ pub async fn search_accounts(
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let limit = q.limit.unwrap_or(40).min(80).max(1);
+    let offset = q.offset.unwrap_or(0).max(0);
     let pattern = format!("%{}%", q.q.to_lowercase());
 
     let mut accounts = if q.following.unwrap_or(false) {
@@ -1138,8 +1172,8 @@ pub async fn search_accounts(
                    WHERE f.account_id = $1
                      AND a.suspended_at IS NULL
                      AND (lower(a.username) LIKE $2 OR lower(a.display_name) LIKE $2)
-                   ORDER BY a.username LIMIT $3"#,
-                auth.account_id, pattern, limit
+                   ORDER BY a.username LIMIT $3 OFFSET $4"#,
+                auth.account_id, pattern, limit, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -1152,8 +1186,8 @@ pub async fn search_accounts(
             r#"SELECT * FROM accounts
                WHERE suspended_at IS NULL
                  AND (lower(username) LIKE $1 OR lower(display_name) LIKE $1)
-               ORDER BY username LIMIT $2"#,
-            pattern, limit
+               ORDER BY username LIMIT $2 OFFSET $3"#,
+            pattern, limit, offset
         )
         .fetch_all(&state.db)
         .await?

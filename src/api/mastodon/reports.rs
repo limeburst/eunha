@@ -37,6 +37,7 @@ pub struct ReportForm {
     pub comment: Option<String>,
     pub forward: Option<bool>,
     pub category: Option<String>,
+    pub rule_ids: Option<Vec<String>>,
 }
 
 pub async fn file_report(
@@ -76,12 +77,22 @@ pub async fn file_report(
 
     let comment = form.comment.unwrap_or_default();
     let forwarded = form.forward.unwrap_or(false);
-    let category = form.category.unwrap_or_else(|| "other".into());
+    let rule_ids: Vec<i64> = form.rule_ids
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| s.parse::<i64>().ok())
+        .collect();
+    // If rule_ids are provided, Mastodon forces category to 'violation'
+    let category = if !rule_ids.is_empty() {
+        "violation".to_string()
+    } else {
+        form.category.unwrap_or_else(|| "other".into())
+    };
     let category_int = crate::db::models::report_category::from_str(&category);
 
     let report = sqlx::query!(
-        r#"INSERT INTO reports (account_id, target_account_id, status_ids, comment, forwarded, category)
-           VALUES ($1, $2, $3, $4, $5, $6)
+        r#"INSERT INTO reports (account_id, target_account_id, status_ids, comment, forwarded, category, rule_ids)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING id, created_at"#,
         auth.account_id,
         form.account_id,
@@ -89,11 +100,13 @@ pub async fn file_report(
         comment,
         forwarded,
         category_int,
+        &rule_ids,
     )
     .fetch_one(&state.db)
     .await?;
 
     let status_id_strings: Vec<String> = status_ids.iter().map(|id| id.to_string()).collect();
+    let rule_id_strings: Vec<String> = rule_ids.iter().map(|id| id.to_string()).collect();
 
     // Notify admins/moderators about the new report.
     {
@@ -120,7 +133,7 @@ pub async fn file_report(
         forwarded,
         created_at: super::convert::mastodon_date(report.created_at),
         status_ids: status_id_strings,
-        rule_ids: vec![],
+        rule_ids: rule_id_strings,
         collection_ids: vec![],
         target_account: ta_api,
     }))
