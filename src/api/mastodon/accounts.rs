@@ -3182,27 +3182,6 @@ pub async fn get_profile(
     Ok(Json(api_account))
 }
 
-// ── PUT /api/v1/profile (tab display settings) ───────────────────────────
-
-pub async fn update_profile_settings(
-    Extension(auth): Extension<AuthenticatedUser>,
-    State(state): State<AppState>,
-    Json(_body): Json<serde_json::Value>,
-) -> AppResult<Json<super::types::Account>> {
-    auth.require_scope("write:accounts")?;
-    let account = sqlx::query_as!(
-        crate::db::models::Account,
-        "SELECT * FROM accounts WHERE id = $1",
-        auth.account_id,
-    )
-    .fetch_one(&state.db)
-    .await?;
-    let mut api = account_from_db(&account);
-    api.emojis = fetch_account_emojis(&state, &account).await;
-    api.roles = fetch_account_roles(&state, account.id).await;
-    Ok(Json(api))
-}
-
 // ── DELETE /api/v1/profile/avatar ────────────────────────────────────────
 
 pub async fn delete_profile_avatar(
