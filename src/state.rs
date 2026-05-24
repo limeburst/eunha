@@ -26,6 +26,10 @@ impl AppState {
             .expect("failed to build HTTP client");
 
         let storage = Arc::new(Storage::from_config(&config.media_storage).await);
+        crate::api::mastodon::convert::init_media_defaults(
+            storage.missing_avatar_url(),
+            storage.missing_header_url(),
+        );
         let email = EmailSender::new(
             http.clone(),
             config.resend.api_key.clone(),

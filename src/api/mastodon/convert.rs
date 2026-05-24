@@ -1,10 +1,26 @@
 /// Conversions from DB models → Mastodon API types.
+use std::sync::OnceLock;
 use crate::db::models;
 use super::formatting::{mention_map_from_api, render_content};
 use super::types;
 
-pub(super) const DEFAULT_AVATAR: &str = "https://r2.eunha.social/avatars/original/missing.png";
-pub(super) const DEFAULT_HEADER: &str = "https://r2.eunha.social/headers/original/missing.png";
+static DEFAULT_AVATAR: OnceLock<String> = OnceLock::new();
+static DEFAULT_HEADER: OnceLock<String> = OnceLock::new();
+
+/// Call once at startup (before serving requests) to set the default avatar/header
+/// URLs from the configured media storage base URL.
+pub fn init_media_defaults(avatar: String, header: String) {
+    DEFAULT_AVATAR.set(avatar).ok();
+    DEFAULT_HEADER.set(header).ok();
+}
+
+pub(super) fn missing_avatar() -> &'static str {
+    DEFAULT_AVATAR.get().map(|s| s.as_str()).unwrap_or("avatars/original/missing.png")
+}
+
+pub(super) fn missing_header() -> &'static str {
+    DEFAULT_HEADER.get().map(|s| s.as_str()).unwrap_or("headers/original/missing.png")
+}
 
 /// Format a timestamp in the Mastodon-standard format: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
 /// Mastodon always uses the `Z` suffix and millisecond precision; `to_rfc3339()` produces
@@ -47,11 +63,11 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         note: if suspended { String::new() } else { a.note.clone() },
         url,
         uri,
-        avatar: if suspended { DEFAULT_AVATAR.to_string() } else { a.avatar.clone().unwrap_or_else(|| DEFAULT_AVATAR.to_string()) },
-        avatar_static: if suspended { DEFAULT_AVATAR.to_string() } else { a.avatar_static.clone().unwrap_or_else(|| DEFAULT_AVATAR.to_string()) },
+        avatar: if suspended { missing_avatar().to_string() } else { a.avatar.clone().unwrap_or_else(|| missing_avatar().to_string()) },
+        avatar_static: if suspended { missing_avatar().to_string() } else { a.avatar_static.clone().unwrap_or_else(|| missing_avatar().to_string()) },
         avatar_description: if suspended { String::new() } else { a.avatar_description.clone() },
-        header: if suspended { DEFAULT_HEADER.to_string() } else { a.header.clone().unwrap_or_else(|| DEFAULT_HEADER.to_string()) },
-        header_static: if suspended { DEFAULT_HEADER.to_string() } else { a.header_static.clone().unwrap_or_else(|| DEFAULT_HEADER.to_string()) },
+        header: if suspended { missing_header().to_string() } else { a.header.clone().unwrap_or_else(|| missing_header().to_string()) },
+        header_static: if suspended { missing_header().to_string() } else { a.header_static.clone().unwrap_or_else(|| missing_header().to_string()) },
         header_description: if suspended { String::new() } else { a.header_description.clone() },
         followers_count: a.followers_count,
         following_count: a.following_count,

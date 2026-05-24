@@ -49,6 +49,14 @@ impl Storage {
         format!("{}/{}", self.base_url.trim_end_matches('/'), key)
     }
 
+    pub fn missing_avatar_url(&self) -> String {
+        self.public_url("avatars/original/missing.png")
+    }
+
+    pub fn missing_header_url(&self) -> String {
+        self.public_url("headers/original/missing.png")
+    }
+
     pub async fn delete(&self, key: &str) -> AppResult<()> {
         self.client
             .delete_object()
