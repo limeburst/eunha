@@ -6,7 +6,7 @@ use axum::{
 };
 use std::collections::HashMap;
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     middleware::{AuthenticatedUser, ResolvedInstance},
     state::AppState,
 };
@@ -101,49 +101,56 @@ pub async fn get_tag(
     let domain = &instance.domain;
     let name = name.to_lowercase();
 
+    // Mastodon returns an empty-id tag for unknown (but valid) hashtag names;
+    // it does NOT 404. Match that behaviour.
     let tag = sqlx::query!(
         "SELECT id FROM tags WHERE name = $1",
         name,
     )
     .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound)?;
+    .await?;
 
-    let (following, featuring) = if let Some(Extension(auth)) = auth {
-        let following = sqlx::query_scalar!(
-            r#"SELECT EXISTS(
-               SELECT 1 FROM tag_follows tf
-               JOIN tags t ON t.id = tf.tag_id
-               WHERE tf.account_id = $1 AND t.name = $2
-            )"#,
-            auth.account_id,
-            name,
-        )
-        .fetch_one(&state.db)
-        .await?
-        .unwrap_or(false);
+    let (following, featuring, history, id_str) = if let Some(ref t) = tag {
+        let history = fetch_tag_history(&state.db, t.id).await;
+        let (following, featuring) = if let Some(Extension(ref auth)) = auth {
+            let following = sqlx::query_scalar!(
+                r#"SELECT EXISTS(
+                   SELECT 1 FROM tag_follows tf
+                   WHERE tf.account_id = $1 AND tf.tag_id = $2
+                )"#,
+                auth.account_id,
+                t.id,
+            )
+            .fetch_one(&state.db)
+            .await?
+            .unwrap_or(false);
 
-        let featuring = sqlx::query_scalar!(
-            r#"SELECT EXISTS(
-               SELECT 1 FROM featured_tags ft
-               WHERE ft.account_id = $1 AND ft.tag_id = $2
-            )"#,
-            auth.account_id,
-            tag.id,
-        )
-        .fetch_one(&state.db)
-        .await?
-        .unwrap_or(false);
+            let featuring = sqlx::query_scalar!(
+                "SELECT EXISTS(SELECT 1 FROM featured_tags WHERE account_id = $1 AND tag_id = $2)",
+                auth.account_id,
+                t.id,
+            )
+            .fetch_one(&state.db)
+            .await?
+            .unwrap_or(false);
 
-        (Some(following), Some(featuring))
+            (Some(following), Some(featuring))
+        } else {
+            (None, None)
+        };
+        (following, featuring, history, t.id.to_string())
     } else {
-        (None, None)
+        // Tag not in DB: return empty-id tag with no history (matches Mastodon)
+        let (following, featuring) = if auth.is_some() {
+            (Some(false), Some(false))
+        } else {
+            (None, None)
+        };
+        (following, featuring, vec![], String::new())
     };
 
-    let history = fetch_tag_history(&state.db, tag.id).await;
-
     Ok(Json(Tag {
-        id: tag.id.to_string(),
+        id: id_str,
         url: tag_url(domain, &name),
         name,
         history,
@@ -236,13 +243,15 @@ pub async fn follow_tag(
     let domain = &instance.domain;
     let name = name.to_lowercase();
 
+    // Create the tag if it doesn't already exist (matches Mastodon behaviour).
     let tag_id = sqlx::query_scalar!(
-        "SELECT id FROM tags WHERE name = $1",
+        r#"INSERT INTO tags (name) VALUES ($1)
+           ON CONFLICT ((lower(name))) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id"#,
         name,
     )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound)?;
+    .fetch_one(&state.db)
+    .await?;
 
     sqlx::query!(
         "INSERT INTO tag_follows (account_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -282,34 +291,45 @@ pub async fn unfollow_tag(
     let domain = &instance.domain;
     let name = name.to_lowercase();
 
-    let tag_id = sqlx::query_scalar!(
+    let tag = sqlx::query!(
         "SELECT id FROM tags WHERE name = $1",
         name,
     )
     .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound)?;
+    .await?;
+
+    // If tag doesn't exist there's nothing to unfollow; return empty-id tag (matches Mastodon).
+    let Some(tag) = tag else {
+        return Ok(Json(Tag {
+            id: String::new(),
+            url: tag_url(domain, &name),
+            name,
+            history: vec![],
+            following: Some(false),
+            featuring: Some(false),
+        }));
+    };
 
     sqlx::query!(
         "DELETE FROM tag_follows WHERE account_id = $1 AND tag_id = $2",
         auth.account_id,
-        tag_id,
+        tag.id,
     )
     .execute(&state.db)
     .await?;
 
-    let history = fetch_tag_history(&state.db, tag_id).await;
+    let history = fetch_tag_history(&state.db, tag.id).await;
 
     let featuring = sqlx::query_scalar!(
         "SELECT EXISTS(SELECT 1 FROM featured_tags WHERE account_id = $1 AND tag_id = $2)",
-        auth.account_id, tag_id,
+        auth.account_id, tag.id,
     )
     .fetch_one(&state.db)
     .await?
     .unwrap_or(false);
 
     Ok(Json(Tag {
-        id: tag_id.to_string(),
+        id: tag.id.to_string(),
         url: tag_url(domain, &name),
         name,
         history,
