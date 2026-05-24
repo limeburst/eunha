@@ -50,6 +50,7 @@ use super::types::{AppCredentials, CredentialApplication, Token};
 
 pub async fn verify_app_credentials(
     State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     headers: axum::http::HeaderMap,
 ) -> AppResult<Json<AppCredentials>> {
     let token = headers
@@ -79,7 +80,7 @@ pub async fn verify_app_credentials(
         scopes: normalize_scopes(&row.scopes).split_whitespace().map(str::to_owned).collect(),
         redirect_uri,
         redirect_uris: uris,
-        vapid_key: None,
+        vapid_key: Some(instance.vapid_public_key.clone()),
     }))
 }
 
@@ -95,6 +96,7 @@ pub struct RegisterAppForm {
 
 pub async fn register_app(
     State(state): State<AppState>,
+    Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     FormOrJson(form): FormOrJson<RegisterAppForm>,
 ) -> AppResult<Json<CredentialApplication>> {
     let client_id = generate_token(32);
@@ -118,10 +120,10 @@ pub async fn register_app(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(app_to_credential(&app)))
+    Ok(Json(app_to_credential(&app, &instance.vapid_public_key)))
 }
 
-fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
+fn app_to_credential(app: &OauthApplication, vapid_key: &str) -> CredentialApplication {
     let uris: Vec<String> = app.redirect_uri.lines().map(str::to_owned).collect();
     let redirect_uri = uris.first().cloned().unwrap_or_else(|| app.redirect_uri.clone());
     CredentialApplication {
@@ -134,7 +136,7 @@ fn app_to_credential(app: &OauthApplication) -> CredentialApplication {
         client_id: app.uid.clone(),
         client_secret: app.secret.clone(),
         client_secret_expires_at: 0,
-        vapid_key: None,
+        vapid_key: Some(vapid_key.to_string()),
     }
 }
 

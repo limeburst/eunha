@@ -856,7 +856,6 @@ pub struct SuggestionV2 {
 pub struct AppCredentials {
     pub id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub website: Option<String>,
     pub scopes: Vec<String>,
     pub redirect_uri: String,
