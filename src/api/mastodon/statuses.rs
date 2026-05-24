@@ -1828,48 +1828,47 @@ pub async fn favourited_by(
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let accounts = if let Some(vid) = viewer_id {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN favourites f ON f.account_id = a.id
-               WHERE f.status_id = $1
-                 AND NOT EXISTS (
-                     SELECT 1 FROM blocks
-                     WHERE (account_id = $2 AND target_account_id = a.id)
-                        OR (account_id = a.id AND target_account_id = $2)
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1 FROM mutes WHERE account_id = $2 AND target_account_id = a.id
-                 )
-                 AND ($3::bigint IS NULL OR a.id < $3)
-                 AND ($4::bigint IS NULL OR a.id > $4)
-                 AND ($5::bigint IS NULL OR a.id > $5)
-               ORDER BY a.id DESC LIMIT $6"#,
-            id, vid, max_id, since_id, min_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+    // Paginate by favourite.id (matching Mastodon's Favourite.paginate_by_max_id)
+    let fav_rows = sqlx::query!(
+        r#"SELECT f.id AS fav_id, f.account_id FROM favourites f
+           JOIN accounts a ON a.id = f.account_id
+           WHERE f.status_id = $1
+             AND a.suspended_at IS NULL
+             AND ($2::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM blocks
+                 WHERE (account_id = $2 AND target_account_id = a.id)
+                    OR (account_id = a.id AND target_account_id = $2)
+             ))
+             AND ($2::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM mutes WHERE account_id = $2 AND target_account_id = a.id
+             ))
+             AND ($3::bigint IS NULL OR f.id < $3)
+             AND ($4::bigint IS NULL OR f.id > $4)
+             AND ($5::bigint IS NULL OR f.id > $5)
+           ORDER BY f.id DESC LIMIT $6"#,
+        id, viewer_id, max_id, since_id, min_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let first_fav_id = fav_rows.first().map(|r| r.fav_id.to_string());
+    let last_fav_id = fav_rows.last().map(|r| r.fav_id.to_string());
+    let account_ids: Vec<i64> = fav_rows.iter().map(|r| r.account_id).collect();
+    let account_map: std::collections::HashMap<i64, Account> = if account_ids.is_empty() {
+        std::collections::HashMap::new()
     } else {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN favourites f ON f.account_id = a.id
-               WHERE f.status_id = $1
-                 AND ($2::bigint IS NULL OR a.id < $2)
-                 AND ($3::bigint IS NULL OR a.id > $3)
-                 AND ($4::bigint IS NULL OR a.id > $4)
-               ORDER BY a.id DESC LIMIT $5"#,
-            id, max_id, since_id, min_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+        sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &account_ids)
+            .fetch_all(&state.db).await?
+            .into_iter().map(|a| (a.id, a)).collect()
     };
+    let accounts: Vec<Account> = fav_rows.iter()
+        .filter_map(|r| account_map.get(&r.account_id).cloned())
+        .collect();
 
     let result = batch_accounts_to_api(&state, &accounts).await;
-    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+    let link = first_fav_id.zip(last_fav_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
@@ -1903,50 +1902,48 @@ pub async fn reblogged_by(
     let since_id = pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
     let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
-    let accounts = if let Some(vid) = viewer_id {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN statuses s ON s.account_id = a.id
-               WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
-                 AND s.visibility IN (0, 1)
-                 AND NOT EXISTS (
-                     SELECT 1 FROM blocks
-                     WHERE (account_id = $2 AND target_account_id = a.id)
-                        OR (account_id = a.id AND target_account_id = $2)
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1 FROM mutes WHERE account_id = $2 AND target_account_id = a.id
-                 )
-                 AND ($3::bigint IS NULL OR a.id < $3)
-                 AND ($4::bigint IS NULL OR a.id > $4)
-                 AND ($5::bigint IS NULL OR a.id > $5)
-               ORDER BY a.id DESC LIMIT $6"#,
-            id, vid, max_id, since_id, min_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+    // Paginate by reblog status.id (matching Mastodon's Status.paginate_by_max_id)
+    let reblog_rows = sqlx::query!(
+        r#"SELECT s.id AS reblog_id, s.account_id FROM statuses s
+           JOIN accounts a ON a.id = s.account_id
+           WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
+             AND s.visibility IN (0, 1)
+             AND a.suspended_at IS NULL
+             AND ($2::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM blocks
+                 WHERE (account_id = $2 AND target_account_id = a.id)
+                    OR (account_id = a.id AND target_account_id = $2)
+             ))
+             AND ($2::bigint IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM mutes WHERE account_id = $2 AND target_account_id = a.id
+             ))
+             AND ($3::bigint IS NULL OR s.id < $3)
+             AND ($4::bigint IS NULL OR s.id > $4)
+             AND ($5::bigint IS NULL OR s.id > $5)
+           ORDER BY s.id DESC LIMIT $6"#,
+        id, viewer_id, max_id, since_id, min_id, limit,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let first_reblog_id = reblog_rows.first().map(|r| r.reblog_id.to_string());
+    let last_reblog_id = reblog_rows.last().map(|r| r.reblog_id.to_string());
+    let account_ids: Vec<i64> = reblog_rows.iter().map(|r| r.account_id).collect();
+    let account_map: std::collections::HashMap<i64, Account> = if account_ids.is_empty() {
+        std::collections::HashMap::new()
     } else {
-        sqlx::query_as!(
-            Account,
-            r#"SELECT a.* FROM accounts a
-               JOIN statuses s ON s.account_id = a.id
-               WHERE s.reblog_of_id = $1 AND s.deleted_at IS NULL
-                 AND s.visibility IN (0, 1)
-                 AND ($2::bigint IS NULL OR a.id < $2)
-                 AND ($3::bigint IS NULL OR a.id > $3)
-                 AND ($4::bigint IS NULL OR a.id > $4)
-               ORDER BY a.id DESC LIMIT $5"#,
-            id, max_id, since_id, min_id, limit,
-        )
-        .fetch_all(&state.db)
-        .await?
+        sqlx::query_as!(Account, "SELECT * FROM accounts WHERE id = ANY($1::bigint[])", &account_ids)
+            .fetch_all(&state.db).await?
+            .into_iter().map(|a| (a.id, a)).collect()
     };
+    let accounts: Vec<Account> = reblog_rows.iter()
+        .filter_map(|r| account_map.get(&r.account_id).cloned())
+        .collect();
 
     let result = batch_accounts_to_api(&state, &accounts).await;
-    let link = result.first().zip(result.last()).map(|(newest, oldest)| {
+    let link = first_reblog_id.zip(last_reblog_id).map(|(newest, oldest)| {
         let extra = super::non_pagination_query(uri.query());
-        super::link_header(&req_headers, uri.path(), &extra, &newest.id, &oldest.id)
+        super::link_header(&req_headers, uri.path(), &extra, &newest, &oldest)
     });
     let mut resp_headers = HeaderMap::new();
     if let Some(v) = link {
