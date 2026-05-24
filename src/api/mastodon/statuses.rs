@@ -1238,10 +1238,16 @@ pub async fn unfavourite_status(
 
 // ── POST /api/v1/statuses/:id/reblog ──────────────────────────────────────
 
+#[derive(Debug, Deserialize, Default)]
+pub struct ReblogForm {
+    pub visibility: Option<String>,
+}
+
 pub async fn reblog_status(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
+    body: Option<Json<ReblogForm>>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
     let (fetched, _) = fetch_status_with_account(&state, id).await?;
@@ -1263,6 +1269,27 @@ pub async fn reblog_status(
     }
 
     let boost_account = fetch_account(&state, auth.account_id).await?;
+
+    // Determine visibility: hidden originals keep their own visibility;
+    // otherwise use the requested visibility or fall back to the user's default.
+    let boost_visibility = if matches!(original.visibility, crate::db::models::vis::PRIVATE | crate::db::models::vis::DIRECT) {
+        original.visibility
+    } else {
+        let requested = body.as_ref().and_then(|b| b.visibility.as_deref());
+        match requested {
+            Some(v) => crate::db::models::vis::from_str(v),
+            None => {
+                let user_default = sqlx::query_scalar!(
+                    "SELECT default_privacy FROM users WHERE account_id = $1",
+                    auth.account_id,
+                )
+                .fetch_optional(&state.db)
+                .await?
+                .unwrap_or_else(|| "public".to_owned());
+                crate::db::models::vis::from_str(&user_default)
+            }
+        }
+    };
 
     // Idempotent: if already reblogged, return the existing boost
     let existing = sqlx::query_as!(
@@ -1287,7 +1314,7 @@ pub async fn reblog_status(
            RETURNING *"#,
         boost_id,
         auth.account_id,
-        original.visibility,
+        boost_visibility,
         original_id,
     )
     .fetch_one(&state.db)
