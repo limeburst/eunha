@@ -1343,7 +1343,7 @@ pub async fn update_credentials(
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 source_language = Some(if v.is_empty() { None } else { Some(v) });
             }
-            "source[hide_collections]" => {
+            "hide_collections" | "source[hide_collections]" => {
                 let v = field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 source_hide_collections = Some(v == "true" || v == "1");
             }
