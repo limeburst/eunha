@@ -2880,17 +2880,24 @@ pub async fn set_account_note(
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:accounts")?;
     let comment = form.comment.unwrap_or_default();
-    sqlx::query!(
-        r#"INSERT INTO account_notes (account_id, target_account_id, comment)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (account_id, target_account_id)
-           DO UPDATE SET comment = EXCLUDED.comment, updated_at = now()"#,
-        auth.account_id,
-        target_id,
-        comment,
-    )
-    .execute(&state.db)
-    .await?;
+    if comment.trim().is_empty() {
+        sqlx::query!(
+            "DELETE FROM account_notes WHERE account_id = $1 AND target_account_id = $2",
+            auth.account_id, target_id,
+        )
+        .execute(&state.db)
+        .await?;
+    } else {
+        sqlx::query!(
+            r#"INSERT INTO account_notes (account_id, target_account_id, comment)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (account_id, target_account_id)
+               DO UPDATE SET comment = EXCLUDED.comment, updated_at = now()"#,
+            auth.account_id, target_id, comment,
+        )
+        .execute(&state.db)
+        .await?;
+    }
 
     build_relationship(&state, auth.account_id, target_id).await.map(Json)
 }
