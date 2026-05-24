@@ -1957,11 +1957,19 @@ pub async fn reblogged_by(
 // ── PUT /api/v1/statuses/:id ──────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+pub struct EditMediaAttribute {
+    pub id: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct EditStatusForm {
     pub status: Option<String>,
     pub spoiler_text: Option<String>,
     pub sensitive: Option<bool>,
     pub language: Option<String>,
+    pub media_ids: Option<Vec<String>>,
+    pub media_attributes: Option<Vec<EditMediaAttribute>>,
 }
 
 pub async fn edit_status(
@@ -2041,6 +2049,43 @@ pub async fn edit_status(
     store_statuses_tags(&state, id, auth.account_id, &hashtags).await?;
     store_status_mentions(&state, id, &resolved).await?;
     spawn_card_fetch(&state, id, new_content);
+
+    // Update media: change descriptions and/or reorder/replace attached media.
+    if let Some(ref attrs) = form.media_attributes {
+        for attr in attrs {
+            if let Ok(media_id) = attr.id.parse::<i64>() {
+                if let Some(ref desc) = attr.description {
+                    let _ = sqlx::query!(
+                        "UPDATE media_attachments SET description = $1 WHERE id = $2 AND account_id = $3",
+                        desc, media_id, auth.account_id,
+                    )
+                    .execute(&state.db)
+                    .await;
+                }
+            }
+        }
+    }
+    if let Some(ref ids) = form.media_ids {
+        let parsed: Vec<i64> = ids.iter()
+            .filter_map(|s| s.parse::<i64>().ok())
+            .collect();
+        // Detach old media not in the new set
+        let _ = sqlx::query!(
+            "UPDATE media_attachments SET status_id = NULL WHERE status_id = $1 AND id != ALL($2::bigint[])",
+            id, &parsed,
+        )
+        .execute(&state.db)
+        .await;
+        // Attach new media (must be owned by same account)
+        for media_id in &parsed {
+            let _ = sqlx::query!(
+                "UPDATE media_attachments SET status_id = $1 WHERE id = $2 AND account_id = $3 AND (status_id IS NULL OR status_id = $1)",
+                id, media_id, auth.account_id,
+            )
+            .execute(&state.db)
+            .await;
+        }
+    }
 
     // Send "update" notifications to users who have interacted with this status
     let interacted: Vec<i64> = sqlx::query_scalar!(
