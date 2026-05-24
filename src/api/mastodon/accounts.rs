@@ -626,12 +626,34 @@ pub async fn get_relationships(
     auth.require_scope("read:follows")?;
     // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
     // Parse with form_urlencoded which correctly returns each pair separately.
-    let ids: Vec<i64> = url::form_urlencoded::parse(
+    let pairs: Vec<(String, String)> = url::form_urlencoded::parse(
             qs.as_deref().unwrap_or("").as_bytes()
         )
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+
+    let with_suspended = pairs.iter().any(|(k, v)| k == "with_suspended" && (v == "true" || v == "1"));
+
+    let mut ids: Vec<i64> = pairs.iter()
         .filter(|(k, _)| k == "id[]" || k == "id")
         .filter_map(|(_, v)| v.parse::<i64>().ok())
         .collect();
+
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
+    }
+
+    // Without with_suspended, filter out suspended accounts (matches Mastodon default)
+    if !with_suspended {
+        let non_suspended: Vec<i64> = sqlx::query_scalar!(
+            "SELECT id FROM accounts WHERE id = ANY($1::bigint[]) AND suspended_at IS NULL",
+            &ids,
+        )
+        .fetch_all(&state.db)
+        .await?;
+        let allowed: std::collections::HashSet<i64> = non_suspended.into_iter().collect();
+        ids.retain(|id| allowed.contains(id));
+    }
 
     if ids.is_empty() {
         return Ok(Json(vec![]));
