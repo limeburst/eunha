@@ -4,8 +4,6 @@ use axum::{
 };
 use image::imageops::FilterType;
 use img_parts::ImageEXIF;
-use serde::Deserialize;
-
 use crate::{
     error::{AppError, AppResult},
     middleware::AuthenticatedUser,
@@ -189,16 +187,11 @@ pub async fn get_media(
 
 // ── PUT /api/v1/media/:id ─────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-pub struct UpdateMediaForm {
-    pub description: Option<String>,
-}
-
 pub async fn update_media(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Json(form): Json<UpdateMediaForm>,
+    mut multipart: Multipart,
 ) -> AppResult<Json<MediaAttachment>> {
     auth.require_scope("write:media")?;
     sqlx::query!(
@@ -209,13 +202,53 @@ pub async fn update_media(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    if let Some(ref desc) = form.description {
+    let mut description: Option<String> = None;
+    let mut focus: Option<String> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::Unprocessable(e.to_string()))? {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "description" => {
+                description = Some(field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?);
+            }
+            "focus" => {
+                focus = Some(field.text().await.map_err(|e| AppError::Unprocessable(e.to_string()))?);
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(ref desc) = description {
         sqlx::query!(
             "UPDATE media_attachments SET description = $1 WHERE id = $2",
             desc, id,
         )
         .execute(&state.db)
         .await?;
+    }
+
+    if let Some(ref focus_str) = focus {
+        // Parse "x,y" format into { focus: { x, y } } and merge into meta
+        if let Some((x_str, y_str)) = focus_str.split_once(',') {
+            if let (Ok(x), Ok(y)) = (x_str.trim().parse::<f64>(), y_str.trim().parse::<f64>()) {
+                let current = sqlx::query_scalar!(
+                    "SELECT meta FROM media_attachments WHERE id = $1",
+                    id,
+                )
+                .fetch_one(&state.db)
+                .await?;
+                let mut meta = current.unwrap_or(serde_json::json!({}));
+                if let Some(obj) = meta.as_object_mut() {
+                    obj.insert("focus".to_string(), serde_json::json!({ "x": x, "y": y }));
+                }
+                sqlx::query!(
+                    "UPDATE media_attachments SET meta = $1 WHERE id = $2",
+                    meta, id,
+                )
+                .execute(&state.db)
+                .await?;
+            }
+        }
     }
 
     let updated = sqlx::query_as!(
