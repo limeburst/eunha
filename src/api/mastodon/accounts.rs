@@ -1278,13 +1278,12 @@ pub async fn search_accounts(
 
 // ── PATCH /api/v1/accounts/update_credentials ─────────────────────────────
 
-pub async fn update_credentials(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthenticatedUser>,
-    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+async fn do_update_credentials(
+    state: &AppState,
+    auth: &AuthenticatedUser,
+    instance_domain: &str,
     mut multipart: Multipart,
-) -> AppResult<Json<ApiAccount>> {
-    auth.require_scope("write:accounts")?;
+) -> AppResult<Account> {
     let mut display_name: Option<String> = None;
     let mut note: Option<String> = None;
     let mut locked: Option<bool> = None;
@@ -1424,7 +1423,7 @@ pub async fn update_credentials(
             .execute(&state.db).await?;
     }
     if let Some(ref n) = note {
-        let domain = instance.domain.as_str();
+        let domain = instance_domain;
         let note_html = super::formatting::render_content(n, domain, &std::collections::HashMap::new());
         let note_html = if note_html.is_empty() { String::new() } else { note_html };
         sqlx::query!("UPDATE accounts SET note = $1, note_text = $2 WHERE id = $3", note_html, n, auth.account_id)
@@ -1580,10 +1579,87 @@ pub async fn update_credentials(
         .execute(&state.db).await?;
     }
 
-    let account = fetch_account(&state, auth.account_id).await?;
+    fetch_account(state, auth.account_id).await
+}
+
+pub async fn update_credentials(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+    multipart: Multipart,
+) -> AppResult<Json<ApiAccount>> {
+    auth.require_scope("write:accounts")?;
+    let account = do_update_credentials(&state, &auth, &instance.domain, multipart).await?;
+    build_credential_account_response(&state, &auth, account).await
+}
+
+// ── PATCH /api/v1/profile (profile-specific update) ──────────────────────
+
+pub async fn patch_profile(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthenticatedUser>,
+    Extension(crate::middleware::ResolvedInstance(instance)): Extension<crate::middleware::ResolvedInstance>,
+    multipart: Multipart,
+) -> AppResult<Json<super::types::Profile>> {
+    auth.require_scope("write:accounts")?;
+    let account = do_update_credentials(&state, &auth, &instance.domain, multipart).await?;
+
+    let domain = &instance.domain;
+    let featured_tag_rows = sqlx::query!(
+        r#"SELECT ft.id, t.name, ft.statuses_count, ft.last_status_at
+           FROM featured_tags ft
+           JOIN tags t ON t.id = ft.tag_id
+           WHERE ft.account_id = $1
+           ORDER BY ft.id"#,
+        account.id,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let featured_tags = featured_tag_rows
+        .into_iter()
+        .map(|r| super::types::FeaturedTag {
+            id: r.id.to_string(),
+            name: r.name.clone(),
+            url: format!("https://{}/@{}/tagged/{}", domain, account.username, r.name),
+            statuses_count: r.statuses_count.to_string(),
+            last_status_at: r.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        })
+        .collect();
+
+    let a = &account;
+    Ok(Json(super::types::Profile {
+        id: a.id.to_string(),
+        display_name: a.display_name.clone(),
+        note: a.note.clone(),
+        fields: super::convert::fields_from_db(&a.fields),
+        avatar: a.avatar.clone().unwrap_or_else(|| super::convert::missing_avatar().to_string()),
+        avatar_static: a.avatar_static.clone().unwrap_or_else(|| super::convert::missing_avatar().to_string()),
+        avatar_description: a.avatar_description.clone(),
+        header: a.header.clone().unwrap_or_else(|| super::convert::missing_header().to_string()),
+        header_static: a.header_static.clone().unwrap_or_else(|| super::convert::missing_header().to_string()),
+        header_description: a.header_description.clone(),
+        locked: a.locked,
+        bot: a.bot,
+        hide_collections: Some(a.hide_collections),
+        discoverable: a.discoverable,
+        indexable: a.indexable,
+        show_media: Some(a.show_media),
+        show_media_replies: Some(a.show_media_replies),
+        show_featured: Some(a.show_featured),
+        attribution_domains: a.attribution_domains.clone(),
+        featured_tags,
+    }))
+}
+
+async fn build_credential_account_response(
+    state: &AppState,
+    auth: &AuthenticatedUser,
+    account: Account,
+) -> AppResult<Json<ApiAccount>> {
     let fields = super::convert::fields_from_db(&account.fields);
     let mut api_account = account_from_db(&account);
-    api_account.emojis = fetch_account_emojis(&state, &account).await;
+    api_account.emojis = fetch_account_emojis(state, &account).await;
     let follow_requests_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM (SELECT 1 FROM follow_requests WHERE target_account_id = $1 LIMIT 40) sub",
         auth.account_id,
@@ -1617,8 +1693,8 @@ pub async fn update_credentials(
         attribution_domains: account.attribution_domains.clone(),
         quote_policy: default_quote_policy,
     });
-    api_account.roles = fetch_account_roles(&state, auth.account_id).await;
-    api_account.role = fetch_account_role(&state, auth.account_id).await;
+    api_account.roles = fetch_account_roles(state, auth.account_id).await;
+    api_account.role = fetch_account_role(state, auth.account_id).await;
     Ok(Json(api_account))
 }
 
