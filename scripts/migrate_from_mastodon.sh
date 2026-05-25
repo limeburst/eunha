@@ -20,15 +20,18 @@ echo "==> Running eunha schema migrations..."
 sqlx migrate run --database-url "$DB"
 
 echo "==> Restoring Mastodon data into $DB ..."
+TOC="$(mktemp)"
+"${PGBIN}pg_restore" -l "$DUMP" \
+    | grep -v "TABLE DATA public ar_internal_metadata\|TABLE DATA public schema_migrations\|TABLE DATA public pghero_space_stats" \
+    > "$TOC"
 "${PGBIN}pg_restore" \
     --data-only \
     --no-owner \
     --no-privileges \
     --single-transaction \
-    --exclude-table-data=ar_internal_metadata \
-    --exclude-table-data=schema_migrations \
-    --exclude-table-data=pghero_space_stats \
+    --use-list="$TOC" \
     -d "$DB" "$DUMP"
+rm -f "$TOC"
 
 echo "==> Applying fixups (${OLD} -> ${NEW}) ..."
 "${PGBIN}psql" "$DB" \
