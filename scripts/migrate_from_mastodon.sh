@@ -37,7 +37,7 @@ TOC="$(mktemp)"
     --no-privileges \
     --disable-triggers \
     --use-list="$TOC" \
-    -d "$DB" "$DUMP"
+    -d "$DB" "$DUMP" || true
 rm -f "$TOC"
 
 echo "==> Applying fixups (${OLD} -> ${NEW}) ..."
