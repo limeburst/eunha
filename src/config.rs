@@ -26,8 +26,6 @@ pub struct InstanceConfig {
     pub registrations_open: bool,
     #[serde(default)]
     pub approval_required: bool,
-    pub private_key: String,
-    pub public_key: String,
     pub vapid_private_key: String,
     pub vapid_public_key: String,
     pub icon_url: Option<String>,
