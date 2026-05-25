@@ -189,7 +189,7 @@ pub async fn login_post(
     };
 
     let row = match sqlx::query!(
-        r#"SELECT u.id, u.password_hash, a.id as account_id, a.username
+        r#"SELECT u.id, u.encrypted_password, a.id as account_id, a.username
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            WHERE u.email_normalized = $1
@@ -204,7 +204,7 @@ pub async fn login_post(
         _ => return render_error(locale.t("invalid_credentials")),
     };
 
-    if verify_password(&form.password, &row.password_hash).is_err() {
+    if verify_password(&form.password, &row.encrypted_password).is_err() {
         return render_error(locale.t("invalid_credentials"));
     }
 
@@ -419,7 +419,7 @@ pub async fn password_post(
     }
 
     let row = match sqlx::query!(
-        "SELECT password_hash FROM users WHERE id = $1",
+        "SELECT encrypted_password FROM users WHERE id = $1",
         session.user_id,
     )
     .fetch_one(&state.db)
@@ -429,7 +429,7 @@ pub async fn password_post(
         Err(_) => err!(locale.t("password_error"), "/account/password?err=1"),
     };
 
-    if verify_password(&form.current_password, &row.password_hash).is_err() {
+    if verify_password(&form.current_password, &row.encrypted_password).is_err() {
         err!(locale.t("password_error"), "/account/password?err=1");
     }
 
@@ -439,7 +439,7 @@ pub async fn password_post(
     };
 
     match sqlx::query!(
-        "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2",
+        "UPDATE users SET encrypted_password = $1, updated_at = now() WHERE id = $2",
         new_hash,
         session.user_id,
     )

@@ -118,7 +118,7 @@ pub struct User {
     pub account_id: i64,
     pub email: String,
     pub email_normalized: String,
-    pub password_hash: String,
+    pub encrypted_password: String,
     pub confirmed_at: Option<DateTime<Utc>>,
     pub invite_id: Option<i64>,
     pub approved_at: Option<DateTime<Utc>>,

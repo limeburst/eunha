@@ -432,16 +432,15 @@ pub async fn seed_account_and_token(
     .await
     .unwrap();
 
-    let password_hash = hash_password("testpassword123");
+    let encrypted_password = hash_password("testpassword123");
     sqlx::query!(
         r#"INSERT INTO users
-             (account_id, instance_id, email, email_normalized, password_hash, confirmed_at, approved_at)
-           VALUES ($1,$2,$3,$4,$5,now(),now())"#,
+             (account_id, email, email_normalized, encrypted_password, confirmed_at, approved_at)
+           VALUES ($1,$2,$3,$4,now(),now())"#,
         account_id,
-        instance_id,
         email,
         email.to_lowercase(),
-        password_hash,
+        encrypted_password,
     )
     .execute(db)
     .await

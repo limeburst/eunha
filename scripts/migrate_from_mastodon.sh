@@ -9,9 +9,9 @@
 
 set -euo pipefail
 
-DUMP="${1:?Usage: $0 dump.custom [old-domain] [new-domain]}"
-OLD="${2:-seoul.earth}"
-NEW="${3:-eunha.social}"
+DUMP="${1:?Usage: $0 dump.custom old-domain new-domain}"
+OLD="${2:?old-domain required (e.g. seoul.earth)}"
+NEW="${3:?new-domain required (e.g. eunha.social)}"
 DB="${DATABASE_URL:-postgres:///eunha}"
 PGBIN="${PGBIN:-}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

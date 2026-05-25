@@ -2913,13 +2913,13 @@ pub async fn move_account(
     auth.require_scope("write:accounts")?;
     // Verify password
     let user = sqlx::query!(
-        "SELECT password_hash FROM users WHERE account_id = $1",
+        "SELECT encrypted_password FROM users WHERE account_id = $1",
         auth.account_id
     )
     .fetch_one(&state.db)
     .await?;
 
-    let valid = crate::crypto::verify_password(&form.current_password, &user.password_hash).is_ok();
+    let valid = crate::crypto::verify_password(&form.current_password, &user.encrypted_password).is_ok();
     if !valid {
         return Err(AppError::Unauthorized);
     }
@@ -4300,14 +4300,14 @@ pub async fn delete_account(
         .unwrap_or("");
 
     let user = sqlx::query!(
-        "SELECT password_hash FROM users WHERE account_id = $1",
+        "SELECT encrypted_password FROM users WHERE account_id = $1",
         auth.account_id,
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::Unauthorized)?;
 
-    crate::crypto::verify_password(password, &user.password_hash)?;
+    crate::crypto::verify_password(password, &user.encrypted_password)?;
 
     // Soft-delete: mark account as suspended, revoke tokens, remove user row.
     // Hard delete of statuses/follows is deferred (could be a background job).

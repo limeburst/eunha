@@ -243,7 +243,7 @@ pub async fn confirm_email(
     let needs_approval = state.instance.approval_required && pending.invite_id.is_none();
     if sqlx::query!(
         r#"INSERT INTO users
-             (account_id, email, email_normalized, password_hash,
+             (account_id, email, email_normalized, encrypted_password,
               confirmed_at, invite_id, approved_at, reason)
            VALUES ($1,$2,$3,$4,
                    now(), $5,
@@ -404,7 +404,7 @@ pub async fn apply_password_reset(
     };
 
     let _ = sqlx::query!(
-        "UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_sent_at = NULL WHERE id = $2",
+        "UPDATE users SET encrypted_password = $1, password_reset_token = NULL, password_reset_sent_at = NULL WHERE id = $2",
         hash, row.id,
     )
     .execute(&state.db)

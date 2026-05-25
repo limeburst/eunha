@@ -71,12 +71,12 @@ pub async fn upload_media(
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
         r#"INSERT INTO media_attachments
-             (id, account_id, media_type, file_key, file_url, preview_key, preview_url, description, meta, blurhash)
+             (id, account_id, "type", file_key, file_url, preview_key, preview_url, description, meta, blurhash)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING *"#,
         media_id,
         auth.account_id,
-        media_type,
+        media_type_int(media_type),
         keys.original,
         file_url,
         keys.small,
@@ -312,4 +312,8 @@ fn classify_media_type(content_type: &str) -> &'static str {
     } else {
         "unknown"
     }
+}
+
+fn media_type_int(mt: &str) -> i32 {
+    match mt { "image" => 0, "gifv" => 1, "video" => 2, "audio" => 3, _ => 4 }
 }

@@ -208,7 +208,7 @@ pub async fn issue_token(
             let username = form.username.as_deref().ok_or(AppError::Unprocessable("missing username".into()))?;
             let password = form.password.as_deref().ok_or(AppError::Unprocessable("missing password".into()))?;
             let user = sqlx::query!(
-                r#"SELECT u.id, u.password_hash, u.account_id
+                r#"SELECT u.id, u.encrypted_password, u.account_id
                    FROM users u
                    JOIN accounts a ON a.id = u.account_id
                    WHERE u.email_normalized = lower($1)
@@ -219,7 +219,7 @@ pub async fn issue_token(
             .await?
             .ok_or(AppError::Unauthorized)?;
 
-            verify_password(password, &user.password_hash)?;
+            verify_password(password, &user.encrypted_password)?;
 
             (Some(user.account_id), normalize_scopes(&form.scope.unwrap_or_else(|| app.scopes.clone())))
         }
@@ -634,7 +634,7 @@ async fn do_authorize(
     .ok_or_else(|| "Unknown application".to_string())?;
 
     let user = sqlx::query!(
-        r#"SELECT u.id, u.password_hash, u.account_id
+        r#"SELECT u.id, u.encrypted_password, u.account_id
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            WHERE u.email_normalized = lower($1)
@@ -646,7 +646,7 @@ async fn do_authorize(
     .map_err(|_| "Database error".to_string())?
     .ok_or_else(|| "Invalid email or password".to_string())?;
 
-    verify_password(&form.password, &user.password_hash)
+    verify_password(&form.password, &user.encrypted_password)
         .map_err(|_| "Invalid email or password".to_string())?;
 
     let scopes = form.scope.clone().unwrap_or_else(|| app.scopes.clone());
