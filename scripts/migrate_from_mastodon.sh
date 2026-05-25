@@ -19,6 +19,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "==> Running eunha schema migrations..."
 sqlx migrate run --database-url "$DB"
 
+echo "==> Clearing migration seed data before restore ..."
+"${PGBIN}psql" "$DB" -c "TRUNCATE user_roles;"
+
 echo "==> Restoring Mastodon data into $DB ..."
 TOC="$(mktemp)"
 "${PGBIN}pg_restore" -l "$DUMP" \
