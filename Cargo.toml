@@ -13,10 +13,6 @@ name = "c2s_api"
 path = "tests/c2s_api/mod.rs"
 
 [[bin]]
-name = "eunha-migrate-mastodon"
-path = "src/bin/migrate_mastodon.rs"
-
-[[bin]]
 name = "eunha-upload-media"
 path = "src/bin/upload_media.rs"
 

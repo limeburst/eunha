@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Migrate a Mastodon pg_dump (custom format) into a fresh eunha database.
+# Usage: scripts/migrate_from_mastodon.sh dump.custom [old-domain] [new-domain]
+#
+# Prerequisites:
+#   - sqlx CLI on PATH (for running eunha schema migrations)
+#   - pg_restore and psql on PATH (or set PGBIN=/path/to/pg/bin/)
+#   - DATABASE_URL set (or defaults to postgres:///eunha)
+
+set -euo pipefail
+
+DUMP="${1:?Usage: $0 dump.custom [old-domain] [new-domain]}"
+OLD="${2:-seoul.earth}"
+NEW="${3:-eunha.social}"
+DB="${DATABASE_URL:-postgres:///eunha}"
+PGBIN="${PGBIN:-}"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "==> Running eunha schema migrations..."
+sqlx migrate run --database-url "$DB"
+
+echo "==> Restoring Mastodon data into $DB ..."
+"${PGBIN}pg_restore" \
+    --data-only \
+    --no-owner \
+    --no-privileges \
+    --single-transaction \
+    --exclude-table-data=ar_internal_metadata \
+    --exclude-table-data=schema_migrations \
+    --exclude-table-data=pghero_space_stats \
+    -d "$DB" "$DUMP"
+
+echo "==> Applying fixups (${OLD} -> ${NEW}) ..."
+"${PGBIN}psql" "$DB" \
+    -v "old_domain=${OLD}" \
+    -v "new_domain=${NEW}" \
+    -f "$DIR/migrate_from_mastodon.sql"
+
+echo "==> Done."
