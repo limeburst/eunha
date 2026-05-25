@@ -35,9 +35,10 @@ TOC="$(mktemp)"
     --data-only \
     --no-owner \
     --no-privileges \
+    --single-transaction \
     --disable-triggers \
     --use-list="$TOC" \
-    -d "$DB" "$DUMP" || true
+    -d "$DB" "$DUMP"
 rm -f "$TOC"
 
 echo "==> Applying fixups (${OLD} -> ${NEW}) ..."

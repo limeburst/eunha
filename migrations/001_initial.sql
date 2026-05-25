@@ -4,7 +4,8 @@
 -- ── Sequences ────────────────────────────────────────────────────────────────
 CREATE SEQUENCE bookmark_sort_seq;
 CREATE SEQUENCE favourite_sort_seq;
-CREATE SEQUENCE notification_id_seq START 1;
+-- Named to match Mastodon's sequence (notifications_id_seq, plural)
+CREATE SEQUENCE notifications_id_seq START 1;
 CREATE SEQUENCE follows_id_seq;
 CREATE SEQUENCE custom_emojis_id_seq;
 CREATE SEQUENCE tags_id_seq;
@@ -13,6 +14,13 @@ CREATE SEQUENCE users_id_seq;
 CREATE SEQUENCE invites_id_seq;
 CREATE SEQUENCE oauth_access_tokens_id_seq;
 CREATE SEQUENCE oauth_applications_id_seq;
+-- Sequences for BIGINT PRIMARY KEY tables (Mastodon creates these even for Snowflake-ID tables)
+CREATE SEQUENCE accounts_id_seq;
+CREATE SEQUENCE statuses_id_seq;
+CREATE SEQUENCE media_attachments_id_seq;
+CREATE SEQUENCE quotes_id_seq;
+CREATE SEQUENCE user_roles_id_seq;
+CREATE SEQUENCE encrypted_messages_id_seq;
 
 -- ── console_users ─────────────────────────────────────────────────────────────
 CREATE TABLE console_users (
@@ -491,7 +499,7 @@ CREATE TABLE reports (
 
 -- ── notifications ─────────────────────────────────────────────────────────────
 CREATE TABLE notifications (
-    id              BIGINT PRIMARY KEY DEFAULT nextval('notification_id_seq'),
+    id              BIGINT PRIMARY KEY DEFAULT nextval('notifications_id_seq'),
     account_id      BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     from_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     type            TEXT,
