@@ -16,11 +16,15 @@ DB="${DATABASE_URL:-postgres:///eunha}"
 PGBIN="${PGBIN:-}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Extract database name from the connection string for dropdb/createdb
+DBNAME="${DB##*/}"
+
+echo "==> Recreating database '$DBNAME' ..."
+"${PGBIN}dropdb" --if-exists "$DBNAME"
+"${PGBIN}createdb" "$DBNAME"
+
 echo "==> Running eunha schema migrations..."
 sqlx migrate run --database-url "$DB"
-
-echo "==> Clearing migration seed data before restore ..."
-"${PGBIN}psql" "$DB" -c "TRUNCATE user_roles;"
 
 echo "==> Restoring Mastodon data into $DB ..."
 TOC="$(mktemp)"
