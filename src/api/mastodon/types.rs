@@ -16,19 +16,14 @@ pub struct Account {
     pub discoverable: Option<bool>,
     pub indexable: bool,
     pub hide_collections: Option<bool>,
-    pub show_featured: Option<bool>,
-    pub show_media: Option<bool>,
-    pub show_media_replies: Option<bool>,
     pub created_at: String,         // ISO 8601 date (midnight UTC, day precision)
     pub note: String,               // HTML
     pub url: String,
     pub uri: String,
     pub avatar: String,
     pub avatar_static: String,
-    pub avatar_description: String,
     pub header: String,
     pub header_static: String,
-    pub header_description: String,
     pub followers_count: i64,
     pub following_count: i64,
     pub statuses_count: i64,
@@ -289,8 +284,6 @@ pub struct AccountsConfiguration {
     pub max_profile_fields: u32,
     pub max_display_name_length: u32,
     pub max_note_length: u32,
-    pub max_avatar_description_length: u32,
-    pub max_header_description_length: u32,
     pub profile_field_name_limit: u32,
     pub profile_field_value_limit: u32,
 }
@@ -683,18 +676,13 @@ pub struct Profile {
     pub formatted_fields: Vec<Field>,
     pub avatar: Option<String>,
     pub avatar_static: Option<String>,
-    pub avatar_description: String,
     pub header: Option<String>,
     pub header_static: Option<String>,
-    pub header_description: String,
     pub locked: bool,
     pub bot: bool,
     pub hide_collections: Option<bool>,
     pub discoverable: Option<bool>,
     pub indexable: bool,
-    pub show_media: Option<bool>,
-    pub show_media_replies: Option<bool>,
-    pub show_featured: Option<bool>,
     pub attribution_domains: Vec<String>,
     pub featured_tags: Vec<FeaturedTag>,
 }
@@ -781,7 +769,6 @@ pub struct PartialAccount {
     pub url: String,
     pub avatar: String,
     pub avatar_static: String,
-    pub avatar_description: String,
 }
 
 #[derive(Debug, Serialize)]

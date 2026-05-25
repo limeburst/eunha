@@ -678,7 +678,6 @@ pub async fn get_notifications_v2(
             url: a.url.clone(),
             avatar: a.avatar.clone(),
             avatar_static: a.avatar_static.clone(),
-            avatar_description: a.avatar_description.clone(),
         }).collect())
     } else {
         None
@@ -1251,13 +1250,6 @@ pub async fn get_notification_requests(
             header_remote_url: String::new(),
             avatar_storage_schema_version: None,
             header_storage_schema_version: None,
-            avatar_description: String::new(),
-            header_description: String::new(),
-            show_featured: true,
-            show_media: true,
-            show_media_replies: true,
-            collections_url: None,
-            feature_approval_policy: 0,
         };
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
         let mut api_account = super::convert::account_from_db(&acc);
@@ -1452,13 +1444,6 @@ pub async fn get_notification_request(
         header_remote_url: String::new(),
         avatar_storage_schema_version: None,
         header_storage_schema_version: None,
-        avatar_description: String::new(),
-        header_description: String::new(),
-        show_featured: true,
-        show_media: true,
-        show_media_replies: true,
-        collections_url: None,
-        feature_approval_policy: 0,
     };
     let last_status = fetch_last_status(&state, r.last_status_id).await;
     let mut api_account = super::convert::account_from_db(&acc);

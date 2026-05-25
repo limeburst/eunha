@@ -316,7 +316,6 @@ fn db_row_to_report(
     year: i32,
     data: Option<serde_json::Value>,
     schema_version: i32,
-    _share_key: Option<String>,
 ) -> AnnualReport {
     AnnualReport {
         year,
@@ -342,7 +341,7 @@ pub async fn list_annual_reports(
     ).fetch_one(&state.db).await?;
 
     let rows = sqlx::query!(
-        "SELECT id, account_id, year, data, schema_version, share_key
+        "SELECT id, account_id, year, data, schema_version
          FROM generated_annual_reports
          WHERE account_id = $1 AND viewed_at IS NULL
          ORDER BY year DESC",
@@ -350,7 +349,7 @@ pub async fn list_annual_reports(
     ).fetch_all(&state.db).await?;
 
     let reports: Vec<AnnualReport> = rows.into_iter().map(|r| {
-        db_row_to_report(r.id, r.account_id, r.year, Some(r.data), r.schema_version, r.share_key)
+        db_row_to_report(r.id, r.account_id, r.year, Some(r.data), r.schema_version)
     }).collect();
 
     let resp = build_response(&state, reports, &account, auth.account_id).await?;
@@ -373,14 +372,14 @@ pub async fn get_annual_report(
     ).fetch_one(&state.db).await?;
 
     let row = sqlx::query!(
-        "SELECT id, account_id, year, data, schema_version, share_key
+        "SELECT id, account_id, year, data, schema_version
          FROM generated_annual_reports
          WHERE account_id = $1 AND year = $2",
         auth.account_id, year,
     ).fetch_optional(&state.db).await?
         .ok_or(AppError::NotFound)?;
 
-    let report = db_row_to_report(row.id, row.account_id, row.year, Some(row.data), row.schema_version, row.share_key);
+    let report = db_row_to_report(row.id, row.account_id, row.year, Some(row.data), row.schema_version);
     let resp = build_response(&state, vec![report], &account, auth.account_id).await?;
     Ok(Json(resp))
 }

@@ -317,8 +317,6 @@ pub async fn get_instance_v2(
                 max_profile_fields: 4,
                 max_display_name_length: 30,
                 max_note_length: 500,
-                max_avatar_description_length: 1500,
-                max_header_description_length: 1500,
                 profile_field_name_limit: 255,
                 profile_field_value_limit: 255,
             },

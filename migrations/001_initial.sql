@@ -45,8 +45,6 @@ CREATE TABLE user_roles (
     position         INTEGER NOT NULL DEFAULT 0,
     permissions      BIGINT NOT NULL DEFAULT 0,
     highlighted      BOOLEAN NOT NULL DEFAULT false,
-    collection_limit INTEGER NOT NULL DEFAULT 10,
-    require_2fa      BOOLEAN NOT NULL DEFAULT false,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -140,13 +138,6 @@ CREATE TABLE accounts (
     header_remote_url               TEXT NOT NULL DEFAULT '',
     avatar_storage_schema_version   INTEGER,
     header_storage_schema_version   INTEGER,
-    avatar_description              TEXT NOT NULL DEFAULT '',
-    header_description              TEXT NOT NULL DEFAULT '',
-    show_featured                   BOOLEAN NOT NULL DEFAULT true,
-    show_media                      BOOLEAN NOT NULL DEFAULT true,
-    show_media_replies              BOOLEAN NOT NULL DEFAULT true,
-    collections_url                 TEXT,
-    feature_approval_policy         INTEGER NOT NULL DEFAULT 0,
     created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT accounts_local_unique UNIQUE NULLS NOT DISTINCT (username, domain)
@@ -838,7 +829,6 @@ CREATE INDEX index_account_domain_blocks_on_account_id_and_domain
     ON account_domain_blocks(account_id, domain);
 
 -- ── custom_emoji_categories ───────────────────────────────────────────────────
--- featured_emoji_id added after custom_emojis (circular FK).
 CREATE TABLE custom_emoji_categories (
     id         BIGSERIAL PRIMARY KEY,
     name       TEXT,
@@ -868,9 +858,6 @@ CREATE TABLE custom_emojis (
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER SEQUENCE custom_emojis_id_seq OWNED BY custom_emojis.id;
-
-ALTER TABLE custom_emoji_categories
-    ADD COLUMN featured_emoji_id BIGINT REFERENCES custom_emojis(id) ON DELETE SET NULL;
 
 -- ── announcements ─────────────────────────────────────────────────────────────
 CREATE TABLE announcements (
@@ -1066,7 +1053,6 @@ CREATE TABLE preview_cards (
     blurhash                    TEXT,
     type                        INTEGER NOT NULL DEFAULT 0,
     author_account_id           BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
-    unverified_author_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
     language                    TEXT,
     link_type                   INTEGER,
     max_score                   DOUBLE PRECISION,
@@ -1083,10 +1069,6 @@ CREATE TABLE preview_cards (
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX index_preview_cards_on_unverified_author_account_id_and_id
-    ON preview_cards(unverified_author_account_id, id)
-    WHERE unverified_author_account_id IS NOT NULL;
-
 -- ── preview_card_providers ────────────────────────────────────────────────────
 CREATE TABLE preview_card_providers (
     id                  BIGSERIAL PRIMARY KEY,
@@ -1691,7 +1673,6 @@ CREATE TABLE generated_annual_reports (
     year           INT NOT NULL,
     data           JSONB NOT NULL DEFAULT '{}',
     schema_version INT NOT NULL DEFAULT 1,
-    share_key      TEXT,
     viewed_at      TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
