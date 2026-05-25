@@ -317,3 +317,13 @@ fn classify_media_type(content_type: &str) -> &'static str {
 fn media_type_int(mt: &str) -> i32 {
     match mt { "image" => 0, "gifv" => 1, "video" => 2, "audio" => 3, _ => 4 }
 }
+
+pub fn media_type_str(type_int: Option<i32>) -> &'static str {
+    match type_int {
+        Some(0) => "image",
+        Some(1) => "gifv",
+        Some(2) => "video",
+        Some(3) => "audio",
+        _ => "unknown",
+    }
+}

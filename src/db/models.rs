@@ -169,7 +169,6 @@ pub struct MediaAttachment {
     pub id: i64,
     pub account_id: Option<i64>,
     pub status_id: Option<i64>,
-    pub media_type: String,
     pub file_key: Option<String>,
     pub file_url: Option<String>,
     pub preview_key: Option<String>,

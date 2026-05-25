@@ -431,16 +431,7 @@ CREATE TABLE media_attachments (
     thumbnail_updated_at        TIMESTAMPTZ,
     thumbnail_remote_url        TEXT,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    media_type TEXT NOT NULL GENERATED ALWAYS AS (
-        CASE "type"
-            WHEN 0 THEN 'image'
-            WHEN 1 THEN 'gifv'
-            WHEN 2 THEN 'video'
-            WHEN 3 THEN 'audio'
-            ELSE 'unknown'
-        END
-    ) STORED
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX media_by_account ON media_attachments(account_id);

@@ -113,7 +113,7 @@ pub fn fields_from_db(fields: &serde_json::Value) -> Vec<types::Field> {
 pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
     types::MediaAttachment {
         id: m.id.to_string(),
-        media_type: m.media_type.clone(),
+        media_type: super::media::media_type_str(m.r#type).to_string(),
         url: m.file_url.clone()
             .or_else(|| m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
         preview_url: m.preview_url.clone(),
