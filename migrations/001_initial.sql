@@ -831,7 +831,7 @@ CREATE UNIQUE INDEX index_custom_emoji_categories_on_name ON custom_emoji_catego
 -- ── custom_emojis ─────────────────────────────────────────────────────────────
 CREATE TABLE custom_emojis (
     id                          BIGINT PRIMARY KEY DEFAULT nextval('custom_emojis_id_seq'),
-    shortcode                   TEXT NOT NULL UNIQUE,
+    shortcode                   TEXT NOT NULL,
     domain                      TEXT,
     visible_in_picker           BOOLEAN NOT NULL DEFAULT true,
     disabled                    BOOLEAN NOT NULL DEFAULT false,
@@ -844,7 +844,8 @@ CREATE TABLE custom_emojis (
     image_remote_url            TEXT,
     image_storage_schema_version INTEGER,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (shortcode, domain)
 );
 ALTER SEQUENCE custom_emojis_id_seq OWNED BY custom_emojis.id;
 
