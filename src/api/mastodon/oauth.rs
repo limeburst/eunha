@@ -190,8 +190,9 @@ pub async fn issue_token(
             let code_str = form.code.as_deref().ok_or(AppError::Unprocessable("missing code".into()))?;
             let code = sqlx::query!(
                 r#"DELETE FROM oauth_access_grants
-                   WHERE token = $1 AND application_id = $2 AND expires_at > now()
-                   RETURNING account_id, scopes"#,
+                   WHERE token = $1 AND application_id = $2
+                     AND created_at + expires_in * interval '1 second' > now()
+                   RETURNING resource_owner_id, scopes"#,
                 code_str,
                 app.id,
             )
@@ -201,7 +202,14 @@ pub async fn issue_token(
                 tracing::warn!(code = %code_str, "authorization code not found or expired");
                 AppError::Unauthorized
             })?;
-            (code.account_id, code.scopes)
+            let account_id = sqlx::query_scalar!(
+                "SELECT account_id FROM users WHERE id = $1",
+                code.resource_owner_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+            (Some(account_id), code.scopes)
         }
 
         "password" => {
@@ -211,7 +219,7 @@ pub async fn issue_token(
                 r#"SELECT u.id, u.encrypted_password, u.account_id
                    FROM users u
                    JOIN accounts a ON a.id = u.account_id
-                   WHERE u.email_normalized = lower($1)
+                   WHERE lower(u.email) = lower($1)
                      AND u.confirmed_at IS NOT NULL"#,
                 username,
             )
@@ -434,8 +442,9 @@ pub async fn elk_oauth_callback(
 
     let code_row = sqlx::query!(
         r#"DELETE FROM oauth_access_grants
-           WHERE token = $1 AND application_id = $2 AND expires_at > now()
-           RETURNING account_id, scopes"#,
+           WHERE token = $1 AND application_id = $2
+             AND created_at + expires_in * interval '1 second' > now()
+           RETURNING resource_owner_id, scopes"#,
         code,
         app.id,
     )
@@ -450,8 +459,17 @@ pub async fn elk_oauth_callback(
             .into_response();
     };
 
-    let Some(account_id) = code_row.account_id else {
-        tracing::warn!("elk_oauth_callback: code has no account_id");
+    let account_id = sqlx::query_scalar!(
+        "SELECT account_id FROM users WHERE id = $1",
+        code_row.resource_owner_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let Some(account_id) = account_id else {
+        tracing::warn!("elk_oauth_callback: resource_owner has no account");
         return Redirect::to(&format!("{}/signin/callback?error=no_account", origin))
             .into_response();
     };
@@ -637,7 +655,7 @@ async fn do_authorize(
         r#"SELECT u.id, u.encrypted_password, u.account_id
            FROM users u
            JOIN accounts a ON a.id = u.account_id
-           WHERE u.email_normalized = lower($1)
+           WHERE lower(u.email) = lower($1)
              AND u.confirmed_at IS NOT NULL"#,
         form.email,
     )
@@ -651,18 +669,16 @@ async fn do_authorize(
 
     let scopes = form.scope.clone().unwrap_or_else(|| app.scopes.clone());
     let code = generate_token(32);
-    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
 
     sqlx::query!(
         r#"INSERT INTO oauth_access_grants
-             (application_id, account_id, token, redirect_uri, scopes, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+             (application_id, resource_owner_id, token, redirect_uri, scopes, expires_in)
+           VALUES ($1, $2, $3, $4, $5, 600)"#,
         app.id,
-        user.account_id,
+        user.id,
         code,
         form.redirect_uri,
         scopes,
-        expires_at,
     )
     .execute(&state.db)
     .await

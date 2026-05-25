@@ -7,7 +7,7 @@ use axum::{
 use std::collections::HashMap;
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     middleware::AuthenticatedUser,
     state::AppState,
 };
@@ -21,6 +21,7 @@ pub async fn get_markers(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<HashMap<String, MarkerInfo>>> {
     auth.require_scope("read:statuses")?;
+    let user_id = auth.user_id.ok_or(AppError::Unauthorized)?;
     let query = uri.query().unwrap_or("");
     let timelines: Vec<String> = query.split('&')
         .filter_map(|pair| {
@@ -37,8 +38,8 @@ pub async fn get_markers(
 
     for timeline in &timelines {
         let row = sqlx::query!(
-            "SELECT last_read_id, lock_version, updated_at FROM markers WHERE account_id = $1 AND timeline = $2",
-            auth.account_id, timeline.as_str()
+            "SELECT last_read_id, lock_version, updated_at FROM markers WHERE user_id = $1 AND timeline = $2",
+            user_id, timeline.as_str()
         )
         .fetch_optional(&state.db)
         .await?;
@@ -63,6 +64,7 @@ pub async fn set_markers(
     body: Bytes,
 ) -> AppResult<Json<HashMap<String, MarkerInfo>>> {
     auth.require_scope("write:statuses")?;
+    let user_id = auth.user_id.ok_or(AppError::Unauthorized)?;
     let body_str = std::str::from_utf8(&body).unwrap_or("");
 
     // Parse bracket-notation form: home[last_read_id]=..., notifications[last_read_id]=...
@@ -88,20 +90,20 @@ pub async fn set_markers(
         let id_int: i64 = id.parse().unwrap_or(0);
 
         sqlx::query!(
-            r#"INSERT INTO markers (account_id, timeline, last_read_id, lock_version, updated_at)
+            r#"INSERT INTO markers (user_id, timeline, last_read_id, lock_version, updated_at)
                VALUES ($1, $2, $3, 1, now())
-               ON CONFLICT (account_id, timeline) DO UPDATE
+               ON CONFLICT (user_id, timeline) DO UPDATE
                  SET last_read_id = EXCLUDED.last_read_id,
                      lock_version = markers.lock_version + 1,
                      updated_at = now()"#,
-            auth.account_id, timeline, id_int
+            user_id, timeline, id_int
         )
         .execute(&state.db)
         .await?;
 
         let row = sqlx::query!(
-            "SELECT last_read_id, lock_version, updated_at FROM markers WHERE account_id = $1 AND timeline = $2",
-            auth.account_id, timeline
+            "SELECT last_read_id, lock_version, updated_at FROM markers WHERE user_id = $1 AND timeline = $2",
+            user_id, timeline
         )
         .fetch_one(&state.db)
         .await?;

@@ -51,12 +51,11 @@ pub async fn get_announcements(
     let all_reactions = sqlx::query!(
         r#"SELECT ar.announcement_id, ar.name,
                   COUNT(*) AS "count!",
-                  ce.image_url AS "image_url?",
-                  ce.static_image_url AS "static_image_url?"
+                  ce.image_remote_url AS "image_remote_url?"
            FROM announcement_reactions ar
            LEFT JOIN custom_emojis ce ON ce.id = ar.custom_emoji_id
            WHERE ar.announcement_id = ANY($1::bigint[])
-           GROUP BY ar.announcement_id, ar.name, ce.image_url, ce.static_image_url
+           GROUP BY ar.announcement_id, ar.name, ce.image_remote_url
            ORDER BY ar.announcement_id, ar.name"#,
         &ann_ids,
     )
@@ -83,12 +82,13 @@ pub async fn get_announcements(
         std::collections::HashMap::new();
     for row in all_reactions {
         let me = my_reactions.contains(&(row.announcement_id, row.name.clone()));
+        let url = row.image_remote_url;
         reactions_by_ann.entry(row.announcement_id).or_default().push(AnnouncementReaction {
             name: row.name,
             count: row.count,
             me,
-            url: row.image_url,
-            static_url: row.static_image_url,
+            url: url.clone(),
+            static_url: url,
         });
     }
 

@@ -25,6 +25,7 @@ pub async fn resolve_instance(
 #[derive(Clone)]
 pub struct AuthenticatedUser {
     pub account_id: i64,
+    pub user_id: Option<i64>,
     pub token_id: i64,
     pub scopes: Vec<String>,
     pub application_id: Option<i64>,
@@ -82,8 +83,11 @@ pub async fn authenticate(
 ) -> Response {
     if let Some(token) = extract_bearer(&req) {
         if let Some(tok) = sqlx::query!(
-            r#"SELECT id, account_id, application_id, scopes, expires_at, revoked_at
-               FROM oauth_access_tokens WHERE token = $1"#,
+            r#"SELECT t.id, t.account_id, t.application_id, t.scopes, t.expires_at, t.revoked_at,
+                      u.id as "user_id?"
+               FROM oauth_access_tokens t
+               LEFT JOIN users u ON u.account_id = t.account_id
+               WHERE t.token = $1"#,
             token
         )
         .fetch_optional(&state.db)
@@ -98,6 +102,7 @@ pub async fn authenticate(
                 if let Some(account_id) = tok.account_id {
                     let user = AuthenticatedUser {
                         account_id,
+                        user_id: tok.user_id,
                         token_id: tok.id,
                         scopes: tok.scopes.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(str::to_owned).collect(),
                         application_id: tok.application_id,

@@ -78,9 +78,10 @@ async fn main() -> Result<()> {
 
     // Load subscriptions for this account
     let subs = sqlx::query!(
-        r#"SELECT id, endpoint, key_p256dh, key_auth
-           FROM web_push_subscriptions
-           WHERE account_id = $1"#,
+        r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth
+           FROM web_push_subscriptions wps
+           JOIN oauth_access_tokens oat ON oat.id = wps.access_token_id
+           WHERE oat.account_id = $1 AND oat.revoked_at IS NULL"#,
         account_id,
     )
     .fetch_all(&db)

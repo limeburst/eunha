@@ -102,7 +102,9 @@ async fn try_deliver(
     let subs_query = format!(
         r#"SELECT wps.id, wps.endpoint, wps.key_p256dh, wps.key_auth
            FROM web_push_subscriptions wps
-           WHERE wps.account_id = $1
+           JOIN oauth_access_tokens oat ON oat.id = wps.access_token_id
+           WHERE oat.account_id = $1
+             AND oat.revoked_at IS NULL
              AND COALESCE((wps.data->'alerts'->>'{}')::boolean, {})"#,
         alert_key,
         alert_default,

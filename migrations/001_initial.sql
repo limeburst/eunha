@@ -168,7 +168,6 @@ CREATE TABLE users (
     id                          BIGINT PRIMARY KEY DEFAULT nextval('users_id_seq'),
     account_id                  BIGINT NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
     email                       TEXT NOT NULL,
-    email_normalized            TEXT NOT NULL UNIQUE,
     encrypted_password          TEXT NOT NULL,
     confirmed_at                TIMESTAMPTZ,
     confirmation_token          TEXT UNIQUE,
@@ -220,6 +219,7 @@ CREATE TABLE users (
 );
 ALTER SEQUENCE users_id_seq OWNED BY users.id;
 
+CREATE UNIQUE INDEX index_users_on_email ON users(lower(email));
 CREATE INDEX users_by_invite ON users(invite_id) WHERE invite_id IS NOT NULL;
 CREATE INDEX index_users_on_role_id ON users(role_id) WHERE role_id IS NOT NULL;
 CREATE INDEX index_users_on_confirmation_token ON users(confirmation_token) WHERE confirmation_token IS NOT NULL;
@@ -842,8 +842,6 @@ CREATE TABLE custom_emojis (
     id                          BIGINT PRIMARY KEY DEFAULT nextval('custom_emojis_id_seq'),
     shortcode                   TEXT NOT NULL UNIQUE,
     domain                      TEXT,
-    image_url                   TEXT NOT NULL,
-    static_image_url            TEXT,
     visible_in_picker           BOOLEAN NOT NULL DEFAULT true,
     disabled                    BOOLEAN NOT NULL DEFAULT false,
     category_id                 BIGINT REFERENCES custom_emoji_categories(id) ON DELETE SET NULL,
@@ -1139,17 +1137,14 @@ CREATE INDEX index_account_notes_on_target_account_id ON account_notes(target_ac
 -- ── markers ───────────────────────────────────────────────────────────────────
 CREATE TABLE markers (
     id           BIGSERIAL PRIMARY KEY,
-    account_id   BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     timeline     TEXT NOT NULL CHECK (timeline IN ('home', 'notifications')),
     last_read_id BIGINT NOT NULL DEFAULT 0,
     lock_version INTEGER NOT NULL DEFAULT 0,
-    user_id      BIGINT REFERENCES users(id) ON DELETE CASCADE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (account_id, timeline)
+    UNIQUE (user_id, timeline)
 );
-CREATE INDEX index_markers_on_user_id_and_timeline
-    ON markers(user_id, timeline) WHERE user_id IS NOT NULL;
 
 -- ── conversation_mutes ────────────────────────────────────────────────────────
 CREATE TABLE conversation_mutes (
@@ -1190,16 +1185,14 @@ CREATE INDEX index_status_trends_on_account_id ON status_trends(account_id);
 CREATE TABLE oauth_access_grants (
     id                    BIGSERIAL PRIMARY KEY,
     application_id        BIGINT NOT NULL REFERENCES oauth_applications(id) ON DELETE CASCADE,
-    account_id            BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
+    resource_owner_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token                 TEXT NOT NULL UNIQUE,
     redirect_uri          TEXT NOT NULL,
     scopes                TEXT NOT NULL DEFAULT 'read',
     code_challenge        TEXT,
     code_challenge_method TEXT,
-    expires_at            TIMESTAMPTZ NOT NULL,
+    expires_in            INTEGER NOT NULL DEFAULT 600,
     revoked_at            TIMESTAMPTZ,
-    expires_in            INTEGER,
-    resource_owner_id     BIGINT,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -1228,7 +1221,6 @@ CREATE INDEX index_oauth_access_tokens_on_resource_owner_id
 -- ── web_push_subscriptions ────────────────────────────────────────────────────
 CREATE TABLE web_push_subscriptions (
     id              BIGSERIAL PRIMARY KEY,
-    account_id      BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     access_token_id BIGINT NOT NULL REFERENCES oauth_access_tokens(id) ON DELETE CASCADE,
     endpoint        TEXT NOT NULL,
     key_p256dh      TEXT NOT NULL DEFAULT '',

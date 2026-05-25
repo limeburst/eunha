@@ -3642,7 +3642,7 @@ pub async fn batch_status_emojis(
         .collect();
 
     let rows = sqlx::query!(
-        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+        r#"SELECT shortcode, image_remote_url, visible_in_picker
            FROM custom_emojis
            WHERE shortcode = ANY($1) AND domain IS NULL AND NOT disabled"#,
         &all_codes,
@@ -3652,14 +3652,17 @@ pub async fn batch_status_emojis(
 
     let emoji_by_code: std::collections::HashMap<String, super::types::CustomEmoji> = rows
         .into_iter()
-        .map(|r| (r.shortcode.clone(), super::types::CustomEmoji {
-            shortcode: r.shortcode,
-            url: r.image_url.clone(),
-            static_url: r.static_image_url.unwrap_or(r.image_url),
-            visible_in_picker: r.visible_in_picker,
-            category: None,
-            featured: None,
-        }))
+        .map(|r| {
+            let url = r.image_remote_url.unwrap_or_default();
+            (r.shortcode.clone(), super::types::CustomEmoji {
+                shortcode: r.shortcode,
+                url: url.clone(),
+                static_url: url,
+                visible_in_picker: r.visible_in_picker,
+                category: None,
+                featured: None,
+            })
+        })
         .collect();
 
     for (status_id, codes) in status_codes {
@@ -3942,7 +3945,7 @@ async fn fetch_status_emojis(
     }
 
     let rows = sqlx::query!(
-        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+        r#"SELECT shortcode, image_remote_url, visible_in_picker
            FROM custom_emojis
            WHERE shortcode = ANY($1) AND domain IS NULL AND NOT disabled"#,
         &shortcodes.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
@@ -3951,13 +3954,16 @@ async fn fetch_status_emojis(
     .await
     .unwrap_or_default();
 
-    rows.into_iter().map(|r| super::types::CustomEmoji {
-        shortcode: r.shortcode,
-        url: r.image_url.clone(),
-        static_url: r.static_image_url.unwrap_or(r.image_url),
-        visible_in_picker: r.visible_in_picker,
-        category: None,
-        featured: None,
+    rows.into_iter().map(|r| {
+        let url = r.image_remote_url.unwrap_or_default();
+        super::types::CustomEmoji {
+            shortcode: r.shortcode,
+            url: url.clone(),
+            static_url: url,
+            visible_in_picker: r.visible_in_picker,
+            category: None,
+            featured: None,
+        }
     }).collect()
 }
 
@@ -3995,7 +4001,7 @@ pub async fn fetch_account_emojis(
         return vec![];
     }
     let rows = sqlx::query!(
-        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+        r#"SELECT shortcode, image_remote_url, visible_in_picker
            FROM custom_emojis
            WHERE shortcode = ANY($1) AND domain IS NULL AND NOT disabled"#,
         &shortcodes,
@@ -4003,13 +4009,16 @@ pub async fn fetch_account_emojis(
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
-    rows.into_iter().map(|r| super::types::CustomEmoji {
-        shortcode: r.shortcode,
-        url: r.image_url.clone(),
-        static_url: r.static_image_url.unwrap_or(r.image_url),
-        visible_in_picker: r.visible_in_picker,
-        category: None,
-        featured: None,
+    rows.into_iter().map(|r| {
+        let url = r.image_remote_url.unwrap_or_default();
+        super::types::CustomEmoji {
+            shortcode: r.shortcode,
+            url: url.clone(),
+            static_url: url,
+            visible_in_picker: r.visible_in_picker,
+            category: None,
+            featured: None,
+        }
     }).collect()
 }
 
@@ -4073,7 +4082,7 @@ pub async fn batch_account_emojis(
     let all_shortcodes: Vec<String> = all_shortcodes_set.into_iter().collect();
 
     let rows = sqlx::query!(
-        r#"SELECT shortcode, image_url, static_image_url, visible_in_picker
+        r#"SELECT shortcode, image_remote_url, visible_in_picker
            FROM custom_emojis
            WHERE disabled = false
              AND domain IS NULL
@@ -4088,10 +4097,11 @@ pub async fn batch_account_emojis(
     let emoji_lookup: std::collections::HashMap<String, super::types::CustomEmoji> = rows
         .into_iter()
         .map(|r| {
+            let url = r.image_remote_url.unwrap_or_default();
             let emoji = super::types::CustomEmoji {
                 shortcode: r.shortcode.clone(),
-                url: r.image_url.clone(),
-                static_url: r.static_image_url.unwrap_or(r.image_url),
+                url: url.clone(),
+                static_url: url,
                 visible_in_picker: r.visible_in_picker,
                 category: None,
                 featured: None,

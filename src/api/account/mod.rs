@@ -167,8 +167,6 @@ pub async fn login_post(
     let domain = instance.domain.clone();
     let htmx = is_htmx(&headers);
 
-    let email_normalized = form.email.trim().to_lowercase();
-
     let render_error = |error: &'static str| -> Response {
         if htmx {
             return Html(format!("<div class=\"error\">{error}</div>")).into_response();
@@ -192,10 +190,10 @@ pub async fn login_post(
         r#"SELECT u.id, u.encrypted_password, a.id as account_id, a.username
            FROM users u
            JOIN accounts a ON a.id = u.account_id
-           WHERE u.email_normalized = $1
+           WHERE lower(u.email) = lower($1)
              AND u.confirmed_at IS NOT NULL
              AND a.domain IS NULL"#,
-        email_normalized,
+        form.email.trim(),
     )
     .fetch_optional(&state.db)
     .await

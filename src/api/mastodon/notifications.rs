@@ -824,13 +824,17 @@ pub async fn get_notifications_unread_count(
     let limit = params.limit.unwrap_or(100).min(1000).max(1);
 
     // Find last read ID from markers (0 means never read)
-    let last_read_id: Option<i64> = sqlx::query_scalar!(
-        "SELECT NULLIF(last_read_id, 0) FROM markers WHERE account_id = $1 AND timeline = 'notifications'",
-        auth.account_id,
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .flatten();
+    let last_read_id: Option<i64> = if let Some(uid) = auth.user_id {
+        sqlx::query_scalar!(
+            "SELECT NULLIF(last_read_id, 0) FROM markers WHERE user_id = $1 AND timeline = 'notifications'",
+            uid,
+        )
+        .fetch_optional(&state.db)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
 
     let count: i64 = if let Some(last_id) = last_read_id {
         sqlx::query_scalar!(

@@ -113,12 +113,10 @@ pub async fn api_create_account(
         return Err(AppError::Unprocessable("Password must be at least 8 characters".into()));
     }
 
-    let email_normalized = email.to_lowercase();
-
     // Reject if email already belongs to a confirmed account.
     let email_confirmed = sqlx::query_scalar!(
-        "SELECT 1 FROM users WHERE email_normalized = $1 AND confirmed_at IS NOT NULL",
-        email_normalized,
+        "SELECT 1 FROM users WHERE lower(email) = lower($1) AND confirmed_at IS NOT NULL",
+        email,
     ).fetch_optional(&state.db).await?.is_some();
     if email_confirmed {
         return Err(AppError::Unprocessable("Email is already taken".into()));
@@ -130,10 +128,10 @@ pub async fn api_create_account(
            UNION ALL
            SELECT 1 FROM pending_signups
              WHERE username = $1
-               AND email_normalized != $2
+               AND lower(email) != lower($2)
                AND expires_at > now()
            LIMIT 1"#,
-        username, email_normalized,
+        username, email,
     ).fetch_optional(&state.db).await?.is_some();
     if username_taken {
         return Err(AppError::Unprocessable("Username is already taken".into()));
@@ -149,7 +147,7 @@ pub async fn api_create_account(
         r#"INSERT INTO pending_signups
              (username, email, email_normalized, password_hash,
               invite_id, reason, locale, app_id, confirmation_token)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           VALUES ($1,$2,lower($2),$3,$4,$5,$6,$7,$8)
            ON CONFLICT (email_normalized) DO UPDATE SET
              username           = EXCLUDED.username,
              password_hash      = EXCLUDED.password_hash,
@@ -159,7 +157,7 @@ pub async fn api_create_account(
              app_id             = EXCLUDED.app_id,
              confirmation_token = EXCLUDED.confirmation_token,
              expires_at         = now() + interval '24 hours'"#,
-        username, email, email_normalized, password_hash,
+        username, email, password_hash,
         invite_id, reason, locale_str, app_id, confirmation_token,
     ).execute(&state.db).await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("pending signup failed")))?;
@@ -241,19 +239,21 @@ pub async fn confirm_email(
     };
 
     let needs_approval = state.instance.approval_required && pending.invite_id.is_none();
-    if sqlx::query!(
+    let user_id = match sqlx::query_scalar!(
         r#"INSERT INTO users
-             (account_id, email, email_normalized, encrypted_password,
+             (account_id, email, encrypted_password,
               confirmed_at, invite_id, approved_at, reason)
-           VALUES ($1,$2,$3,$4,
-                   now(), $5,
-                   CASE WHEN $6 THEN NULL ELSE now() END,
-                   $7)"#,
-        account_id, pending.email, pending.email_normalized,
+           VALUES ($1,$2,$3,
+                   now(), $4,
+                   CASE WHEN $5 THEN NULL ELSE now() END,
+                   $6)
+           RETURNING id"#,
+        account_id, pending.email,
         pending.password_hash, pending.invite_id, needs_approval, pending.reason,
-    ).execute(&state.db).await.is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
+    ).fetch_one(&state.db).await {
+        Ok(id) => id,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
 
     // Notify admins about every new signup (approval-required instances get it immediately;
     // open instances get it too so admins have visibility into new accounts).
@@ -277,12 +277,11 @@ pub async fn confirm_email(
             let redirect_uri = app.redirect_uri.lines().next().unwrap_or("").to_string();
             if !redirect_uri.is_empty() && redirect_uri != "urn:ietf:wg:oauth:2.0:oob" {
                 let code = api_generate_token();
-                let expires_at = chrono::Utc::now() + chrono::Duration::minutes(10);
                 if sqlx::query!(
                     r#"INSERT INTO oauth_access_grants
-                         (application_id, account_id, token, redirect_uri, scopes, expires_at)
-                       VALUES ($1, $2, $3, $4, $5, $6)"#,
-                    app_id, account_id, code, redirect_uri, app.scopes, expires_at,
+                         (application_id, resource_owner_id, token, redirect_uri, scopes, expires_in)
+                       VALUES ($1, $2, $3, $4, $5, 600)"#,
+                    app_id, user_id, code, redirect_uri, app.scopes,
                 ).execute(&state.db).await.is_ok() {
                     let sep = if redirect_uri.contains('?') { '&' } else { '?' };
                     return Redirect::to(&format!("{}{}code={}", redirect_uri, sep, code))
@@ -333,7 +332,7 @@ pub async fn request_password_reset(
     let row = sqlx::query!(
         "SELECT u.id, u.email, a.username FROM users u
          JOIN accounts a ON a.id = u.account_id
-         WHERE u.email_normalized = $1 AND u.confirmed_at IS NOT NULL",
+         WHERE lower(u.email) = lower($1) AND u.confirmed_at IS NOT NULL",
         email,
     )
     .fetch_optional(&state.db)

@@ -129,8 +129,8 @@ pub async fn create_subscription(
     let standard = body.subscription.standard.unwrap_or(false);
     let row = sqlx::query!(
         r#"INSERT INTO web_push_subscriptions
-             (account_id, access_token_id, endpoint, key_p256dh, key_auth, data, standard)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+             (access_token_id, endpoint, key_p256dh, key_auth, data, standard)
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (access_token_id) DO UPDATE SET
              endpoint   = EXCLUDED.endpoint,
              key_p256dh = EXCLUDED.key_p256dh,
@@ -139,7 +139,6 @@ pub async fn create_subscription(
              standard   = EXCLUDED.standard,
              updated_at = now()
            RETURNING id, standard, data as "data: serde_json::Value""#,
-        auth.account_id,
         auth.token_id,
         body.subscription.endpoint,
         body.subscription.keys.p256dh,

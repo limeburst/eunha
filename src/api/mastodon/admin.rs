@@ -287,8 +287,6 @@ pub async fn list_admin_accounts_v2(
     let remote_only = params.origin.as_deref() == Some("remote");
 
     let display_name_pattern = params.display_name.as_ref().map(|s| format!("%{}%", s));
-    let email_lower = params.email.as_ref().map(|s| s.to_lowercase());
-
     let accounts = sqlx::query_as!(
         models::Account,
         r#"SELECT a.* FROM accounts a
@@ -306,7 +304,7 @@ pub async fn list_admin_accounts_v2(
                   ($6 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
                       AND (u.id IS NULL OR u.approved_at IS NOT NULL))
              )
-             AND ($7::text IS NULL OR (u.email_normalized = $7 AND a.domain IS NULL))
+             AND ($7::text IS NULL OR (lower(u.email) = lower($7) AND a.domain IS NULL))
              AND ($8::bigint IS NULL OR a.id < $8)
              AND ($9::bigint IS NULL OR a.id > $9)
              AND ($10::bigint IS NULL OR a.id > $10)
@@ -317,7 +315,7 @@ pub async fn list_admin_accounts_v2(
         params.username.as_deref(),
         display_name_pattern.as_deref(),
         params.status.as_deref(),
-        email_lower.as_deref(),
+        params.email.as_deref(),
         max_id, since_id, min_id,
     ).fetch_all(&state.db).await?;
 
@@ -1154,20 +1152,23 @@ pub async fn list_admin_custom_emojis(
     require_admin(&state, auth.account_id).await?;
 
     let rows = sqlx::query!(
-        "SELECT id, shortcode, image_url, static_image_url, visible_in_picker, disabled
+        "SELECT id, shortcode, image_remote_url, visible_in_picker, disabled
          FROM custom_emojis WHERE domain IS NULL ORDER BY shortcode",
     )
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(rows.into_iter().map(|r| AdminCustomEmoji {
-        id: r.id.to_string(),
-        shortcode: r.shortcode.clone(),
-        url: r.image_url.clone(),
-        static_url: r.static_image_url.unwrap_or_else(|| r.image_url.clone()),
-        visible_in_picker: r.visible_in_picker,
-        disabled: r.disabled,
-        category: None,
+    Ok(Json(rows.into_iter().map(|r| {
+        let url = r.image_remote_url.unwrap_or_default();
+        AdminCustomEmoji {
+            id: r.id.to_string(),
+            shortcode: r.shortcode,
+            url: url.clone(),
+            static_url: url,
+            visible_in_picker: r.visible_in_picker,
+            disabled: r.disabled,
+            category: None,
+        }
     }).collect()))
 }
 
@@ -1215,21 +1216,22 @@ pub async fn create_admin_custom_emoji(
     let url = state.storage.public_url(&key);
 
     let row = sqlx::query!(
-        r#"INSERT INTO custom_emojis (shortcode, image_url, static_image_url, visible_in_picker)
-           VALUES ($1, $2, $2, true)
+        r#"INSERT INTO custom_emojis (shortcode, image_remote_url, visible_in_picker)
+           VALUES ($1, $2, true)
            ON CONFLICT (shortcode)
-           DO UPDATE SET image_url = $2, static_image_url = $2, disabled = false
-           RETURNING id, shortcode, image_url, static_image_url, visible_in_picker, disabled"#,
+           DO UPDATE SET image_remote_url = $2, disabled = false
+           RETURNING id, shortcode, image_remote_url, visible_in_picker, disabled"#,
         shortcode, url,
     )
     .fetch_one(&state.db)
     .await?;
 
+    let url = row.image_remote_url.unwrap_or_default();
     Ok(Json(AdminCustomEmoji {
         id: row.id.to_string(),
-        shortcode: row.shortcode.clone(),
-        url: row.image_url.clone(),
-        static_url: row.static_image_url.unwrap_or_else(|| row.image_url.clone()),
+        shortcode: row.shortcode,
+        url: url.clone(),
+        static_url: url,
         visible_in_picker: row.visible_in_picker,
         disabled: row.disabled,
         category: None,
@@ -1282,17 +1284,18 @@ pub async fn update_admin_custom_emoji(
             .execute(&state.db).await?;
     }
     let row = sqlx::query!(
-        "SELECT id, shortcode, image_url, static_image_url, visible_in_picker, disabled FROM custom_emojis WHERE id = $1",
+        "SELECT id, shortcode, image_remote_url, visible_in_picker, disabled FROM custom_emojis WHERE id = $1",
         id,
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::NotFound)?;
+    let url = row.image_remote_url.unwrap_or_default();
     Ok(Json(AdminCustomEmoji {
         id: row.id.to_string(),
-        shortcode: row.shortcode.clone(),
-        url: row.image_url.clone(),
-        static_url: row.static_image_url.unwrap_or_else(|| row.image_url.clone()),
+        shortcode: row.shortcode,
+        url: url.clone(),
+        static_url: url,
         visible_in_picker: row.visible_in_picker,
         disabled: row.disabled,
         category: None,
@@ -1993,7 +1996,7 @@ pub async fn admin_trending_statuses(
     auth: axum::extract::Extension<AuthenticatedUser>,
 ) -> AppResult<axum::Json<Vec<super::types::Status>>> {
     require_admin(&state, auth.account_id).await?;
-    super::trends::trending_statuses(state, query, Some(axum::extract::Extension(crate::middleware::AuthenticatedUser { account_id: auth.account_id, token_id: auth.token_id, scopes: auth.scopes.clone(), application_id: auth.application_id }))).await
+    super::trends::trending_statuses(state, query, Some(axum::extract::Extension(crate::middleware::AuthenticatedUser { account_id: auth.account_id, user_id: auth.user_id, token_id: auth.token_id, scopes: auth.scopes.clone(), application_id: auth.application_id }))).await
 }
 
 pub async fn admin_trending_links(
