@@ -33,7 +33,7 @@ pub struct Account {
     pub display_name: String,
     pub note: String,
     pub note_text: String,
-    pub url: String,
+    pub url: Option<String>,
     pub uri: String,
     pub avatar: Option<String>,
     pub avatar_static: Option<String>,

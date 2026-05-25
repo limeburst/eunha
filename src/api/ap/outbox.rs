@@ -96,7 +96,7 @@ pub async fn get_outbox(
             Some(d) => format!("{}@{}", m.username, d),
             None => m.username.clone(),
         };
-        let url = m.url.clone();
+        let url = m.url.clone().unwrap_or_default();
         map.entry(key_short.clone()).or_insert_with(|| (url.clone(), display.clone()));
         if let Some(d) = &m.domain {
             map.entry(format!("{}@{}", key_short, d)).or_insert_with(|| (url, display));

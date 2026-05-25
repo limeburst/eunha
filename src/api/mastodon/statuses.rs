@@ -2034,7 +2034,7 @@ pub async fn edit_status(
                 Some(d) => format!("{}@{}", m.username, d),
                 None => m.username.clone(),
             };
-            let url = m.url.clone();
+            let url = m.url.clone().unwrap_or_default();
             map.entry(key_short.clone()).or_insert_with(|| (url.clone(), display.clone()));
             if let Some(d) = &m.domain {
                 map.entry(format!("{}@{}", key_short, d)).or_insert_with(|| (url, display));
@@ -2928,7 +2928,7 @@ pub async fn resolve_mention_accounts(
 pub fn build_mention_map(resolved: &[(String, Account)]) -> HashMap<String, (String, String)> {
     let mut map = HashMap::new();
     for (username_lower, account) in resolved {
-        let url = account.url.clone();
+        let url = account.url.clone().unwrap_or_default();
         let display = account.acct();
         map.insert(username_lower.clone(), (url.clone(), display.clone()));
         if let Some(ref d) = account.domain {

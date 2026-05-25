@@ -3527,7 +3527,7 @@ pub async fn fetch_status_mentions(
             Some(d) => format!("{}@{}", r.username, d),
             None => r.username.clone(),
         },
-        url: r.url,
+        url: r.url.unwrap_or_default(),
         username: r.username,
     }).collect())
 }
@@ -3586,7 +3586,7 @@ pub async fn batch_status_mentions(
                 Some(d) => format!("{}@{}", r.username, d),
                 None => r.username.clone(),
             },
-            url: r.url,
+            url: r.url.unwrap_or_default(),
             username: r.username,
         });
     }

@@ -86,7 +86,7 @@ CREATE TABLE accounts (
     display_name                    TEXT NOT NULL DEFAULT '',
     note                            TEXT NOT NULL DEFAULT '',
     note_text                       TEXT NOT NULL DEFAULT '',
-    url                             TEXT NOT NULL DEFAULT '',
+    url                             TEXT,
     uri                             TEXT NOT NULL DEFAULT '',
     avatar                          TEXT,
     avatar_static                   TEXT,

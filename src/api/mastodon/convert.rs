@@ -40,7 +40,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         // Local accounts: uri is authoritative; derive url from it
         (a.uri.replace("/users/", "/@"), a.uri.clone())
     } else {
-        (a.url.clone(), a.uri.clone())
+        (a.url.clone().unwrap_or_default(), a.uri.clone())
     };
 
     let suspended = a.suspended_at.is_some();

@@ -29,7 +29,6 @@ TOC="$(mktemp)"
     --no-owner \
     --no-privileges \
     --single-transaction \
-    --disable-triggers \
     --use-list="$TOC" \
     -d "$DB" "$DUMP"
 rm -f "$TOC"
