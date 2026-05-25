@@ -225,14 +225,13 @@ pub struct Notification {
     pub account_id: i64,
     pub from_account_id: i64,
     pub r#type: String,
-    pub status_id: Option<i64>,
     pub report_id: Option<i64>,
     pub read: bool,
     pub created_at: DateTime<Utc>,
     // Added in migration 065
     pub filtered: bool,
     pub group_key: Option<String>,
-    // Mastodon compat columns (added in migration 067)
+    // Mastodon polymorphic association columns
     pub activity_id: Option<i64>,
     pub activity_type: Option<String>,
     pub updated_at: DateTime<Utc>,

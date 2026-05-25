@@ -85,6 +85,40 @@ async fn fetch_reports_map(
     Ok(map)
 }
 
+/// Resolve status_id for a batch of notifications from their activity columns.
+/// Returns a map of notification_id → status_id.
+async fn batch_notification_status_ids(
+    state: &AppState,
+    notification_ids: &[i64],
+) -> std::collections::HashMap<i64, i64> {
+    if notification_ids.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    sqlx::query!(
+        r#"SELECT n.id,
+               CASE n.activity_type
+                   WHEN 'Status'    THEN n.activity_id
+                   WHEN 'Mention'   THEN m.status_id
+                   WHEN 'Favourite' THEN f.status_id
+                   WHEN 'Poll'      THEN p.status_id
+                   ELSE NULL
+               END AS "status_id: i64"
+           FROM notifications n
+           LEFT JOIN mentions   m ON m.id = n.activity_id AND n.activity_type = 'Mention'
+           LEFT JOIN favourites f ON f.id = n.activity_id AND n.activity_type = 'Favourite'
+           LEFT JOIN polls      p ON p.id = n.activity_id AND n.activity_type = 'Poll'
+           WHERE n.id = ANY($1::bigint[])
+             AND n.activity_id IS NOT NULL"#,
+        notification_ids,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|r| r.status_id.map(|sid| (r.id, sid)))
+    .collect()
+}
+
 // ── GET /api/v1/notifications ─────────────────────────────────────────────
 
 pub async fn get_notifications(
@@ -188,8 +222,9 @@ pub async fn get_notifications(
         (batch_account_emojis(&state, &accs).await, batch_account_roles(&state, &accs).await)
     };
 
-    let notif_status_ids: Vec<i64> = notifications.iter()
-        .filter_map(|n| n.status_id)
+    let notif_ids_v1: Vec<i64> = notifications.iter().map(|n| n.id).collect();
+    let notif_status_map_v1 = batch_notification_status_ids(&state, &notif_ids_v1).await;
+    let notif_status_ids: Vec<i64> = notif_status_map_v1.values().copied()
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -303,7 +338,7 @@ pub async fn get_notifications(
     let mut result = Vec::with_capacity(notifications.len());
     for n in &notifications {
         let Some(account) = from_account_map.get(&n.from_account_id) else { continue };
-        let status = n.status_id.and_then(|sid| status_api_map.get(&sid)).cloned();
+        let status = notif_status_map_v1.get(&n.id).and_then(|sid| status_api_map.get(sid)).cloned();
         let report = n.report_id.and_then(|rid| report_map.get(&rid)).cloned();
         let mut notif_account = account_from_db(account);
         notif_account.emojis = from_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
@@ -483,8 +518,9 @@ pub async fn get_notifications_v2(
     };
 
     // Batch-fetch statuses
-    let notif_status_ids: Vec<i64> = notifications.iter()
-        .filter_map(|n| n.status_id)
+    let notif_ids_v2: Vec<i64> = notifications.iter().map(|n| n.id).collect();
+    let notif_status_map_v2 = batch_notification_status_ids(&state, &notif_ids_v2).await;
+    let notif_status_ids: Vec<i64> = notif_status_map_v2.values().copied()
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -601,8 +637,8 @@ pub async fn get_notifications_v2(
 
     let mut groups = Vec::with_capacity(notifications.len());
     for n in &notifications {
-        let status_id = n.status_id.and_then(|sid| {
-            if let Some(api) = status_api_map.get(&sid) {
+        let status_id = notif_status_map_v2.get(&n.id).and_then(|sid| {
+            if let Some(api) = status_api_map.get(sid) {
                 statuses_resp_map.insert(sid.to_string(), api.clone());
                 Some(sid.to_string())
             } else {
@@ -688,6 +724,7 @@ pub async fn get_notification_group(
         None
     };
 
+    let status_id_for_group = batch_notification_status_ids(&state, &[n.id]).await;
     let id_str = n.id.to_string();
     Ok(Json(NotificationGroup {
         group_key: format!("ungrouped-{}", id_str),
@@ -698,7 +735,7 @@ pub async fn get_notification_group(
         page_min_id: id_str.clone(),
         latest_page_notification_at: super::convert::mastodon_date(n.created_at),
         sample_account_ids: vec![n.from_account_id.to_string()],
-        status_id: n.status_id.map(|s| s.to_string()),
+        status_id: status_id_for_group.get(&n.id).map(|s| s.to_string()),
         report,
         event: None,
         moderation_warning: None,
@@ -1505,7 +1542,8 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
     .fetch_one(&state.db)
     .await?;
 
-    let status = if let Some(status_id) = n.status_id {
+    let resolved_status_id = batch_notification_status_ids(state, &[n.id]).await;
+    let status = if let Some(status_id) = resolved_status_id.get(&n.id).copied() {
         let s = sqlx::query_as!(
             crate::db::models::Status,
             "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",

@@ -15,14 +15,3 @@ SET uri = replace(uri, 'https://' || :'old_domain', 'https://' || :'new_domain')
     url = replace(url, 'https://' || :'old_domain', 'https://' || :'new_domain')
 WHERE uri LIKE 'https://' || :'old_domain' || '%';
 
--- Derive status_id in notifications from Mastodon's polymorphic activity columns.
-UPDATE notifications n SET status_id = (
-    CASE n.activity_type
-        WHEN 'Status'    THEN n.activity_id
-        WHEN 'Mention'   THEN (SELECT status_id FROM mentions   WHERE id = n.activity_id)
-        WHEN 'Favourite' THEN (SELECT status_id FROM favourites WHERE id = n.activity_id)
-        WHEN 'Poll'      THEN (SELECT status_id FROM polls      WHERE id = n.activity_id)
-        ELSE NULL
-    END
-)
-WHERE n.activity_id IS NOT NULL AND n.status_id IS NULL;

@@ -278,12 +278,12 @@ pub async fn create_and_push(
         return;
     }
 
-    // Dedup: don't insert the same (account, from, type, status) twice
+    // Dedup: don't insert the same (account, from, type, activity) twice
     let existing = sqlx::query_scalar!(
         r#"SELECT 1 FROM notifications
            WHERE account_id = $1 AND from_account_id = $2
              AND "type" = $3
-             AND (status_id = $4 OR ($4::bigint IS NULL AND status_id IS NULL))
+             AND (activity_id = $4 OR ($4::bigint IS NULL AND activity_id IS NULL))
            LIMIT 1"#,
         recipient_id,
         from_account_id,
@@ -297,13 +297,15 @@ pub async fn create_and_push(
         return;
     }
 
+    let activity_type_val: Option<&str> = if status_id.is_some() { Some("Status") } else { None };
     let row = sqlx::query!(
-        r#"INSERT INTO notifications (account_id, from_account_id, "type", status_id)
-           VALUES ($1, $2, $3, $4)
+        r#"INSERT INTO notifications (account_id, from_account_id, "type", activity_type, activity_id)
+           VALUES ($1, $2, $3, $4, $5)
            RETURNING id"#,
         recipient_id,
         from_account_id,
         notification_type,
+        activity_type_val,
         status_id,
     )
     .fetch_one(&db)
