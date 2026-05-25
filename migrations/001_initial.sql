@@ -844,10 +844,13 @@ CREATE TABLE custom_emojis (
     image_remote_url            TEXT,
     image_storage_schema_version INTEGER,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (shortcode, domain)
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER SEQUENCE custom_emojis_id_seq OWNED BY custom_emojis.id;
+-- Matches Mastodon's index_custom_emojis_on_shortcode_and_domain (remote emojis unique per domain)
+CREATE UNIQUE INDEX index_custom_emojis_on_shortcode_and_domain ON custom_emojis (shortcode, domain);
+-- Partial index for local emojis (domain IS NULL) — needed for ON CONFLICT in admin upserts
+CREATE UNIQUE INDEX index_custom_emojis_on_shortcode_local ON custom_emojis (shortcode) WHERE domain IS NULL;
 
 -- ── announcements ─────────────────────────────────────────────────────────────
 CREATE TABLE announcements (

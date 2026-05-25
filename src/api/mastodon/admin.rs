@@ -1218,7 +1218,7 @@ pub async fn create_admin_custom_emoji(
     let row = sqlx::query!(
         r#"INSERT INTO custom_emojis (shortcode, image_remote_url, visible_in_picker)
            VALUES ($1, $2, true)
-           ON CONFLICT (shortcode)
+           ON CONFLICT (shortcode) WHERE domain IS NULL
            DO UPDATE SET image_remote_url = $2, disabled = false
            RETURNING id, shortcode, image_remote_url, visible_in_picker, disabled"#,
         shortcode, url,
