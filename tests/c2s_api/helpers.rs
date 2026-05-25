@@ -386,29 +386,11 @@ pub async fn seed_user(
     username: &str,
     email: &str,
 ) -> (i64, String) {
-    let instance_id = seed_instance(db, domain).await;
-    let (account_id, token) = seed_account_and_token(db, instance_id, domain, username, email).await;
-    (account_id, token)
-}
-
-pub async fn seed_instance(db: &PgPool, domain: &str) -> Uuid {
-    // Upsert the instance so multiple calls for the same domain return the same id.
-    sqlx::query_scalar!(
-        r#"INSERT INTO instances
-             (domain, title, private_key, public_key)
-           VALUES ($1, $1, 'test-private-key', 'test-public-key')
-           ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain
-           RETURNING id"#,
-        domain,
-    )
-    .fetch_one(db)
-    .await
-    .unwrap()
+    seed_account_and_token(db, domain, username, email).await
 }
 
 pub async fn seed_account_and_token(
     db: &PgPool,
-    instance_id: Uuid,
     domain: &str,
     username: &str,
     email: &str,
@@ -418,12 +400,11 @@ pub async fn seed_account_and_token(
 
     let account_id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
-             (id, instance_id, username, display_name, note, note_text,
+             (id, username, display_name, note, note_text,
               url, uri, public_key, inbox_url, outbox_url, shared_inbox_url, discoverable)
-           VALUES ($1,$2,$3,$3,'','', $4,$5,'test-public-key',$5||'/inbox',$5||'/outbox',''::text, true)
+           VALUES ($1,$2,$2,'','', $3,$4,'test-public-key',$4||'/inbox',$4||'/outbox',''::text, true)
            RETURNING id"#,
         eunha::snowflake::next_id(),
-        instance_id,
         username,
         url,
         uri,
@@ -448,10 +429,9 @@ pub async fn seed_account_and_token(
 
     let app_id: i64 = sqlx::query_scalar!(
         r#"INSERT INTO oauth_applications
-             (instance_id, name, uid, secret, redirect_uri, scopes)
-           VALUES ($1,'test',gen_random_uuid()::text,gen_random_uuid()::text,'urn:ietf:wg:oauth:2.0:oob','read write follow')
+             (name, uid, secret, redirect_uri, scopes)
+           VALUES ('test',gen_random_uuid()::text,gen_random_uuid()::text,'urn:ietf:wg:oauth:2.0:oob','read write follow')
            RETURNING id"#,
-        instance_id,
     )
     .fetch_one(db)
     .await

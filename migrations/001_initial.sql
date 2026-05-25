@@ -1,4 +1,4 @@
--- Squashed migration: final schema state after all 78 migrations.
+-- Squashed migration: final schema state (merges original migrations 001–008).
 -- Fresh installs only; no data migration.
 
 -- ── Sequences ────────────────────────────────────────────────────────────────
@@ -14,30 +14,6 @@ CREATE SEQUENCE invites_id_seq;
 CREATE SEQUENCE oauth_access_tokens_id_seq;
 CREATE SEQUENCE oauth_applications_id_seq;
 
--- ── instances ─────────────────────────────────────────────────────────────────
-CREATE TABLE instances (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    domain              TEXT NOT NULL UNIQUE,
-    title               TEXT NOT NULL DEFAULT '',
-    description         TEXT NOT NULL DEFAULT '',
-    short_description   TEXT NOT NULL DEFAULT '',
-    contact_email       TEXT,
-    registrations_open  BOOLEAN NOT NULL DEFAULT true,
-    approval_required   BOOLEAN NOT NULL DEFAULT false,
-    private_key         TEXT NOT NULL DEFAULT '',
-    public_key          TEXT NOT NULL DEFAULT '',
-    vapid_private_key   TEXT NOT NULL DEFAULT '',
-    vapid_public_key    TEXT NOT NULL DEFAULT '',
-    icon_url            TEXT,
-    privacy_policy      TEXT NOT NULL DEFAULT '',
-    rules               JSONB NOT NULL DEFAULT '[]',
-    terms_of_service    TEXT NOT NULL DEFAULT '',
-    custom_domain       TEXT UNIQUE,
-    console_user_id     UUID,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- ── console_users ─────────────────────────────────────────────────────────────
 CREATE TABLE console_users (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -52,10 +28,6 @@ CREATE TABLE console_users (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE instances
-    ADD CONSTRAINT instances_console_user_id_fkey
-    FOREIGN KEY (console_user_id) REFERENCES console_users(id) ON DELETE SET NULL;
-
 -- ── console_sessions ──────────────────────────────────────────────────────────
 CREATE TABLE console_sessions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -67,14 +39,16 @@ CREATE TABLE console_sessions (
 
 -- ── user_roles ────────────────────────────────────────────────────────────────
 CREATE TABLE user_roles (
-    id          BIGINT PRIMARY KEY,
-    name        TEXT NOT NULL DEFAULT '',
-    color       TEXT NOT NULL DEFAULT '',
-    position    INTEGER NOT NULL DEFAULT 0,
-    permissions BIGINT NOT NULL DEFAULT 0,
-    highlighted BOOLEAN NOT NULL DEFAULT false,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               BIGINT PRIMARY KEY,
+    name             TEXT NOT NULL DEFAULT '',
+    color            TEXT NOT NULL DEFAULT '',
+    position         INTEGER NOT NULL DEFAULT 0,
+    permissions      BIGINT NOT NULL DEFAULT 0,
+    highlighted      BOOLEAN NOT NULL DEFAULT false,
+    collection_limit INTEGER NOT NULL DEFAULT 10,
+    require_2fa      BOOLEAN NOT NULL DEFAULT false,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 INSERT INTO user_roles (id, name, color, position, permissions, highlighted) VALUES
@@ -85,7 +59,6 @@ INSERT INTO user_roles (id, name, color, position, permissions, highlighted) VAL
 -- ── oauth_applications ────────────────────────────────────────────────────────
 CREATE TABLE oauth_applications (
     id           BIGINT PRIMARY KEY DEFAULT nextval('oauth_applications_id_seq'),
-    instance_id  UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     uid          TEXT NOT NULL,
     secret       TEXT NOT NULL,
@@ -110,7 +83,6 @@ CREATE INDEX index_oauth_applications_on_superapp
 -- ── accounts ──────────────────────────────────────────────────────────────────
 CREATE TABLE accounts (
     id                              BIGINT PRIMARY KEY,
-    instance_id                     UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     username                        TEXT NOT NULL,
     domain                          TEXT,
     display_name                    TEXT NOT NULL DEFAULT '',
@@ -155,7 +127,7 @@ CREATE TABLE accounts (
     reviewed_at                     TIMESTAMPTZ,
     suspension_origin               INTEGER,
     trendable                       BOOLEAN,
-    id_scheme                       INTEGER,
+    id_scheme                       INTEGER DEFAULT 1,
     avatar_file_name                TEXT,
     avatar_content_type             TEXT,
     avatar_file_size                INTEGER,
@@ -168,19 +140,24 @@ CREATE TABLE accounts (
     header_remote_url               TEXT NOT NULL DEFAULT '',
     avatar_storage_schema_version   INTEGER,
     header_storage_schema_version   INTEGER,
+    avatar_description              TEXT NOT NULL DEFAULT '',
+    header_description              TEXT NOT NULL DEFAULT '',
+    show_featured                   BOOLEAN NOT NULL DEFAULT true,
+    show_media                      BOOLEAN NOT NULL DEFAULT true,
+    show_media_replies              BOOLEAN NOT NULL DEFAULT true,
+    collections_url                 TEXT,
+    feature_approval_policy         INTEGER NOT NULL DEFAULT 0,
     created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT accounts_local_unique UNIQUE NULLS NOT DISTINCT (instance_id, username, domain)
+    CONSTRAINT accounts_local_unique UNIQUE NULLS NOT DISTINCT (username, domain)
 );
 
 CREATE UNIQUE INDEX accounts_uri_unique ON accounts(uri) WHERE uri != '';
-CREATE INDEX accounts_by_instance ON accounts(instance_id);
-CREATE INDEX accounts_by_domain   ON accounts(domain) WHERE domain IS NOT NULL;
+CREATE INDEX accounts_by_domain ON accounts(domain) WHERE domain IS NOT NULL;
 
 -- ── invites (without user_id — circular FK with users) ───────────────────────
 CREATE TABLE invites (
     id          BIGINT PRIMARY KEY DEFAULT nextval('invites_id_seq'),
-    instance_id UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     code        TEXT NOT NULL UNIQUE,
     created_by  BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
     max_uses    INT,
@@ -193,22 +170,19 @@ CREATE TABLE invites (
 );
 ALTER SEQUENCE invites_id_seq OWNED BY invites.id;
 
-CREATE INDEX invites_by_instance ON invites(instance_id);
-CREATE INDEX invites_by_code     ON invites(code);
+CREATE INDEX invites_by_code ON invites(code);
 
 -- ── users ─────────────────────────────────────────────────────────────────────
 CREATE TABLE users (
     id                          BIGINT PRIMARY KEY DEFAULT nextval('users_id_seq'),
     account_id                  BIGINT NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
     email                       TEXT NOT NULL,
-    email_normalized            TEXT NOT NULL,
-    password_hash               TEXT NOT NULL,
-    encrypted_password          TEXT NOT NULL DEFAULT '',
+    email_normalized            TEXT NOT NULL UNIQUE,
+    encrypted_password          TEXT NOT NULL,
     confirmed_at                TIMESTAMPTZ,
     confirmation_token          TEXT UNIQUE,
     confirmation_sent_at        TIMESTAMPTZ,
     unconfirmed_email           TEXT,
-    instance_id                 UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     invite_id                   BIGINT REFERENCES invites(id) ON DELETE SET NULL,
     role                        TEXT NOT NULL DEFAULT 'user',
     role_id                     BIGINT REFERENCES user_roles(id) ON DELETE SET NULL,
@@ -251,8 +225,7 @@ CREATE TABLE users (
     age_verified_at             TIMESTAMPTZ,
     require_tos_interstitial    BOOLEAN NOT NULL DEFAULT false,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (instance_id, email_normalized)
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER SEQUENCE users_id_seq OWNED BY users.id;
 
@@ -281,10 +254,9 @@ CREATE INDEX ON instance_user_sessions(token);
 -- ── pending_signups ───────────────────────────────────────────────────────────
 CREATE TABLE pending_signups (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    instance_id         UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     username            TEXT NOT NULL,
     email               TEXT NOT NULL,
-    email_normalized    TEXT NOT NULL,
+    email_normalized    TEXT NOT NULL UNIQUE,
     password_hash       TEXT NOT NULL,
     invite_id           BIGINT REFERENCES invites(id),
     reason              TEXT,
@@ -292,14 +264,12 @@ CREATE TABLE pending_signups (
     app_id              BIGINT REFERENCES oauth_applications(id),
     confirmation_token  TEXT NOT NULL UNIQUE,
     expires_at          TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (instance_id, email_normalized)
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ── conversations ─────────────────────────────────────────────────────────────
 CREATE TABLE conversations (
     id                BIGSERIAL PRIMARY KEY,
-    instance_id       UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     uri               TEXT,
     parent_status_id  BIGINT,
     parent_account_id BIGINT,
@@ -319,22 +289,22 @@ CREATE TABLE scheduled_statuses (
     params       JSONB,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX index_scheduled_statuses_on_scheduled_at ON scheduled_statuses(scheduled_at);
 
 -- ── statuses ──────────────────────────────────────────────────────────────────
 CREATE TABLE statuses (
     id                              BIGINT PRIMARY KEY,
-    instance_id                     UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     account_id                      BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     text                            TEXT NOT NULL DEFAULT '',
     spoiler_text                    TEXT NOT NULL DEFAULT '',
     in_reply_to_id                  BIGINT REFERENCES statuses(id) ON DELETE SET NULL,
     in_reply_to_account_id          BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
     reblog_of_id                    BIGINT REFERENCES statuses(id) ON DELETE CASCADE,
-    visibility                      INTEGER NOT NULL DEFAULT 0 CHECK (visibility IN (0, 1, 2, 3)),
+    visibility                      INTEGER NOT NULL DEFAULT 0 CHECK (visibility IN (0, 1, 2, 3, 4)),
     language                        TEXT,
     sensitive                       BOOLEAN NOT NULL DEFAULT false,
     url                             TEXT,
-    uri                             TEXT UNIQUE,
+    uri                             TEXT,
     replies_count                   BIGINT NOT NULL DEFAULT 0,
     reblogs_count                   BIGINT NOT NULL DEFAULT 0,
     favourites_count                BIGINT NOT NULL DEFAULT 0,
@@ -363,13 +333,13 @@ CREATE INDEX statuses_by_account
     ON statuses(account_id, id DESC) WHERE deleted_at IS NULL;
 CREATE INDEX statuses_by_account_id_desc
     ON statuses(account_id, id DESC) WHERE deleted_at IS NULL;
-CREATE INDEX statuses_by_instance
-    ON statuses(instance_id, id DESC) WHERE deleted_at IS NULL;
 CREATE INDEX statuses_public
     ON statuses(id DESC) WHERE visibility = 0 AND deleted_at IS NULL AND reblog_of_id IS NULL;
 CREATE INDEX statuses_public_timeline
-    ON statuses(instance_id, id DESC)
-    WHERE visibility = 0 AND deleted_at IS NULL AND reblog_of_id IS NULL
+    ON statuses(id DESC)
+    WHERE visibility = 0
+      AND deleted_at IS NULL
+      AND reblog_of_id IS NULL
       AND (NOT reply OR in_reply_to_account_id = account_id);
 CREATE INDEX statuses_by_reblog
     ON statuses(account_id, reblog_of_id) WHERE reblog_of_id IS NOT NULL AND deleted_at IS NULL;
@@ -381,6 +351,8 @@ CREATE INDEX statuses_quote_of_id_idx
     ON statuses(quote_of_id) WHERE quote_of_id IS NOT NULL;
 CREATE INDEX statuses_by_account_created_at
     ON statuses(account_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX index_statuses_on_uri
+    ON statuses(uri text_pattern_ops) WHERE uri IS NOT NULL;
 
 -- ── account_stats ─────────────────────────────────────────────────────────────
 CREATE TABLE account_stats (
@@ -397,21 +369,26 @@ CREATE INDEX index_account_stats_on_account_id ON account_stats(account_id);
 CREATE INDEX index_account_stats_on_last_status_at_and_account_id
     ON account_stats(last_status_at DESC NULLS LAST, account_id);
 
--- ── quotes (before status_edits since status_edits.quote_id → quotes) ─────────
+-- ── quotes ────────────────────────────────────────────────────────────────────
 CREATE TABLE quotes (
     id                BIGINT PRIMARY KEY,
     status_id         BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
-    quoted_status_id  BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+    quoted_status_id  BIGINT REFERENCES statuses(id) ON DELETE CASCADE,
+    quoted_account_id BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
     account_id        BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    quoted_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    activity_uri      TEXT UNIQUE,
-    approval_uri      TEXT UNIQUE,
+    activity_uri      TEXT,
+    approval_uri      TEXT,
     state             INTEGER NOT NULL DEFAULT 0,
     legacy            BOOLEAN NOT NULL DEFAULT false,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX quotes_status_id_idx ON quotes(status_id);
+CREATE UNIQUE INDEX index_quotes_on_status_id ON quotes(status_id);
+CREATE UNIQUE INDEX index_quotes_on_activity_uri ON quotes(activity_uri) WHERE activity_uri IS NOT NULL;
+CREATE INDEX index_quotes_on_approval_uri ON quotes(approval_uri) WHERE approval_uri IS NOT NULL;
+CREATE INDEX index_quotes_on_account_id_and_quoted_account_id_and_id
+    ON quotes(account_id, quoted_account_id, id);
+CREATE INDEX index_quotes_on_quoted_status_id_and_id ON quotes(quoted_status_id, id);
 CREATE INDEX quotes_quoted_status_id_idx ON quotes(quoted_status_id);
 CREATE INDEX quotes_account_id_idx ON quotes(account_id);
 CREATE INDEX quotes_quoted_account_id_idx ON quotes(quoted_account_id);
@@ -439,8 +416,6 @@ CREATE TABLE media_attachments (
     id                          BIGINT PRIMARY KEY,
     account_id                  BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
     status_id                   BIGINT REFERENCES statuses(id) ON DELETE SET NULL,
-    media_type                  TEXT NOT NULL DEFAULT 'unknown'
-                                    CHECK (media_type IN ('image','video','gifv','audio','unknown')),
     file_key                    TEXT,
     file_url                    TEXT,
     preview_key                 TEXT,
@@ -465,7 +440,16 @@ CREATE TABLE media_attachments (
     thumbnail_updated_at        TIMESTAMPTZ,
     thumbnail_remote_url        TEXT,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    media_type TEXT NOT NULL GENERATED ALWAYS AS (
+        CASE "type"
+            WHEN 0 THEN 'image'
+            WHEN 1 THEN 'gifv'
+            WHEN 2 THEN 'video'
+            WHEN 3 THEN 'audio'
+            ELSE 'unknown'
+        END
+    ) STORED
 );
 
 CREATE INDEX media_by_account ON media_attachments(account_id);
@@ -521,7 +505,7 @@ CREATE TABLE reports (
     category                    INTEGER NOT NULL DEFAULT 0,
     action_taken_at             TIMESTAMPTZ,
     uri                         TEXT,
-    rule_ids                    INTEGER[],
+    rule_ids                    BIGINT[],
     application_id              BIGINT REFERENCES oauth_applications(id) ON DELETE SET NULL,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -533,7 +517,6 @@ CREATE TABLE notifications (
     account_id      BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     from_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     type            TEXT NOT NULL,
-    status_id       BIGINT REFERENCES statuses(id) ON DELETE CASCADE,
     report_id       BIGINT REFERENCES reports(id) ON DELETE CASCADE,
     read            BOOLEAN NOT NULL DEFAULT false,
     filtered        BOOLEAN NOT NULL DEFAULT false,
@@ -562,12 +545,16 @@ CREATE TABLE notification_requests (
     account_id          BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     from_account_id     BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     last_status_id      BIGINT,
-    notifications_count BIGINT NOT NULL DEFAULT 1,
+    notifications_count BIGINT NOT NULL DEFAULT 0,
     dismissed           BOOLEAN NOT NULL DEFAULT false,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, from_account_id)
 );
+CREATE INDEX index_notification_requests_on_last_status_id
+    ON notification_requests(last_status_id) WHERE last_status_id IS NOT NULL;
+CREATE INDEX index_notification_requests_on_from_account_id
+    ON notification_requests(from_account_id);
 
 -- ── notification_policies ─────────────────────────────────────────────────────
 CREATE TABLE notification_policies (
@@ -636,6 +623,10 @@ CREATE TABLE account_moderation_notes (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX index_account_moderation_notes_on_account_id
+    ON account_moderation_notes(account_id);
+CREATE INDEX index_account_moderation_notes_on_target_account_id
+    ON account_moderation_notes(target_account_id);
 
 -- ── admin_action_logs ─────────────────────────────────────────────────────────
 CREATE TABLE admin_action_logs (
@@ -650,6 +641,9 @@ CREATE TABLE admin_action_logs (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX index_admin_action_logs_on_target_type_and_target_id
+    ON admin_action_logs(target_type, target_id)
+    WHERE target_type IS NOT NULL AND target_id IS NOT NULL;
 
 -- ── follows ───────────────────────────────────────────────────────────────────
 CREATE TABLE follows (
@@ -713,18 +707,20 @@ CREATE TABLE blocks (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, target_account_id)
 );
+CREATE INDEX index_blocks_on_target_account_id ON blocks(target_account_id);
 
 -- ── mutes ─────────────────────────────────────────────────────────────────────
 CREATE TABLE mutes (
-    id                BIGSERIAL PRIMARY KEY,
-    account_id        BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    target_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    id                 BIGSERIAL PRIMARY KEY,
+    account_id         BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    target_account_id  BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     hide_notifications BOOLEAN NOT NULL DEFAULT true,
-    expires_at        TIMESTAMPTZ,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at         TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, target_account_id)
 );
+CREATE INDEX index_mutes_on_target_account_id ON mutes(target_account_id);
 
 -- ── favourites ────────────────────────────────────────────────────────────────
 CREATE TABLE favourites (
@@ -842,18 +838,19 @@ CREATE INDEX index_account_domain_blocks_on_account_id_and_domain
     ON account_domain_blocks(account_id, domain);
 
 -- ── custom_emoji_categories ───────────────────────────────────────────────────
+-- featured_emoji_id added after custom_emojis (circular FK).
 CREATE TABLE custom_emoji_categories (
     id         BIGSERIAL PRIMARY KEY,
     name       TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX index_custom_emoji_categories_on_name ON custom_emoji_categories(name);
 
 -- ── custom_emojis ─────────────────────────────────────────────────────────────
 CREATE TABLE custom_emojis (
     id                          BIGINT PRIMARY KEY DEFAULT nextval('custom_emojis_id_seq'),
-    instance_id                 UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
-    shortcode                   TEXT NOT NULL,
+    shortcode                   TEXT NOT NULL UNIQUE,
     domain                      TEXT,
     image_url                   TEXT NOT NULL,
     static_image_url            TEXT,
@@ -868,17 +865,18 @@ CREATE TABLE custom_emojis (
     image_remote_url            TEXT,
     image_storage_schema_version INTEGER,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (instance_id, shortcode)
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER SEQUENCE custom_emojis_id_seq OWNED BY custom_emojis.id;
+
+ALTER TABLE custom_emoji_categories
+    ADD COLUMN featured_emoji_id BIGINT REFERENCES custom_emojis(id) ON DELETE SET NULL;
 
 -- ── announcements ─────────────────────────────────────────────────────────────
 CREATE TABLE announcements (
     id                   BIGSERIAL PRIMARY KEY,
-    instance_id          UUID NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     text                 TEXT NOT NULL DEFAULT '',
-    published            BOOLEAN NOT NULL DEFAULT true,
+    published            BOOLEAN NOT NULL DEFAULT false,
     all_day              BOOLEAN NOT NULL DEFAULT false,
     starts_at            TIMESTAMPTZ,
     ends_at              TIMESTAMPTZ,
@@ -917,7 +915,7 @@ CREATE TABLE announcement_reactions (
 -- ── tags ──────────────────────────────────────────────────────────────────────
 CREATE TABLE tags (
     id                  BIGINT PRIMARY KEY DEFAULT nextval('tags_id_seq'),
-    name                TEXT NOT NULL UNIQUE,
+    name                TEXT NOT NULL,
     trendable           BOOLEAN,
     usable              BOOLEAN,
     listable            BOOLEAN,
@@ -931,22 +929,23 @@ CREATE TABLE tags (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER SEQUENCE tags_id_seq OWNED BY tags.id;
+CREATE UNIQUE INDEX index_tags_on_name_lower_btree ON tags(lower(name) text_pattern_ops);
 
 -- ── statuses_tags ─────────────────────────────────────────────────────────────
 CREATE TABLE statuses_tags (
     status_id BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
     tag_id    BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (status_id, tag_id)
+    PRIMARY KEY (tag_id, status_id)
 );
-CREATE INDEX statuses_tags_by_tag ON statuses_tags(tag_id);
+CREATE INDEX index_statuses_tags_on_status_id ON statuses_tags(status_id);
 
 -- ── accounts_tags ─────────────────────────────────────────────────────────────
 CREATE TABLE accounts_tags (
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     tag_id     BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (account_id, tag_id)
+    PRIMARY KEY (tag_id, account_id)
 );
-CREATE INDEX index_accounts_tags_on_tag_id ON accounts_tags(tag_id);
+CREATE INDEX index_accounts_tags_on_account_id_and_tag_id ON accounts_tags(account_id, tag_id);
 
 -- ── tag_follows ───────────────────────────────────────────────────────────────
 CREATE TABLE tag_follows (
@@ -999,7 +998,7 @@ CREATE TABLE lists (
     id             BIGSERIAL PRIMARY KEY,
     account_id     BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     title          TEXT NOT NULL DEFAULT '',
-    replies_policy INTEGER NOT NULL DEFAULT 1,
+    replies_policy INTEGER NOT NULL DEFAULT 0,
     exclusive      BOOLEAN NOT NULL DEFAULT false,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -1045,6 +1044,8 @@ CREATE TABLE custom_filter_statuses (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX index_custom_filter_statuses_on_status_id_and_custom_filter_id
+    ON custom_filter_statuses(status_id, custom_filter_id);
 
 -- ── preview_cards ─────────────────────────────────────────────────────────────
 CREATE TABLE preview_cards (
@@ -1065,6 +1066,7 @@ CREATE TABLE preview_cards (
     blurhash                    TEXT,
     type                        INTEGER NOT NULL DEFAULT 0,
     author_account_id           BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+    unverified_author_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
     language                    TEXT,
     link_type                   INTEGER,
     max_score                   DOUBLE PRECISION,
@@ -1081,11 +1083,14 @@ CREATE TABLE preview_cards (
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX index_preview_cards_on_unverified_author_account_id_and_id
+    ON preview_cards(unverified_author_account_id, id)
+    WHERE unverified_author_account_id IS NOT NULL;
 
 -- ── preview_card_providers ────────────────────────────────────────────────────
 CREATE TABLE preview_card_providers (
     id                  BIGSERIAL PRIMARY KEY,
-    domain              TEXT NOT NULL DEFAULT '',
+    domain              TEXT NOT NULL DEFAULT '' UNIQUE,
     trendable           BOOLEAN,
     reviewed_at         TIMESTAMPTZ,
     requested_review_at TIMESTAMPTZ,
@@ -1124,6 +1129,7 @@ CREATE TABLE account_pins (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, target_account_id)
 );
+CREATE INDEX index_account_pins_on_target_account_id ON account_pins(target_account_id);
 
 -- ── account_aliases ───────────────────────────────────────────────────────────
 CREATE TABLE account_aliases (
@@ -1146,6 +1152,7 @@ CREATE TABLE account_notes (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, target_account_id)
 );
+CREATE INDEX index_account_notes_on_target_account_id ON account_notes(target_account_id);
 
 -- ── markers ───────────────────────────────────────────────────────────────────
 CREATE TABLE markers (
@@ -1199,19 +1206,19 @@ CREATE INDEX index_status_trends_on_account_id ON status_trends(account_id);
 
 -- ── oauth_access_grants ───────────────────────────────────────────────────────
 CREATE TABLE oauth_access_grants (
-    id                   BIGSERIAL PRIMARY KEY,
-    application_id       BIGINT NOT NULL REFERENCES oauth_applications(id) ON DELETE CASCADE,
-    account_id           BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
-    token                TEXT NOT NULL UNIQUE,
-    redirect_uri         TEXT NOT NULL,
-    scopes               TEXT NOT NULL DEFAULT 'read',
-    code_challenge       TEXT,
+    id                    BIGSERIAL PRIMARY KEY,
+    application_id        BIGINT NOT NULL REFERENCES oauth_applications(id) ON DELETE CASCADE,
+    account_id            BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
+    token                 TEXT NOT NULL UNIQUE,
+    redirect_uri          TEXT NOT NULL,
+    scopes                TEXT NOT NULL DEFAULT 'read',
+    code_challenge        TEXT,
     code_challenge_method TEXT,
-    expires_at           TIMESTAMPTZ NOT NULL,
-    revoked_at           TIMESTAMPTZ,
-    expires_in           INTEGER,
-    resource_owner_id    BIGINT,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+    expires_at            TIMESTAMPTZ NOT NULL,
+    revoked_at            TIMESTAMPTZ,
+    expires_in            INTEGER,
+    resource_owner_id     BIGINT,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ── oauth_access_tokens ───────────────────────────────────────────────────────
@@ -1294,6 +1301,7 @@ CREATE TABLE identities (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX index_identities_on_user_id ON identities(user_id);
+CREATE UNIQUE INDEX index_identities_on_uid_and_provider ON identities(uid, provider);
 
 -- ── backups ───────────────────────────────────────────────────────────────────
 CREATE TABLE backups (
@@ -1358,6 +1366,7 @@ CREATE TABLE bulk_imports (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX index_bulk_imports_on_account_id ON bulk_imports(account_id);
+CREATE INDEX index_bulk_imports_unconfirmed ON bulk_imports(id) WHERE state = 0;
 
 CREATE TABLE bulk_import_rows (
     id             BIGSERIAL PRIMARY KEY,
@@ -1386,7 +1395,7 @@ CREATE TABLE settings (
 -- ── site_uploads ──────────────────────────────────────────────────────────────
 CREATE TABLE site_uploads (
     id                BIGSERIAL PRIMARY KEY,
-    var               TEXT NOT NULL DEFAULT '',
+    var               TEXT NOT NULL DEFAULT '' UNIQUE,
     file_url          TEXT,
     meta              JSONB,
     file_file_name    TEXT,
@@ -1401,7 +1410,7 @@ CREATE TABLE site_uploads (
 -- ── software_updates ──────────────────────────────────────────────────────────
 CREATE TABLE software_updates (
     id            BIGSERIAL PRIMARY KEY,
-    version       TEXT NOT NULL DEFAULT '',
+    version       TEXT NOT NULL DEFAULT '' UNIQUE,
     urgent        BOOLEAN NOT NULL DEFAULT false,
     type          INTEGER NOT NULL DEFAULT 0,
     release_notes TEXT NOT NULL DEFAULT '',
@@ -1426,7 +1435,6 @@ CREATE TABLE rules (
     deleted_at  TIMESTAMPTZ,
     text        TEXT NOT NULL DEFAULT '',
     hint        TEXT NOT NULL DEFAULT '',
-    instance_id UUID REFERENCES instances(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1452,7 +1460,6 @@ CREATE TABLE terms_of_services (
     published_at         TIMESTAMPTZ,
     notification_sent_at TIMESTAMPTZ,
     effective_date       DATE,
-    instance_id          UUID REFERENCES instances(id) ON DELETE CASCADE,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1487,31 +1494,27 @@ CREATE TABLE webhooks (
     secret      TEXT NOT NULL DEFAULT '',
     enabled     BOOLEAN NOT NULL DEFAULT true,
     template    TEXT,
-    instance_id UUID REFERENCES instances(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ── fasp_providers ────────────────────────────────────────────────────────────
 CREATE TABLE fasp_providers (
-    id                          BIGSERIAL PRIMARY KEY,
-    name                        TEXT NOT NULL DEFAULT '',
-    base_url                    TEXT NOT NULL DEFAULT '',
-    sign_in_url                 TEXT,
-    remote_identifier           TEXT NOT NULL DEFAULT '',
-    provider_public_key_base64  TEXT NOT NULL DEFAULT '',
-    server_private_key_base64   TEXT NOT NULL DEFAULT '',
-    server_public_key_base64    TEXT NOT NULL DEFAULT '',
-    provider_public_key_pem     TEXT NOT NULL DEFAULT '',
-    server_private_key_pem      TEXT NOT NULL DEFAULT '',
-    capabilities                JSONB NOT NULL DEFAULT '[]',
-    privacy_policy              JSONB,
-    contact_email               TEXT,
-    fediverse_account           TEXT,
-    delivery_last_failed_at     TIMESTAMPTZ,
-    confirmed                   BOOLEAN NOT NULL DEFAULT false,
-    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                       BIGSERIAL PRIMARY KEY,
+    name                     TEXT NOT NULL DEFAULT '',
+    base_url                 TEXT NOT NULL DEFAULT '',
+    sign_in_url              TEXT,
+    remote_identifier        TEXT NOT NULL DEFAULT '',
+    provider_public_key_pem  TEXT NOT NULL DEFAULT '',
+    server_private_key_pem   TEXT NOT NULL DEFAULT '',
+    capabilities             JSONB NOT NULL DEFAULT '[]',
+    privacy_policy           JSONB,
+    contact_email            TEXT,
+    fediverse_account        TEXT,
+    delivery_last_failed_at  TIMESTAMPTZ,
+    confirmed                BOOLEAN NOT NULL DEFAULT false,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX index_fasp_providers_on_base_url ON fasp_providers(base_url);
 
@@ -1519,7 +1522,6 @@ CREATE TABLE fasp_subscriptions (
     id                  BIGSERIAL PRIMARY KEY,
     fasp_provider_id    BIGINT NOT NULL REFERENCES fasp_providers(id) ON DELETE CASCADE,
     category            TEXT NOT NULL,
-    active              BOOLEAN NOT NULL DEFAULT true,
     subscription_type   TEXT NOT NULL DEFAULT '',
     max_batch_size      INTEGER NOT NULL DEFAULT 0,
     threshold_timeframe INTEGER,
@@ -1546,7 +1548,6 @@ CREATE TABLE fasp_backfill_requests (
 CREATE TABLE fasp_debug_callbacks (
     id               BIGSERIAL PRIMARY KEY,
     fasp_provider_id BIGINT NOT NULL REFERENCES fasp_providers(id) ON DELETE CASCADE,
-    payload          TEXT NOT NULL DEFAULT '',
     ip               TEXT NOT NULL DEFAULT '',
     request_body     TEXT NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1554,19 +1555,16 @@ CREATE TABLE fasp_debug_callbacks (
 );
 
 CREATE TABLE fasp_follow_recommendations (
-    id                       BIGSERIAL PRIMARY KEY,
-    fasp_provider_id         BIGINT NOT NULL REFERENCES fasp_providers(id) ON DELETE CASCADE,
-    account_id               BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
-    acct                     TEXT NOT NULL DEFAULT '',
-    requesting_account_id    BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
-    recommended_account_id   BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                     BIGSERIAL PRIMARY KEY,
+    requesting_account_id  BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    recommended_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX index_fasp_follow_recommendations_on_requesting_account_id
-    ON fasp_follow_recommendations(requesting_account_id) WHERE requesting_account_id IS NOT NULL;
+    ON fasp_follow_recommendations(requesting_account_id);
 CREATE INDEX index_fasp_follow_recommendations_on_recommended_account_id
-    ON fasp_follow_recommendations(recommended_account_id) WHERE recommended_account_id IS NOT NULL;
+    ON fasp_follow_recommendations(recommended_account_id);
 
 -- ── instance_moderation_notes ─────────────────────────────────────────────────
 CREATE TABLE instance_moderation_notes (
@@ -1613,6 +1611,8 @@ CREATE TABLE relationship_severance_events (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX index_relationship_severance_events_on_type_and_target_name
+    ON relationship_severance_events(type, target_name);
 
 CREATE TABLE account_relationship_severance_events (
     id                               BIGSERIAL PRIMARY KEY,
@@ -1647,20 +1647,20 @@ CREATE INDEX index_severed_relationships_on_remote_account_id
 
 -- ── account_statuses_cleanup_policies ────────────────────────────────────────
 CREATE TABLE account_statuses_cleanup_policies (
-    id               BIGSERIAL PRIMARY KEY,
-    account_id       BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    enabled          BOOLEAN NOT NULL DEFAULT true,
-    min_status_age   INTEGER NOT NULL DEFAULT 1209600,
-    keep_direct      BOOLEAN NOT NULL DEFAULT true,
-    keep_pinned      BOOLEAN NOT NULL DEFAULT true,
-    keep_polls       BOOLEAN NOT NULL DEFAULT false,
-    keep_media       BOOLEAN NOT NULL DEFAULT false,
-    keep_self_fav    BOOLEAN NOT NULL DEFAULT true,
+    id                 BIGSERIAL PRIMARY KEY,
+    account_id         BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    enabled            BOOLEAN NOT NULL DEFAULT true,
+    min_status_age     INTEGER NOT NULL DEFAULT 1209600,
+    keep_direct        BOOLEAN NOT NULL DEFAULT true,
+    keep_pinned        BOOLEAN NOT NULL DEFAULT true,
+    keep_polls         BOOLEAN NOT NULL DEFAULT false,
+    keep_media         BOOLEAN NOT NULL DEFAULT false,
+    keep_self_fav      BOOLEAN NOT NULL DEFAULT true,
     keep_self_bookmark BOOLEAN NOT NULL DEFAULT true,
-    min_favs         INTEGER,
-    min_reblogs      INTEGER,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    min_favs           INTEGER,
+    min_reblogs        INTEGER,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX index_account_statuses_cleanup_policies_on_account_id
     ON account_statuses_cleanup_policies(account_id);
@@ -1721,7 +1721,113 @@ CREATE INDEX index_username_blocks_on_normalized_username
 CREATE UNIQUE INDEX index_username_blocks_on_username_lower_btree
     ON username_blocks(lower(username));
 
--- ── user_ips (VIEW — depends on users, session_activations, login_activities) ─
+-- ── email_subscriptions (added in migration 003) ─────────────────────────────
+CREATE TABLE email_subscriptions (
+    id                  BIGSERIAL PRIMARY KEY,
+    account_id          BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    email               TEXT NOT NULL,
+    locale              TEXT NOT NULL,
+    confirmation_token  TEXT,
+    confirmed_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX index_email_subscriptions_on_account_id_and_email
+    ON email_subscriptions(account_id, email);
+CREATE UNIQUE INDEX index_email_subscriptions_on_confirmation_token
+    ON email_subscriptions(confirmation_token) WHERE confirmation_token IS NOT NULL;
+
+-- ── keypairs (added in migration 003) ────────────────────────────────────────
+CREATE TABLE keypairs (
+    id          BIGSERIAL PRIMARY KEY,
+    account_id  BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    type        INTEGER NOT NULL,
+    uri         TEXT NOT NULL,
+    public_key  TEXT NOT NULL,
+    private_key TEXT,
+    revoked     BOOLEAN NOT NULL DEFAULT false,
+    expires_at  TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX index_keypairs_on_account_id ON keypairs(account_id);
+CREATE UNIQUE INDEX index_keypairs_on_uri ON keypairs(uri);
+
+-- ── tagged_objects (added in migration 003) ───────────────────────────────────
+CREATE TABLE tagged_objects (
+    id          BIGSERIAL PRIMARY KEY,
+    status_id   BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+    ap_type     TEXT NOT NULL,
+    object_type TEXT,
+    object_id   BIGINT,
+    uri         TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX index_tagged_objects_on_object ON tagged_objects(object_type, object_id);
+CREATE UNIQUE INDEX idx_on_status_id_object_type_object_id_tagged
+    ON tagged_objects(status_id, object_type, object_id)
+    WHERE object_type IS NOT NULL AND object_id IS NOT NULL;
+CREATE UNIQUE INDEX index_tagged_objects_on_status_id_and_uri
+    ON tagged_objects(status_id, uri) WHERE uri IS NOT NULL;
+
+-- ── collections + collection_items + collection_reports (added in migration 003)
+CREATE TABLE collections (
+    id                       BIGSERIAL PRIMARY KEY,
+    account_id               BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    name                     TEXT NOT NULL,
+    description              TEXT,
+    description_html         TEXT,
+    discoverable             BOOLEAN NOT NULL,
+    local                    BOOLEAN NOT NULL,
+    sensitive                BOOLEAN NOT NULL,
+    item_count               INTEGER NOT NULL DEFAULT 0,
+    original_number_of_items INTEGER,
+    language                 TEXT,
+    tag_id                   BIGINT REFERENCES tags(id) ON DELETE SET NULL,
+    uri                      TEXT,
+    url                      TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX index_collections_on_account_id ON collections(account_id);
+CREATE INDEX index_collections_on_tag_id     ON collections(tag_id);
+CREATE UNIQUE INDEX index_collections_on_uri ON collections(uri) WHERE uri IS NOT NULL;
+
+CREATE TABLE collection_items (
+    id                        BIGSERIAL PRIMARY KEY,
+    collection_id             BIGINT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    account_id                BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+    uri                       TEXT,
+    object_uri                TEXT,
+    approval_uri              TEXT,
+    approval_last_verified_at TIMESTAMPTZ,
+    position                  INTEGER NOT NULL DEFAULT 1,
+    state                     INTEGER NOT NULL DEFAULT 0,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX index_collection_items_on_account_id_and_collection_id
+    ON collection_items(account_id, collection_id);
+CREATE UNIQUE INDEX index_collection_items_on_approval_uri
+    ON collection_items(approval_uri) WHERE approval_uri IS NOT NULL;
+CREATE INDEX index_collection_items_on_collection_id ON collection_items(collection_id);
+CREATE INDEX index_collection_items_on_state
+    ON collection_items(state) WHERE state = ANY(ARRAY[2, 3]);
+CREATE UNIQUE INDEX index_collection_items_on_uri
+    ON collection_items(uri) WHERE uri IS NOT NULL;
+
+CREATE TABLE collection_reports (
+    id            BIGSERIAL PRIMARY KEY,
+    collection_id BIGINT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    report_id     BIGINT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX index_collection_reports_on_collection_id ON collection_reports(collection_id);
+CREATE INDEX index_collection_reports_on_report_id     ON collection_reports(report_id);
+
+-- ── user_ips (VIEW) ───────────────────────────────────────────────────────────
 CREATE VIEW user_ips AS
 SELECT user_id, ip, MAX(used_at) AS used_at
 FROM (
@@ -1735,3 +1841,77 @@ FROM (
     FROM login_activities la WHERE la.ip IS NOT NULL AND la.success = true
 ) t
 GROUP BY user_id, ip;
+
+-- ── account_summaries (materialized view, added in migration 004) ─────────────
+CREATE MATERIALIZED VIEW account_summaries AS
+SELECT
+    accounts.id AS account_id,
+    mode() WITHIN GROUP (ORDER BY t0.language)  AS language,
+    mode() WITHIN GROUP (ORDER BY t0.sensitive) AS sensitive
+FROM accounts
+CROSS JOIN LATERAL (
+    SELECT statuses.language, statuses.sensitive
+    FROM statuses
+    WHERE statuses.account_id = accounts.id
+      AND statuses.deleted_at IS NULL
+      AND statuses.reblog_of_id IS NULL
+    ORDER BY statuses.id DESC
+    LIMIT 20
+) t0
+WHERE accounts.suspended_at       IS NULL
+  AND accounts.silenced_at         IS NULL
+  AND accounts.moved_to_account_id IS NULL
+  AND accounts.discoverable        = true
+  AND accounts.locked              = false
+GROUP BY accounts.id;
+
+CREATE UNIQUE INDEX index_account_summaries_on_account_id ON account_summaries(account_id);
+CREATE INDEX idx_on_account_id_language_sensitive_250461e1eb
+    ON account_summaries(account_id, language, sensitive);
+
+-- ── global_follow_recommendations (materialized view, added in migration 004) ─
+CREATE MATERIALIZED VIEW global_follow_recommendations AS
+SELECT account_id,
+       sum(rank)         AS rank,
+       array_agg(reason) AS reason
+FROM (
+    SELECT
+        account_summaries.account_id,
+        (count(follows.id)::numeric / (1.0 + count(follows.id)::numeric)) AS rank,
+        'most_followed'::text AS reason
+    FROM follows
+    JOIN account_summaries ON account_summaries.account_id = follows.target_account_id
+    JOIN users             ON users.account_id             = follows.account_id
+    WHERE users.current_sign_in_at >= now() - INTERVAL 'P30D'
+      AND account_summaries.sensitive = false
+      AND NOT EXISTS (
+          SELECT 1 FROM follow_recommendation_suppressions frs
+          WHERE frs.account_id = follows.target_account_id
+      )
+    GROUP BY account_summaries.account_id
+    HAVING count(follows.id) >= 5
+
+    UNION ALL
+
+    SELECT
+        account_summaries.account_id,
+        (sum(status_stats.reblogs_count + status_stats.favourites_count)
+             / (1.0 + sum(status_stats.reblogs_count + status_stats.favourites_count))) AS rank,
+        'most_interactions'::text AS reason
+    FROM status_stats
+    JOIN statuses          ON statuses.id              = status_stats.status_id
+    JOIN account_summaries ON account_summaries.account_id = statuses.account_id
+    WHERE statuses.id >= (date_part('epoch', now() - INTERVAL 'P30D') * 1000)::bigint << 16
+      AND account_summaries.sensitive = false
+      AND NOT EXISTS (
+          SELECT 1 FROM follow_recommendation_suppressions frs
+          WHERE frs.account_id = statuses.account_id
+      )
+    GROUP BY account_summaries.account_id
+    HAVING sum(status_stats.reblogs_count + status_stats.favourites_count) >= 5
+) t0
+GROUP BY account_id
+ORDER BY sum(rank) DESC;
+
+CREATE UNIQUE INDEX index_global_follow_recommendations_on_account_id
+    ON global_follow_recommendations(account_id);
