@@ -29,7 +29,7 @@ sqlx migrate run --database-url "$DB"
 echo "==> Restoring Mastodon data into $DB ..."
 TOC="$(mktemp)"
 "${PGBIN}pg_restore" -l "$DUMP" \
-    | grep -v "TABLE DATA public ar_internal_metadata\|TABLE DATA public schema_migrations\|TABLE DATA public pghero_space_stats\|TABLE DATA public user_roles" \
+    | grep -v "TABLE DATA public ar_internal_metadata\|TABLE DATA public schema_migrations\|TABLE DATA public pghero_space_stats" \
     > "$TOC"
 "${PGBIN}pg_restore" \
     --data-only \

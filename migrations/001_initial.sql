@@ -49,10 +49,6 @@ CREATE TABLE user_roles (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO user_roles (id, name, color, position, permissions, highlighted) VALUES
-    (-99, 'Owner',     '', 1000, 1048575, true),
-    (-1,  'Admin',     '', 900,  458751,  true),
-    (0,   'Moderator', '', 800,  14337,   true);
 
 -- ── oauth_applications ────────────────────────────────────────────────────────
 CREATE TABLE oauth_applications (
