@@ -100,7 +100,7 @@ pub async fn get_announcements(
             all_day: r.all_day,
             starts_at: r.starts_at.map(super::convert::mastodon_date),
             ends_at: r.ends_at.map(super::convert::mastodon_date),
-            published_at: super::convert::mastodon_date(r.published_at),
+            published_at: r.published_at.map(super::convert::mastodon_date).unwrap_or_default(),
             updated_at: super::convert::mastodon_date(r.updated_at),
             read: if viewer_id.is_some() { Some(dismissed_set.contains(&r.id)) } else { None },
             reactions: reactions_by_ann.remove(&r.id).unwrap_or_default(),

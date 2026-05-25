@@ -412,7 +412,7 @@ pub async fn list_announcements(
         all_day: r.all_day,
         starts_at: r.starts_at.map(|t| t.to_rfc3339()),
         ends_at: r.ends_at.map(|t| t.to_rfc3339()),
-        published_at: r.published_at.to_rfc3339(),
+        published_at: r.published_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
         created_at: r.created_at.to_rfc3339(),
         updated_at: r.updated_at.to_rfc3339(),
     }).collect()))
@@ -449,7 +449,7 @@ pub async fn create_announcement(
         all_day: r.all_day,
         starts_at: r.starts_at.map(|t| t.to_rfc3339()),
         ends_at: r.ends_at.map(|t| t.to_rfc3339()),
-        published_at: r.published_at.to_rfc3339(),
+        published_at: r.published_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
         created_at: r.created_at.to_rfc3339(),
         updated_at: r.updated_at.to_rfc3339(),
     }))
@@ -489,7 +489,7 @@ pub async fn update_announcement(
         all_day: r.all_day,
         starts_at: r.starts_at.map(|t| t.to_rfc3339()),
         ends_at: r.ends_at.map(|t| t.to_rfc3339()),
-        published_at: r.published_at.to_rfc3339(),
+        published_at: r.published_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
         created_at: r.created_at.to_rfc3339(),
         updated_at: r.updated_at.to_rfc3339(),
     }))

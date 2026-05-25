@@ -153,8 +153,8 @@ pub async fn create_subscription(
         id: row.id.to_string(),
         endpoint: body.subscription.endpoint,
         standard: row.standard,
-        alerts: alerts_from_data(&row.data),
-        policy: policy_from_data(&row.data),
+        alerts: alerts_from_data(row.data.as_ref().unwrap_or(&serde_json::json!({}))),
+        policy: policy_from_data(row.data.as_ref().unwrap_or(&serde_json::json!({}))),
         server_key: state.instance.vapid_public_key.clone(),
     }))
 }
@@ -181,8 +181,8 @@ pub async fn get_subscription(
         id: row.id.to_string(),
         endpoint: row.endpoint,
         standard: row.standard,
-        alerts: alerts_from_data(&row.data),
-        policy: policy_from_data(&row.data),
+        alerts: alerts_from_data(row.data.as_ref().unwrap_or(&serde_json::json!({}))),
+        policy: policy_from_data(row.data.as_ref().unwrap_or(&serde_json::json!({}))),
         server_key: state.instance.vapid_public_key.clone(),
     }))
 }
@@ -242,8 +242,8 @@ pub async fn update_subscription(
         id: row.id.to_string(),
         endpoint: row.endpoint,
         standard: row.standard,
-        alerts: alerts_from_data(&row.data),
-        policy: policy_from_data(&row.data),
+        alerts: alerts_from_data(row.data.as_ref().unwrap_or(&serde_json::json!({}))),
+        policy: policy_from_data(row.data.as_ref().unwrap_or(&serde_json::json!({}))),
         server_key: state.instance.vapid_public_key.clone(),
     }))
 }

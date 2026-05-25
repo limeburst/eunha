@@ -56,11 +56,11 @@ pub async fn verify_credentials(
         sensitive: default_sensitive,
         language: default_language,
         note: account.note_text.clone(),
-        fields: super::convert::fields_from_db(&account.fields),
+        fields: super::convert::fields_from_db(account.fields.as_ref().unwrap_or(&serde_json::json!([]))),
         follow_requests_count: follow_requests,
         discoverable: account.discoverable,
         indexable: account.indexable,
-        hide_collections: Some(account.hide_collections),
+        hide_collections: account.hide_collections,
         attribution_domains: account.attribution_domains.clone(),
         quote_policy: default_quote_policy,
     });
@@ -997,7 +997,7 @@ pub async fn get_account_followers(
     }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
-    if target.hide_collections && viewer_id != Some(id) {
+    if target.hide_collections.unwrap_or(false) && viewer_id != Some(id) {
         return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
     // If target has blocked the viewer, return empty list
@@ -1089,7 +1089,7 @@ pub async fn get_account_following(
     }
     let viewer_id = viewer.map(|Extension(a)| a.account_id);
     // Respect hide_collections unless the viewer is the account owner
-    if target.hide_collections && viewer_id != Some(id) {
+    if target.hide_collections.unwrap_or(false) && viewer_id != Some(id) {
         return Ok((HeaderMap::new(), Json(Vec::<ApiAccount>::new())));
     }
     // If target has blocked the viewer, return empty list
@@ -1585,7 +1585,7 @@ pub async fn patch_profile(
         .collect();
 
     let a = &account;
-    let fields = super::convert::fields_from_db(&a.fields);
+    let fields = super::convert::fields_from_db(a.fields.as_ref().unwrap_or(&serde_json::json!([])));
     let formatted_fields = fields.iter().map(|f| super::types::Field {
         name: f.name.clone(),
         value: super::formatting::format_field_value(&f.value),
@@ -1604,7 +1604,7 @@ pub async fn patch_profile(
         header_static: a.header_static.clone(),
         locked: a.locked,
         bot: a.bot,
-        hide_collections: Some(a.hide_collections),
+        hide_collections: a.hide_collections,
         discoverable: a.discoverable,
         indexable: a.indexable,
         attribution_domains: a.attribution_domains.clone(),
@@ -1617,7 +1617,7 @@ async fn build_credential_account_response(
     auth: &AuthenticatedUser,
     account: Account,
 ) -> AppResult<Json<ApiAccount>> {
-    let fields = super::convert::fields_from_db(&account.fields);
+    let fields = super::convert::fields_from_db(account.fields.as_ref().unwrap_or(&serde_json::json!([])));
     let mut api_account = account_from_db(&account);
     api_account.emojis = fetch_account_emojis(state, &account).await;
     let follow_requests_count: i64 = sqlx::query_scalar!(
@@ -1649,7 +1649,7 @@ async fn build_credential_account_response(
         follow_requests_count,
         discoverable: account.discoverable,
         indexable: account.indexable,
-        hide_collections: Some(account.hide_collections),
+        hide_collections: account.hide_collections,
         attribution_domains: account.attribution_domains.clone(),
         quote_policy: default_quote_policy,
     });
@@ -2498,7 +2498,7 @@ async fn batch_build_relationships(state: &AppState, source_id: i64, target_ids:
         .map(|r| (r.target_account_id, FollowRow {
             show_reblogs: r.show_reblogs,
             notify: r.notify,
-            languages: if r.languages.is_empty() { None } else { Some(r.languages) },
+            languages: r.languages.filter(|l| !l.is_empty()),
         }))
         .collect();
 
@@ -2719,7 +2719,7 @@ async fn build_relationship(state: &AppState, source_id: i64, target_id: i64) ->
 
     let showing_reblogs = follow.as_ref().map_or(false, |f| f.show_reblogs);
     let notifying = follow.as_ref().map_or(false, |f| f.notify);
-    let languages = follow.as_ref().and_then(|f| if f.languages.is_empty() { None } else { Some(f.languages.clone()) });
+    let languages = follow.as_ref().and_then(|f| f.languages.clone().filter(|l| !l.is_empty()));
     let muting_expires_at = muting.as_ref().and_then(|m| m.expires_at)
         .map(super::convert::mastodon_date);
 
@@ -3238,7 +3238,7 @@ pub async fn get_profile(
         .collect();
 
     let a = &account;
-    let fields = super::convert::fields_from_db(&a.fields);
+    let fields = super::convert::fields_from_db(a.fields.as_ref().unwrap_or(&serde_json::json!([])));
     let formatted_fields = fields.iter().map(|f| super::types::Field {
         name: f.name.clone(),
         value: super::formatting::format_field_value(&f.value),
@@ -3257,7 +3257,7 @@ pub async fn get_profile(
         header_static: a.header_static.clone(),
         locked: a.locked,
         bot: a.bot,
-        hide_collections: Some(a.hide_collections),
+        hide_collections: a.hide_collections,
         discoverable: a.discoverable,
         indexable: a.indexable,
         attribution_domains: a.attribution_domains.clone(),
@@ -3973,7 +3973,7 @@ pub async fn fetch_account_emojis(
     a: &Account,
 ) -> Vec<super::types::CustomEmoji> {
     let mut combined = format!("{} {}", a.display_name, a.note);
-    if let Some(fields) = a.fields.as_array() {
+    if let Some(fields) = a.fields.as_ref().and_then(|f| f.as_array()) {
         for f in fields {
             if let (Some(n), Some(v)) = (f["name"].as_str(), f["value"].as_str()) {
                 combined.push(' ');
@@ -4025,7 +4025,7 @@ pub async fn fetch_account_emojis(
 /// Extract emoji shortcodes from account profile text.
 fn extract_account_shortcodes(a: &Account) -> Vec<String> {
     let mut combined = format!("{} {}", a.display_name, a.note);
-    if let Some(fields) = a.fields.as_array() {
+    if let Some(fields) = a.fields.as_ref().and_then(|f| f.as_array()) {
         for f in fields {
             if let (Some(n), Some(v)) = (f["name"].as_str(), f["value"].as_str()) {
                 combined.push(' ');

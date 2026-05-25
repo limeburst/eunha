@@ -2267,7 +2267,7 @@ pub async fn get_status_history(
         StatusEdit {
             content: e.content.clone(),
             spoiler_text: e.spoiler_text.clone(),
-            sensitive: e.sensitive,
+            sensitive: e.sensitive.unwrap_or(false),
             created_at: super::convert::mastodon_date(e.created_at),
             account: api_account.clone(),
             media_attachments: ordered_media(e.ordered_media_attachment_ids.as_ref()),

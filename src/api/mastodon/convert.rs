@@ -55,7 +55,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         group: !suspended && a.actor_type.as_deref() == Some("Group"),
         discoverable: if suspended { Some(false) } else { a.discoverable },
         indexable: !suspended && a.indexable,
-        hide_collections: Some(a.hide_collections),
+        hide_collections: a.hide_collections,
         created_at: a.created_at.format("%Y-%m-%dT00:00:00.000Z").to_string(),
         note: if suspended { String::new() } else { a.note.clone() },
         url,
@@ -73,13 +73,13 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
             vec![]
         } else if a.domain.is_none() {
             // Local accounts: format field values as HTML (linkify URLs) matching Mastodon's FieldSerializer
-            fields_from_db(&a.fields).into_iter().map(|f| types::Field {
+            fields_from_db(a.fields.as_ref().unwrap_or(&serde_json::json!([]))).into_iter().map(|f| types::Field {
                 name: f.name,
                 value: format_field_value(&f.value),
                 verified_at: f.verified_at,
             }).collect()
         } else {
-            fields_from_db(&a.fields)
+            fields_from_db(a.fields.as_ref().unwrap_or(&serde_json::json!([])))
         },
         roles: vec![],
         moved: None,

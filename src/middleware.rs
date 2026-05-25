@@ -104,7 +104,7 @@ pub async fn authenticate(
                         account_id,
                         user_id: tok.user_id,
                         token_id: tok.id,
-                        scopes: tok.scopes.split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(str::to_owned).collect(),
+                        scopes: tok.scopes.as_deref().unwrap_or("read").split(|c: char| c.is_whitespace() || c == ',').filter(|s| !s.is_empty()).map(str::to_owned).collect(),
                         application_id: tok.application_id,
                     };
                     req.extensions_mut().insert(user);

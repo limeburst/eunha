@@ -329,7 +329,7 @@ pub async fn get_notifications(
 
     // Batch-fetch reports for admin.report notifications
     let report_ids: Vec<i64> = notifications.iter()
-        .filter_map(|n| if n.r#type == "admin.report" { n.report_id } else { None })
+        .filter_map(|n| if n.r#type.as_deref() == Some("admin.report") { n.report_id } else { None })
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -345,7 +345,7 @@ pub async fn get_notifications(
         notif_account.roles = from_account_roles_map.get(&account.id).cloned().unwrap_or_default();
         result.push(Notification {
             id: n.id.to_string(),
-            notification_type: n.r#type.clone(),
+            notification_type: n.r#type.clone().unwrap_or_default(),
             created_at: super::convert::mastodon_date(n.created_at),
             group_key: format!("ungrouped-{}", n.id),
             account: notif_account,
@@ -507,7 +507,7 @@ pub async fn get_notifications_v2(
 
     // Batch-fetch reports for admin.report groups
     let report_ids_v2: Vec<i64> = notifications.iter()
-        .filter_map(|n| if n.r#type == "admin.report" { n.report_id } else { None })
+        .filter_map(|n| if n.r#type.as_deref() == Some("admin.report") { n.report_id } else { None })
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -652,7 +652,7 @@ pub async fn get_notifications_v2(
         groups.push(NotificationGroup {
             group_key: format!("ungrouped-{}", id_str),
             notifications_count: 1,
-            notification_type: n.r#type.clone(),
+            notification_type: n.r#type.clone().unwrap_or_default(),
             most_recent_notification_id: id_str.clone(),
             page_max_id: id_str.clone(),
             page_min_id: id_str.clone(),
@@ -713,7 +713,7 @@ pub async fn get_notification_group(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let report = if n.r#type == "admin.report" {
+    let report = if n.r#type.as_deref() == Some("admin.report") {
         if let Some(rid) = n.report_id {
             fetch_reports_map(&state, &[rid]).await?.remove(&rid)
         } else {
@@ -728,7 +728,7 @@ pub async fn get_notification_group(
     Ok(Json(NotificationGroup {
         group_key: format!("ungrouped-{}", id_str),
         notifications_count: 1,
-        notification_type: n.r#type,
+        notification_type: n.r#type.unwrap_or_default(),
         most_recent_notification_id: id_str.clone(),
         page_max_id: id_str.clone(),
         page_min_id: id_str.clone(),
@@ -1229,7 +1229,7 @@ pub async fn get_notification_requests(
             created_at: r.account_created_at,
             updated_at: r.account_updated_at,
             actor_type: None,
-            also_known_as: vec![],
+            also_known_as: None,
             featured_collection_url: None,
             followers_url: String::new(),
             following_url: String::new(),
@@ -1423,7 +1423,7 @@ pub async fn get_notification_request(
         created_at: r.account_created_at,
         updated_at: r.account_updated_at,
         actor_type: None,
-        also_known_as: vec![],
+        also_known_as: None,
         featured_collection_url: None,
         followers_url: String::new(),
         following_url: String::new(),
@@ -1559,7 +1559,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         None
     };
 
-    let report = if n.r#type == "admin.report" {
+    let report = if n.r#type.as_deref() == Some("admin.report") {
         if let Some(rid) = n.report_id {
             sqlx::query!(
                 r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
@@ -1616,7 +1616,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
     };
     Ok(Notification {
         id: n.id.to_string(),
-        notification_type: n.r#type.clone(),
+        notification_type: n.r#type.clone().unwrap_or_default(),
         created_at: super::convert::mastodon_date(n.created_at),
         group_key: format!("ungrouped-{}", n.id),
         account: notif_account,

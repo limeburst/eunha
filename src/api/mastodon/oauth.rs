@@ -77,7 +77,7 @@ pub async fn verify_app_credentials(
         id: row.id.to_string(),
         name: row.name,
         website: row.website,
-        scopes: normalize_scopes(&row.scopes).split_whitespace().map(str::to_owned).collect(),
+        scopes: normalize_scopes(row.scopes.as_deref().unwrap_or("read")).split_whitespace().map(str::to_owned).collect(),
         redirect_uri,
         redirect_uris: uris,
         vapid_key: Some(instance.vapid_public_key.clone()),
@@ -130,7 +130,7 @@ fn app_to_credential(app: &OauthApplication, vapid_key: &str) -> CredentialAppli
         id: app.id.to_string(),
         name: app.name.clone(),
         website: app.website.clone(),
-        scopes: normalize_scopes(&app.scopes).split_whitespace().map(str::to_owned).collect(),
+        scopes: normalize_scopes(app.scopes.as_deref().unwrap_or("read")).split_whitespace().map(str::to_owned).collect(),
         redirect_uri,
         redirect_uris: uris,
         client_id: app.uid.clone(),
@@ -184,7 +184,7 @@ pub async fn issue_token(
     }
 
     let (account_id, scopes) = match form.grant_type.as_str() {
-        "client_credentials" => (None, app.scopes.clone()),
+        "client_credentials" => (None, app.scopes.clone().unwrap_or_else(|| "read".to_string())),
 
         "authorization_code" => {
             let code_str = form.code.as_deref().ok_or(AppError::Unprocessable("missing code".into()))?;
@@ -209,7 +209,7 @@ pub async fn issue_token(
             .fetch_optional(&state.db)
             .await?
             .ok_or(AppError::Unauthorized)?;
-            (Some(account_id), code.scopes)
+            (Some(account_id), code.scopes.unwrap_or_else(|| "read".to_string()))
         }
 
         "password" => {
@@ -229,7 +229,7 @@ pub async fn issue_token(
 
             verify_password(password, &user.encrypted_password)?;
 
-            (Some(user.account_id), normalize_scopes(&form.scope.unwrap_or_else(|| app.scopes.clone())))
+            (Some(user.account_id), normalize_scopes(form.scope.as_deref().or(app.scopes.as_deref()).unwrap_or("read")))
         }
 
         _ => return Err(AppError::Unprocessable("unsupported grant_type".into())),
@@ -481,7 +481,7 @@ pub async fn elk_oauth_callback(
         app.id,
         account_id,
         token_str,
-        code_row.scopes,
+        code_row.scopes.as_deref().unwrap_or("read"),
     )
     .execute(&state.db)
     .await
@@ -667,7 +667,7 @@ async fn do_authorize(
     verify_password(&form.password, &user.encrypted_password)
         .map_err(|_| "Invalid email or password".to_string())?;
 
-    let scopes = form.scope.clone().unwrap_or_else(|| app.scopes.clone());
+    let scopes = form.scope.clone().unwrap_or_else(|| app.scopes.clone().unwrap_or_else(|| "read".to_string()));
     let code = generate_token(32);
 
     sqlx::query!(

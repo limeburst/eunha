@@ -61,14 +61,14 @@ CREATE TABLE oauth_applications (
     uid          TEXT NOT NULL,
     secret       TEXT NOT NULL,
     redirect_uri TEXT NOT NULL DEFAULT 'urn:ietf:wg:oauth:2.0:oob',
-    scopes       TEXT NOT NULL DEFAULT 'read',
+    scopes       TEXT,
     website      TEXT,
     confidential BOOLEAN NOT NULL DEFAULT true,
     superapp     BOOLEAN NOT NULL DEFAULT false,
     owner_type   TEXT,
     owner_id     BIGINT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at   TIMESTAMPTZ,
+    updated_at   TIMESTAMPTZ
 );
 ALTER SEQUENCE oauth_applications_id_seq OWNED BY oauth_applications.id;
 
@@ -109,10 +109,10 @@ CREATE TABLE accounts (
     silenced_at                     TIMESTAMPTZ,
     sensitized_at                   TIMESTAMPTZ,
     last_status_at                  TIMESTAMPTZ,
-    hide_collections                BOOLEAN NOT NULL DEFAULT false,
-    fields                          JSONB NOT NULL DEFAULT '[]',
+    hide_collections                BOOLEAN,
+    fields                          JSONB,
     attribution_domains             TEXT[] NOT NULL DEFAULT '{}',
-    also_known_as                   TEXT[] NOT NULL DEFAULT '{}',
+    also_known_as                   TEXT[],
     actor_type                      TEXT,
     featured_collection_url         TEXT,
     followers_url                   TEXT NOT NULL DEFAULT '',
@@ -392,7 +392,7 @@ CREATE TABLE status_edits (
     text                            TEXT NOT NULL DEFAULT '',
     content                         TEXT NOT NULL DEFAULT '',
     spoiler_text                    TEXT NOT NULL DEFAULT '',
-    sensitive                       BOOLEAN NOT NULL DEFAULT false,
+    sensitive                       BOOLEAN,
     created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
     account_id                      BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
     media_descriptions              TEXT[],
@@ -498,7 +498,7 @@ CREATE TABLE notifications (
     id              BIGINT PRIMARY KEY DEFAULT nextval('notification_id_seq'),
     account_id      BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     from_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    type            TEXT NOT NULL,
+    type            TEXT,
     report_id       BIGINT REFERENCES reports(id) ON DELETE CASCADE,
     read            BOOLEAN NOT NULL DEFAULT false,
     filtered        BOOLEAN NOT NULL DEFAULT false,
@@ -635,7 +635,7 @@ CREATE TABLE follows (
     uri               TEXT UNIQUE,
     show_reblogs      BOOLEAN NOT NULL DEFAULT true,
     notify            BOOLEAN NOT NULL DEFAULT false,
-    languages         TEXT[] NOT NULL DEFAULT '{}',
+    languages         TEXT[],
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, target_account_id)
@@ -652,7 +652,7 @@ CREATE TABLE follow_requests (
     uri               TEXT UNIQUE,
     show_reblogs      BOOLEAN NOT NULL DEFAULT true,
     notify            BOOLEAN NOT NULL DEFAULT false,
-    languages         TEXT[] NOT NULL DEFAULT '{}',
+    languages         TEXT[],
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, target_account_id)
@@ -789,7 +789,7 @@ CREATE TABLE canonical_email_blocks (
 CREATE TABLE domain_blocks (
     id              BIGSERIAL PRIMARY KEY,
     domain          TEXT NOT NULL UNIQUE,
-    severity        INTEGER NOT NULL DEFAULT 0,
+    severity        INTEGER,
     reject_media    BOOLEAN NOT NULL DEFAULT false,
     reject_reports  BOOLEAN NOT NULL DEFAULT false,
     private_comment TEXT,
@@ -856,7 +856,7 @@ CREATE TABLE announcements (
     all_day              BOOLEAN NOT NULL DEFAULT false,
     starts_at            TIMESTAMPTZ,
     ends_at              TIMESTAMPTZ,
-    published_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at         TIMESTAMPTZ,
     scheduled_at         TIMESTAMPTZ,
     status_ids           BIGINT[],
     notification_sent_at TIMESTAMPTZ,
@@ -1077,7 +1077,7 @@ CREATE TABLE preview_card_providers (
 CREATE TABLE preview_cards_statuses (
     status_id       BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
     preview_card_id BIGINT NOT NULL REFERENCES preview_cards(id) ON DELETE CASCADE,
-    url             TEXT NOT NULL DEFAULT '',
+    url             TEXT,
     PRIMARY KEY (status_id, preview_card_id)
 );
 
@@ -1179,7 +1179,7 @@ CREATE TABLE oauth_access_grants (
     resource_owner_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token                 TEXT NOT NULL UNIQUE,
     redirect_uri          TEXT NOT NULL,
-    scopes                TEXT NOT NULL DEFAULT 'read',
+    scopes                TEXT,
     code_challenge        TEXT,
     code_challenge_method TEXT,
     expires_in            INTEGER NOT NULL DEFAULT 600,
@@ -1194,7 +1194,7 @@ CREATE TABLE oauth_access_tokens (
     account_id        BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
     token             TEXT NOT NULL UNIQUE,
     refresh_token     TEXT UNIQUE,
-    scopes            TEXT NOT NULL DEFAULT 'read',
+    scopes            TEXT,
     expires_at        TIMESTAMPTZ,
     revoked_at        TIMESTAMPTZ,
     expires_in        INTEGER,
@@ -1216,7 +1216,7 @@ CREATE TABLE web_push_subscriptions (
     endpoint        TEXT NOT NULL,
     key_p256dh      TEXT NOT NULL DEFAULT '',
     key_auth        TEXT NOT NULL DEFAULT '',
-    data            JSON NOT NULL DEFAULT '{}',
+    data            JSON,
     user_id         BIGINT REFERENCES users(id) ON DELETE CASCADE,
     standard        BOOLEAN NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1352,8 +1352,8 @@ CREATE TABLE settings (
     value      TEXT,
     thing_type TEXT,
     thing_id   BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
     UNIQUE (thing_type, thing_id, var)
 );
 
@@ -1534,7 +1534,7 @@ CREATE INDEX index_fasp_follow_recommendations_on_recommended_account_id
 -- ── instance_moderation_notes ─────────────────────────────────────────────────
 CREATE TABLE instance_moderation_notes (
     id         BIGSERIAL PRIMARY KEY,
-    content    TEXT NOT NULL DEFAULT '',
+    content    TEXT,
     domain     TEXT NOT NULL DEFAULT '',
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
