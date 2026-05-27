@@ -86,7 +86,7 @@ pub async fn api_create_account(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     req_headers: HeaderMap,
-    super::oauth::FormOrJson(form): super::oauth::FormOrJson<ApiCreateAccountForm>,
+    super::extractors::FormOrJson(form): super::extractors::FormOrJson<ApiCreateAccountForm>,
 ) -> AppResult<Json<super::types::Token>> {
     let invite_code = form.invite_code.as_deref().unwrap_or("").trim().to_string();
     let invite_id: Option<i64> = if !invite_code.is_empty() {

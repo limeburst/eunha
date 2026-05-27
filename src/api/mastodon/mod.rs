@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod admin;
+pub mod extractors;
 pub mod announcements;
 pub mod annual_reports;
 pub mod bookmarks;

@@ -13,6 +13,7 @@ use crate::{
 };
 use super::accounts::{batch_account_roles, fetch_account_emojis};
 use super::convert::account_from_db;
+use super::extractors::QueryOrJson;
 use super::types::Account as ApiAccount;
 
 // ── Admin auth guard ──────────────────────────────────────────────────────
@@ -801,7 +802,7 @@ pub struct MeasuresRequest {
 pub async fn get_measures(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Json(body): Json<MeasuresRequest>,
+    QueryOrJson(body): QueryOrJson<MeasuresRequest>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
 
@@ -962,7 +963,7 @@ pub struct DimensionsRequest {
 pub async fn get_dimensions(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Json(body): Json<DimensionsRequest>,
+    QueryOrJson(body): QueryOrJson<DimensionsRequest>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
 
@@ -1029,7 +1030,7 @@ pub struct RetentionRequest {
 pub async fn get_retention(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthenticatedUser>,
-    Json(body): Json<RetentionRequest>,
+    QueryOrJson(body): QueryOrJson<RetentionRequest>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     require_admin(&state, auth.account_id).await?;
 
