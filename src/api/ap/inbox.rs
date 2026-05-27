@@ -56,20 +56,19 @@ pub async fn shared_inbox(
         }
     }
 
-    match activity_type {
-        "Follow" => handle_follow(&state, &instance, &activity).await?,
-        "Undo" => handle_undo(&state, &instance, &activity).await?,
-        "Create" => handle_create(&state, &instance, &activity).await?,
-        "Delete" => handle_delete(&state, &instance, &activity).await?,
-        "Announce" => handle_announce(&state, &instance, &activity).await?,
-        "Like" => handle_like(&state, &instance, &activity).await?,
-        "Accept" | "Reject" => handle_accept_reject(&state, &instance, &activity).await?,
-        "Update" => handle_update(&state, &instance, &activity).await?,
-        "QuoteRequest" => handle_quote_request(&state, &instance, &activity).await?,
-        other => {
-            tracing::debug!("ignoring unhandled activity type: {other}");
-        }
-    }
+    let outcome = match activity_type {
+        "Follow" => { handle_follow(&state, &instance, &activity).await?; "handled" }
+        "Undo" => { handle_undo(&state, &instance, &activity).await?; "handled" }
+        "Create" => { handle_create(&state, &instance, &activity).await?; "handled" }
+        "Delete" => { handle_delete(&state, &instance, &activity).await?; "handled" }
+        "Announce" => { handle_announce(&state, &instance, &activity).await?; "handled" }
+        "Like" => { handle_like(&state, &instance, &activity).await?; "handled" }
+        "Accept" | "Reject" => { handle_accept_reject(&state, &instance, &activity).await?; "handled" }
+        "Update" => { handle_update(&state, &instance, &activity).await?; "handled" }
+        "QuoteRequest" => { handle_quote_request(&state, &instance, &activity).await?; "handled" }
+        _ => "ignored",
+    };
+    tracing::debug!(activity_type, outcome, "ActivityPub activity processed");
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -777,6 +776,7 @@ async fn handle_delete(
     _instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
+    let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
     let object_uri = activity.get("object").and_then(|o| {
         if o.is_string() {
             o.as_str()
@@ -786,12 +786,24 @@ async fn handle_delete(
     });
 
     if let Some(uri) = object_uri {
-        sqlx::query!(
-            "UPDATE statuses SET deleted_at = now() WHERE uri = $1",
-            uri
-        )
-        .execute(&state.db)
-        .await?;
+        // Delete(actor) — remote account deleted itself
+        if uri == actor_uri {
+            sqlx::query!(
+                "UPDATE accounts SET suspended_at = now() WHERE uri = $1 AND domain IS NOT NULL",
+                uri,
+            )
+            .execute(&state.db)
+            .await?;
+            tracing::debug!(actor_uri, "suspended remote account on Delete(actor)");
+        } else {
+            // Delete(Note) or Delete(Tombstone) — remote status deleted
+            sqlx::query!(
+                "UPDATE statuses SET deleted_at = now() WHERE uri = $1",
+                uri,
+            )
+            .execute(&state.db)
+            .await?;
+        }
     }
 
     Ok(())
