@@ -1,14 +1,13 @@
 use axum::{
-    extract::{Extension, Form, FromRequest, Query, State},
+    extract::{Extension, Form, FromRequest, Multipart, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     Json,
 };
 use serde::Deserialize;
 
-/// Extractor that accepts both JSON and form-encoded bodies.
-/// For non-JSON requests, parses the raw body as URL-encoded regardless of
-/// Content-Type, to stay compatible with clients that omit or vary the header.
+/// Extractor that accepts JSON, application/x-www-form-urlencoded, and
+/// multipart/form-data bodies — matching Rails' transparent param handling.
 pub struct FormOrJson<T>(pub T);
 
 impl<T, S> FromRequest<S> for FormOrJson<T>
@@ -19,27 +18,45 @@ where
     type Rejection = Response;
 
     async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-        let is_json = req
+        let content_type = req
             .headers()
             .get(axum::http::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|ct| ct.contains("application/json"))
-            .unwrap_or(false);
+            .unwrap_or("")
+            .to_string();
 
-        if is_json {
+        if content_type.contains("application/json") {
             Json::<T>::from_request(req, state)
                 .await
                 .map(|Json(v)| FormOrJson(v))
                 .map_err(IntoResponse::into_response)
+        } else if content_type.contains("multipart/form-data") {
+            let mut multipart = Multipart::from_request(req, state)
+                .await
+                .map_err(IntoResponse::into_response)?;
+            let mut pairs: Vec<(String, String)> = Vec::new();
+            while let Some(field) = multipart.next_field().await.map_err(|e| {
+                (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response()
+            })? {
+                let name = field.name().unwrap_or("").to_string();
+                let value = field.text().await.map_err(|e| {
+                    (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response()
+                })?;
+                pairs.push((name, value));
+            }
+            let encoded = serde_urlencoded::to_string(&pairs).map_err(|e| {
+                (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response()
+            })?;
+            serde_urlencoded::from_str::<T>(&encoded)
+                .map(FormOrJson)
+                .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response())
         } else {
             let bytes = axum::body::Bytes::from_request(req, state)
                 .await
                 .map_err(IntoResponse::into_response)?;
             serde_urlencoded::from_bytes::<T>(&bytes)
                 .map(FormOrJson)
-                .map_err(|e| {
-                    (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response()
-                })
+                .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response())
         }
     }
 }
