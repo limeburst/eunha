@@ -284,48 +284,120 @@ async fn handle_create(
         return Ok(());
     }
 
+    // Tombstone check
+    let tombstoned = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM tombstones WHERE uri = $1)",
+        note_uri,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+    if tombstoned {
+        return Ok(());
+    }
+
     let account_id = match resolve_or_fetch_remote_account(state, actor_uri).await {
         Ok(id) => id,
         Err(_) => return Ok(()),
     };
 
-    let text = object
-        .get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_string();
-    let spoiler_text = object
-        .get("summary")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
-    let sensitive = object
-        .get("sensitive")
-        .and_then(|s| s.as_bool())
-        .unwrap_or(false);
+    // Parse tag[] array once: mentions, hashtags, emojis
+    let tags_arr: Vec<Value> = object
+        .get("tag")
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mention_hrefs: Vec<String> = tags_arr
+        .iter()
+        .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("Mention"))
+        .filter_map(|t| t.get("href").and_then(|v| v.as_str()).map(str::to_owned))
+        .collect();
+
+    // Look up inReplyTo status (id + account_id + whether account is local)
+    let in_reply_to_uri = object.get("inReplyTo").and_then(|v| v.as_str());
+    let in_reply_to_row = if let Some(uri) = in_reply_to_uri {
+        sqlx::query!(
+            r#"SELECT s.id, s.account_id, (a.domain IS NULL) AS "is_local!"
+               FROM statuses s JOIN accounts a ON a.id = s.account_id
+               WHERE s.uri = $1"#,
+            uri,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    let in_reply_to_id = in_reply_to_row.as_ref().map(|r| r.id);
+    let in_reply_to_account_id = in_reply_to_row.as_ref().map(|r| r.account_id);
+    let in_reply_to_local = in_reply_to_row.as_ref().is_some_and(|r| r.is_local);
+
+    // Acceptance filter: only process if related to local activity
+    let is_followed_locally = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM follows f
+            JOIN accounts a ON a.id = f.account_id
+            WHERE f.target_account_id = $1 AND a.domain IS NULL
+        )"#,
+        account_id,
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(false);
+
+    let mentions_local = if !mention_hrefs.is_empty() {
+        sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE uri = ANY($1) AND domain IS NULL)",
+            &mention_hrefs as &[String],
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !is_followed_locally && !mentions_local && !in_reply_to_local {
+        tracing::debug!(note_uri, "Create(Note): ignoring, not related to local activity");
+        return Ok(());
+    }
+
+    // Field extraction
+    let text = object.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    let spoiler_text = object.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let sensitive = object.get("sensitive").and_then(|s| s.as_bool()).unwrap_or(false);
     let url = object.get("url").and_then(|u| u.as_str()).map(str::to_owned);
     let published = object
         .get("published")
         .and_then(|p| p.as_str())
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|t| t.with_timezone(&chrono::Utc));
+    let edited_at = object
+        .get("updated")
+        .and_then(|p| p.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.with_timezone(&chrono::Utc));
 
-    let to = object
+    let to: Vec<&str> = object
         .get("to")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
-    let cc = object
+    let cc: Vec<&str> = object
         .get("cc")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
     const PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
     let visibility = if to.contains(&PUBLIC) {
         crate::db::models::vis::PUBLIC
     } else if cc.contains(&PUBLIC) {
         crate::db::models::vis::UNLISTED
-    } else if to.iter().any(|u| u.ends_with("/followers")) || cc.iter().any(|u| u.ends_with("/followers")) {
+    } else if to.iter().any(|u| u.ends_with("/followers"))
+        || cc.iter().any(|u| u.ends_with("/followers"))
+    {
         crate::db::models::vis::PRIVATE
     } else {
         crate::db::models::vis::DIRECT
@@ -337,17 +409,6 @@ async fn handle_create(
         .and_then(|m| m.keys().next())
         .map(|s| s.to_string())
         .filter(|s| ["ko", "en"].contains(&s.as_str()));
-
-    let in_reply_to_uri = object.get("inReplyTo").and_then(|v| v.as_str());
-    let in_reply_to_id: Option<i64> = if let Some(uri) = in_reply_to_uri {
-        sqlx::query_scalar!("SELECT id FROM statuses WHERE uri = $1", uri)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
 
     let quote_uri = object
         .get("quote")
@@ -371,8 +432,9 @@ async fn handle_create(
     let inserted = sqlx::query_scalar!(
         r#"INSERT INTO statuses
              (id, account_id, text, spoiler_text, visibility, sensitive,
-              uri, url, in_reply_to_id, reply, language, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+              uri, url, in_reply_to_id, in_reply_to_account_id, reply,
+              language, created_at, edited_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING
            RETURNING id"#,
         status_id,
@@ -384,9 +446,11 @@ async fn handle_create(
         note_uri,
         url,
         in_reply_to_id,
+        in_reply_to_account_id,
         in_reply_to_id.is_some(),
         language,
         created_at,
+        edited_at,
     )
     .fetch_optional(&state.db)
     .await?;
@@ -405,25 +469,300 @@ async fn handle_create(
         .await;
     }
 
-    // Push to home and list feeds for all local followers.
-    let in_reply_to_account_id: Option<i64> = if let Some(irt_id) = in_reply_to_id {
-        sqlx::query_scalar!("SELECT account_id FROM statuses WHERE id = $1", irt_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
+    // Media attachments
+    let attachments: Vec<Value> = object
+        .get("attachment")
+        .and_then(|a| a.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut media_ids: Vec<i64> = Vec::new();
+    for att in &attachments {
+        let att_type_str = att.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let media_type_str = att.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+        let att_type: i32 = match att_type_str {
+            "Image" => 0,
+            "Video" => {
+                if media_type_str.contains("gif") { 1 } else { 2 }
+            }
+            "Audio" => 3,
+            _ => 4,
+        };
+        let remote_url = match att.get("url").and_then(|v| v.as_str()) {
+            Some(u) if !u.is_empty() => u,
+            _ => continue,
+        };
+        let description = att.get("name").and_then(|v| v.as_str()).map(str::to_owned);
+        let blurhash = att.get("blurhash").and_then(|v| v.as_str()).map(str::to_owned);
+        let thumbnail_remote_url = att
+            .get("icon")
+            .and_then(|i| if i.is_object() { i.get("url") } else { None })
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let file_content_type = if media_type_str.is_empty() {
+            None
+        } else {
+            Some(media_type_str.to_owned())
+        };
+        let width = att.get("width").and_then(|v| v.as_i64());
+        let height = att.get("height").and_then(|v| v.as_i64());
+        let duration = att.get("duration").and_then(|v| v.as_f64());
+        let file_meta: Option<serde_json::Value> = if width.is_some() || height.is_some() || duration.is_some() {
+            let mut orig = serde_json::Map::new();
+            if let Some(w) = width { orig.insert("width".into(), w.into()); }
+            if let Some(h) = height { orig.insert("height".into(), h.into()); }
+            if let Some(d) = duration { orig.insert("duration".into(), d.into()); }
+            let mut meta = serde_json::Map::new();
+            meta.insert("original".into(), serde_json::Value::Object(orig));
+            Some(serde_json::Value::Object(meta))
+        } else {
+            None
+        };
+
+        let media_id = crate::snowflake::next_id();
+        match sqlx::query_scalar!(
+            r#"INSERT INTO media_attachments
+                 (id, account_id, status_id, remote_url, description, blurhash,
+                  type, thumbnail_remote_url, file_content_type, file_meta)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+               RETURNING id"#,
+            media_id,
+            account_id,
+            inserted_id,
+            remote_url,
+            description,
+            blurhash,
+            att_type,
+            thumbnail_remote_url,
+            file_content_type,
+            file_meta,
+        )
+        .fetch_one(&state.db)
+        .await
+        {
+            Ok(id) => media_ids.push(id),
+            Err(e) => tracing::warn!(error = %e, "failed to insert media attachment"),
+        }
+    }
+    if !media_ids.is_empty() {
+        let _ = sqlx::query!(
+            "UPDATE statuses SET ordered_media_attachment_ids = $1 WHERE id = $2",
+            &media_ids,
+            inserted_id,
+        )
+        .execute(&state.db)
+        .await;
+    }
+
+    // Hashtags
+    let hashtag_names: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        tags_arr
+            .iter()
+            .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("Hashtag"))
+            .filter_map(|t| {
+                t.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| n.trim_start_matches('#').to_lowercase())
+            })
+            .filter(|n| !n.is_empty() && seen.insert(n.clone()))
+            .collect()
     };
+    let mut tag_ids: Vec<i64> = Vec::new();
+    for name in &hashtag_names {
+        let tag_id = crate::snowflake::next_id();
+        match sqlx::query_scalar!(
+            r#"INSERT INTO tags (id, name, last_status_at, created_at, updated_at)
+               VALUES ($1, $2, now(), now(), now())
+               ON CONFLICT (lower(name)) DO UPDATE SET last_status_at = now(), updated_at = now()
+               RETURNING id"#,
+            tag_id,
+            name,
+        )
+        .fetch_optional(&state.db)
+        .await
+        {
+            Ok(Some(id)) => {
+                tag_ids.push(id);
+                let _ = sqlx::query!(
+                    "INSERT INTO statuses_tags (status_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                    inserted_id,
+                    id,
+                )
+                .execute(&state.db)
+                .await;
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(tag = name, error = %e, "failed to upsert hashtag"),
+        }
+    }
+
+    // Mentions — resolve accounts and notify local ones
+    let actor_info = sqlx::query!(
+        "SELECT display_name, username, domain, avatar_remote_url FROM accounts WHERE id = $1",
+        account_id,
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    for href in &mention_hrefs {
+        let mentioned_id = match resolve_or_fetch_remote_account(state, href).await {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        let _ = sqlx::query!(
+            "INSERT INTO mentions (status_id, account_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            inserted_id,
+            mentioned_id,
+        )
+        .execute(&state.db)
+        .await;
+
+        let is_local = sqlx::query_scalar!(
+            r#"SELECT (domain IS NULL) AS "v!" FROM accounts WHERE id = $1"#,
+            mentioned_id,
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+        if is_local {
+            if let Some(ref info) = actor_info {
+                let acct = match &info.domain {
+                    Some(d) => format!("{}@{}", info.username, d),
+                    None => info.username.clone(),
+                };
+                crate::push::create_and_push(
+                    state,
+                    mentioned_id,
+                    account_id,
+                    "mention",
+                    Some(inserted_id),
+                    format!("New mention from {}", info.display_name),
+                    acct,
+                    info.avatar_remote_url.clone().unwrap_or_default(),
+                )
+                .await;
+            }
+        }
+    }
+
+    // Custom emojis
+    let actor_domain = url::Url::parse(actor_uri)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned));
+    for tag in tags_arr
+        .iter()
+        .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("Emoji"))
+    {
+        let shortcode = match tag.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n.trim_matches(':').to_string(),
+            None => continue,
+        };
+        let image_remote_url = match tag
+            .get("icon")
+            .and_then(|i| i.get("url"))
+            .and_then(|v| v.as_str())
+        {
+            Some(u) => u.to_string(),
+            None => continue,
+        };
+        let uri = tag.get("id").and_then(|v| v.as_str()).map(str::to_owned);
+        let emoji_id = crate::snowflake::next_id();
+        let _ = sqlx::query!(
+            r#"INSERT INTO custom_emojis
+                 (id, shortcode, domain, image_remote_url, uri, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,now(),now())
+               ON CONFLICT (shortcode, domain)
+               DO UPDATE SET image_remote_url = EXCLUDED.image_remote_url, updated_at = now()"#,
+            emoji_id,
+            shortcode,
+            actor_domain,
+            image_remote_url,
+            uri,
+        )
+        .execute(&state.db)
+        .await;
+    }
+
+    // Poll
+    let poll_items = object.get("oneOf").or_else(|| object.get("anyOf"));
+    if let Some(items) = poll_items.and_then(|v| v.as_array()) {
+        let multiple = object.get("anyOf").is_some();
+        let options: Vec<String> = items
+            .iter()
+            .filter_map(|item| item.get("name").and_then(|v| v.as_str()).map(str::to_owned))
+            .collect();
+        let cached_tallies: Vec<i64> = items
+            .iter()
+            .map(|item| {
+                item.get("replies")
+                    .and_then(|r| r.get("totalItems"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+            })
+            .collect();
+        let votes_count: i64 = cached_tallies.iter().sum();
+        let expires_at = object
+            .get("endTime")
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&chrono::Utc));
+        let poll_id = crate::snowflake::next_id();
+        if let Ok(Some(_)) = sqlx::query_scalar!(
+            r#"INSERT INTO polls
+                 (id, status_id, account_id, options, cached_tallies, votes_count,
+                  multiple, expires_at, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now())
+               ON CONFLICT (status_id) DO NOTHING
+               RETURNING id"#,
+            poll_id,
+            inserted_id,
+            account_id,
+            &options as &[String],
+            &cached_tallies as &[i64],
+            votes_count,
+            multiple,
+            expires_at,
+        )
+        .fetch_optional(&state.db)
+        .await
+        {
+            let _ = sqlx::query!(
+                "UPDATE statuses SET poll_id = $1 WHERE id = $2",
+                poll_id,
+                inserted_id,
+            )
+            .execute(&state.db)
+            .await;
+        }
+    }
+
+    // Thread resolution: spawn a fetch if parent is not in our DB
+    if let (Some(uri), None) = (in_reply_to_uri, in_reply_to_id) {
+        let http = state.http.clone();
+        let uri = uri.to_owned();
+        tokio::spawn(async move {
+            tracing::debug!(uri, "fetching unknown parent status for thread resolution");
+            let _ = http
+                .get(&uri)
+                .header("Accept", "application/activity+json, application/ld+json")
+                .send()
+                .await;
+        });
+    }
+
+    // Fanout to home and list feeds
     let vis_str = crate::db::models::vis::to_str(visibility);
     let mut redis = state.redis.clone();
     let db = state.db.clone();
     if crate::feed::sync_fanout() {
-        crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &[]).await;
+        crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &tag_ids).await;
         crate::feed::fanout_to_lists(&mut redis, &db, account_id, inserted_id, in_reply_to_account_id, vis_str).await;
     } else {
         tokio::spawn(async move {
-            crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &[]).await;
+            crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &tag_ids).await;
             crate::feed::fanout_to_lists(&mut redis, &db, account_id, inserted_id, in_reply_to_account_id, vis_str).await;
         });
     }
