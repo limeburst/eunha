@@ -109,7 +109,7 @@ async fn handle_follow(
     let activity_uri = activity.get("id").and_then(|i| i.as_str()).unwrap_or("");
 
     let target = sqlx::query!(
-        "SELECT id, locked, username, private_key FROM accounts WHERE uri = $1",
+        "SELECT id, locked, username, private_key FROM accounts WHERE uri = $1 AND domain IS NULL",
         object_uri,
     )
     .fetch_optional(&state.db)
@@ -117,6 +117,14 @@ async fn handle_follow(
     let Some(target) = target else { return Ok(()) };
 
     let follower_id = resolve_or_fetch_remote_account(state, actor_uri).await?;
+
+    // Fetch the follower's account for push notification details
+    let follower = sqlx::query!(
+        "SELECT display_name, username, domain, avatar_remote_url FROM accounts WHERE id = $1",
+        follower_id,
+    )
+    .fetch_optional(&state.db)
+    .await?;
 
     if target.locked {
         sqlx::query!(
@@ -129,6 +137,25 @@ async fn handle_follow(
         )
         .execute(&state.db)
         .await?;
+
+        // Notify the local user about the incoming follow request
+        if let Some(ref f) = follower {
+            let acct = match &f.domain {
+                Some(d) => format!("{}@{}", f.username, d),
+                None => f.username.clone(),
+            };
+            crate::push::create_and_push(
+                state,
+                target.id,
+                follower_id,
+                "follow_request",
+                None,
+                format!("{} wants to follow you", f.display_name),
+                acct,
+                f.avatar_remote_url.clone().unwrap_or_default(),
+            )
+            .await;
+        }
     } else {
         sqlx::query!(
             r#"INSERT INTO follows (account_id, target_account_id, uri)
@@ -140,6 +167,25 @@ async fn handle_follow(
         )
         .execute(&state.db)
         .await?;
+
+        // Notify the local user about their new follower
+        if let Some(ref f) = follower {
+            let acct = match &f.domain {
+                Some(d) => format!("{}@{}", f.username, d),
+                None => f.username.clone(),
+            };
+            crate::push::create_and_push(
+                state,
+                target.id,
+                follower_id,
+                "follow",
+                None,
+                format!("{} followed you", f.display_name),
+                acct,
+                f.avatar_remote_url.clone().unwrap_or_default(),
+            )
+            .await;
+        }
 
         // Send Accept back to the remote follower
         if let Some(private_key) = target.private_key.filter(|s| !s.is_empty()) {

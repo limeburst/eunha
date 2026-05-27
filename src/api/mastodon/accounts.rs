@@ -2082,13 +2082,13 @@ pub async fn authorize_follow_request(
     auth.require_scope("write:follows")?;
     // Move from follow_requests to follows (atomic: delete pending, insert accepted)
     let deleted = sqlx::query!(
-        "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2 RETURNING account_id",
+        "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2 RETURNING account_id, uri",
         requester_id, auth.account_id
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if deleted.is_some() {
+    if let Some(deleted_row) = deleted {
         sqlx::query!(
             r#"INSERT INTO follows (account_id, target_account_id)
                VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
@@ -2122,6 +2122,48 @@ pub async fn authorize_follow_request(
             super::convert::account_avatar_url_for(&accepter),
         ).await;
 
+        if let Some(follow_uri) = deleted_row.uri {
+            let requester = fetch_account(&state, requester_id).await?;
+            if requester.domain.is_some() {
+                if let Some(private_key) = accepter.private_key.clone().filter(|s| !s.is_empty()) {
+                    let accepter_actor_url = format!(
+                        "https://{}/users/{}",
+                        state.instance.domain, accepter.username
+                    );
+                    let key_id = format!("{}#main-key", accepter_actor_url);
+                    let accept_id = format!(
+                        "https://{}/activities/{}",
+                        state.instance.domain,
+                        crate::snowflake::next_id()
+                    );
+                    let activity = feder_vocab::accept_follow(
+                        &accept_id,
+                        &accepter_actor_url,
+                        &follow_uri,
+                        &requester.uri,
+                        &accepter_actor_url,
+                    );
+                    let inbox = if requester.shared_inbox_url.is_empty() {
+                        requester.inbox_url.clone()
+                    } else {
+                        requester.shared_inbox_url.clone()
+                    };
+                    if !inbox.is_empty() {
+                        let http = state.http.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::federation::delivery::deliver(
+                                &http, &activity, &inbox, &key_id, &private_key,
+                            )
+                            .await
+                            {
+                                tracing::warn!(inbox, error = %e, "failed to deliver Accept");
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
         let mut redis = state.redis.clone();
         let db = state.db.clone();
         let followed_id = auth.account_id;
@@ -2145,12 +2187,57 @@ pub async fn reject_follow_request(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
-    sqlx::query!(
-        "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
+    let deleted = sqlx::query!(
+        "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2 RETURNING account_id, uri",
         requester_id, auth.account_id
     )
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
+
+    if let Some(deleted_row) = deleted {
+        if let Some(follow_uri) = deleted_row.uri {
+            let requester = fetch_account(&state, requester_id).await?;
+            if requester.domain.is_some() {
+                let rejecter = fetch_account(&state, auth.account_id).await?;
+                if let Some(private_key) = rejecter.private_key.filter(|s| !s.is_empty()) {
+                    let rejecter_actor_url = format!(
+                        "https://{}/users/{}",
+                        state.instance.domain, rejecter.username
+                    );
+                    let key_id = format!("{}#main-key", rejecter_actor_url);
+                    let reject_id = format!(
+                        "https://{}/activities/{}",
+                        state.instance.domain,
+                        crate::snowflake::next_id()
+                    );
+                    let activity = feder_vocab::reject_follow(
+                        &reject_id,
+                        &rejecter_actor_url,
+                        &follow_uri,
+                        &requester.uri,
+                        &rejecter_actor_url,
+                    );
+                    let inbox = if requester.shared_inbox_url.is_empty() {
+                        requester.inbox_url.clone()
+                    } else {
+                        requester.shared_inbox_url.clone()
+                    };
+                    if !inbox.is_empty() {
+                        let http = state.http.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::federation::delivery::deliver(
+                                &http, &activity, &inbox, &key_id, &private_key,
+                            )
+                            .await
+                            {
+                                tracing::warn!(inbox, error = %e, "failed to deliver Reject");
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     build_relationship(&state, auth.account_id, requester_id).await.map(Json)
 }
