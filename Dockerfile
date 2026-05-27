@@ -28,7 +28,6 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ── Stage 3c: Cache dependency compilation ──────────────────────────────────
 FROM chef AS cacher
 COPY --from=planner /app/recipe.json recipe.json
-COPY crates/ crates/
 # Dependencies don't contain sqlx queries so offline mode is fine here.
 ENV SQLX_OFFLINE=true
 RUN cargo chef cook --release --recipe-path recipe.json
