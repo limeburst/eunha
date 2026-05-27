@@ -105,7 +105,7 @@ pub async fn fetch_account_role(state: &AppState, account_id: i64) -> Option<sup
     if position >= 1000 {
         Some(super::types::Role {
             id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
-            permissions: "2031612".into(), highlighted: true,
+            permissions: "1048575".into(), highlighted: true,
         })
     } else if position >= 100 {
         Some(super::types::Role {
