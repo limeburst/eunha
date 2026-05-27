@@ -44,22 +44,26 @@ pub async fn upload_media(
 
     let (_, content_type, data) = file_field.ok_or_else(|| AppError::Unprocessable("missing file field".into()))?;
     let media_type = classify_media_type(&content_type);
-    let keys = crate::media::media_attachment_keys(&content_type);
+    let media_id = crate::snowflake::next_id();
+    // Compute filename and S3 key using Mastodon Paperclip convention (id-based path)
+    let file_ext = crate::media::ext_for_content_type(&content_type);
+    let file_filename = format!("original.{}", file_ext);
+    let file_key = format!("media_attachments/files/{}/original/{}", crate::media::int_to_path(media_id), file_filename);
 
     let data = strip_exif(&data, &content_type);
-    state.storage.store(&data, &keys.original, &content_type).await?;
-    let file_url = state.storage.public_url(&keys.original);
+    state.storage.store(&data, &file_key, &content_type).await?;
 
-    let (meta, blurhash, preview_url) = if media_type == "image" || media_type == "gifv" {
+    let (file_meta, blurhash, thumbnail_file_name) = if media_type == "image" || media_type == "gifv" {
         match process_image(&data, &content_type) {
             Some((orig_dim, small_bytes, small_dim, bh)) => {
-                state.storage.store(&small_bytes, &keys.small, &content_type).await?;
-                let preview_url = state.storage.public_url(&keys.small);
+                let small_filename = format!("small.{}", file_ext);
+                let small_key = format!("media_attachments/files/{}/small/{}", crate::media::int_to_path(media_id), small_filename);
+                state.storage.store(&small_bytes, &small_key, &content_type).await?;
                 let meta = serde_json::json!({
                     "original": orig_dim,
                     "small": small_dim,
                 });
-                (Some(meta), Some(bh), Some(preview_url))
+                (Some(meta), Some(bh), Some(small_filename))
             }
             None => (None, None, None),
         }
@@ -67,22 +71,22 @@ pub async fn upload_media(
         (None, None, None)
     };
 
-    let media_id = crate::snowflake::next_id();
+    let file_size = data.len() as i32;
     let attachment = sqlx::query_as!(
         crate::db::models::MediaAttachment,
         r#"INSERT INTO media_attachments
-             (id, account_id, "type", file_key, file_url, preview_key, preview_url, description, meta, blurhash)
+             (id, account_id, "type", file_file_name, file_content_type, file_file_size, thumbnail_file_name, description, file_meta, blurhash)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING *"#,
         media_id,
         auth.account_id,
         media_type_int(media_type),
-        keys.original,
-        file_url,
-        keys.small,
-        preview_url,
+        file_filename,
+        content_type,
+        file_size,
+        thumbnail_file_name,
         description,
-        meta,
+        file_meta,
         blurhash,
     )
     .fetch_one(&state.db)
@@ -232,7 +236,7 @@ pub async fn update_media(
         if let Some((x_str, y_str)) = focus_str.split_once(',') {
             if let (Ok(x), Ok(y)) = (x_str.trim().parse::<f64>(), y_str.trim().parse::<f64>()) {
                 let current = sqlx::query_scalar!(
-                    "SELECT meta FROM media_attachments WHERE id = $1",
+                    "SELECT file_meta FROM media_attachments WHERE id = $1",
                     id,
                 )
                 .fetch_one(&state.db)
@@ -242,7 +246,7 @@ pub async fn update_media(
                     obj.insert("focus".to_string(), serde_json::json!({ "x": x, "y": y }));
                 }
                 sqlx::query!(
-                    "UPDATE media_attachments SET meta = $1 WHERE id = $2",
+                    "UPDATE media_attachments SET file_meta = $1 WHERE id = $2",
                     meta, id,
                 )
                 .execute(&state.db)
@@ -290,11 +294,12 @@ pub async fn delete_media(
     .execute(&state.db)
     .await?;
 
-    if let Some(key) = &attachment.file_key {
-        let _ = state.storage.delete(key).await;
-    }
-    if let Some(key) = &attachment.preview_key {
-        let _ = state.storage.delete(key).await;
+    // Delete file from S3 using computed key from file_file_name
+    if let Some(filename) = &attachment.file_file_name {
+        if !filename.is_empty() {
+            let key = format!("media_attachments/files/{}/original/{}", crate::media::int_to_path(attachment.id), filename);
+            let _ = state.storage.delete(&key).await;
+        }
     }
 
     Ok(axum::http::StatusCode::OK)

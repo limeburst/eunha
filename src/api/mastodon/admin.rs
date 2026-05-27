@@ -18,15 +18,18 @@ use super::types::Account as ApiAccount;
 // ── Admin auth guard ──────────────────────────────────────────────────────
 
 async fn require_admin(state: &AppState, account_id: i64) -> AppResult<()> {
-    let role = sqlx::query_scalar!(
-        "SELECT role FROM users WHERE account_id = $1",
+    let position: i32 = sqlx::query_scalar!(
+        r#"SELECT COALESCE(ur.position, 0) AS "pos!: i32"
+           FROM users u
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE u.account_id = $1"#,
         account_id,
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::Unauthorized)?;
 
-    if role != "admin" && role != "moderator" {
+    if position < 100 {
         return Err(AppError::Forbidden);
     }
     Ok(())
@@ -108,21 +111,28 @@ fn role_for(role_str: &str) -> AdminRole {
 
 async fn build_admin_account(state: &AppState, account: &models::Account) -> AppResult<AdminAccount> {
     let user = sqlx::query!(
-        "SELECT id, email, confirmed_at, approved_at, reason, role FROM users WHERE account_id = $1",
+        r#"SELECT u.id, u.email, u.confirmed_at, u.approved,
+                  COALESCE(ur.position, 0) AS "role_position!: i32"
+           FROM users u
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE u.account_id = $1"#,
         account.id,
     )
     .fetch_optional(&state.db)
     .await?;
 
     let (user_id, email, confirmed, approved, reason, role_str) = match user {
-        Some(u) => (
-            Some(u.id),
-            u.email,
-            u.confirmed_at.is_some(),
-            u.approved_at.is_some(),
-            u.reason,
-            u.role,
-        ),
+        Some(u) => {
+            let role = if u.role_position >= 1000 { "admin" } else if u.role_position >= 100 { "moderator" } else { "user" };
+            (
+                Some(u.id),
+                u.email,
+                u.confirmed_at.is_some(),
+                u.approved,
+                None::<String>,
+                role.to_string(),
+            )
+        }
         None => (None, String::new(), true, true, None, "user".to_string()),
     };
 
@@ -216,10 +226,10 @@ pub async fn list_admin_accounts(
                   ($3 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
                   ($3 = 'disabled' AND a.suspended_at IS NOT NULL) OR
                   ($3 = 'pending' AND EXISTS (
-                      SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL
+                      SELECT 1 FROM users u WHERE u.account_id = a.id AND NOT u.approved
                   )) OR
                   ($3 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
-                      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id AND u.approved_at IS NULL))
+                      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id AND NOT u.approved))
              )
              AND ($4::bigint IS NULL OR a.id < $4)
              AND ($5::bigint IS NULL OR a.id > $5)
@@ -300,9 +310,9 @@ pub async fn list_admin_accounts_v2(
                   ($6 = 'silenced' AND a.silenced_at IS NOT NULL) OR
                   ($6 = 'sensitized' AND a.sensitized_at IS NOT NULL) OR
                   ($6 = 'disabled' AND a.suspended_at IS NOT NULL) OR
-                  ($6 = 'pending' AND u.approved_at IS NULL AND u.id IS NOT NULL) OR
+                  ($6 = 'pending' AND NOT u.approved AND u.id IS NOT NULL) OR
                   ($6 = 'active' AND a.suspended_at IS NULL AND a.silenced_at IS NULL
-                      AND (u.id IS NULL OR u.approved_at IS NOT NULL))
+                      AND (u.id IS NULL OR u.approved))
              )
              AND ($7::text IS NULL OR (lower(u.email) = lower($7) AND a.domain IS NULL))
              AND ($8::bigint IS NULL OR a.id < $8)
@@ -361,7 +371,7 @@ pub async fn approve_account(
 ) -> AppResult<Json<AdminAccount>> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
-        "UPDATE users SET approved_at = now() WHERE account_id = $1",
+        "UPDATE users SET approved = true WHERE account_id = $1",
         id,
     )
     .execute(&state.db)
@@ -382,7 +392,7 @@ pub async fn reject_account(
 ) -> AppResult<StatusCode> {
     require_admin(&state, auth.account_id).await?;
     sqlx::query!(
-        "UPDATE users SET approved_at = NULL WHERE account_id = $1 AND approved_at IS NULL",
+        "UPDATE users SET approved = false WHERE account_id = $1 AND NOT approved",
         id,
     )
     .execute(&state.db)

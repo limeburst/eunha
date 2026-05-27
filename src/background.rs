@@ -124,9 +124,14 @@ async fn publish_one(
     store_statuses_tags(state, status.id, account.id, &hashtags).await?;
     store_status_mentions(state, status.id, &resolved).await?;
 
-    // Update statuses_count and last_status_at (same as post_status)
+    // Update last_status_at and statuses_count in account_stats
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = statuses_count + 1, last_status_at = GREATEST(last_status_at, $2) WHERE id = $1",
+        r#"INSERT INTO account_stats (account_id, statuses_count, last_status_at, created_at, updated_at)
+           VALUES ($1, 1, $2, now(), now())
+           ON CONFLICT (account_id) DO UPDATE
+             SET statuses_count = account_stats.statuses_count + 1,
+                 last_status_at = GREATEST(account_stats.last_status_at, $2),
+                 updated_at = now()"#,
         account.id,
         status.created_at,
     )
@@ -136,7 +141,11 @@ async fn publish_one(
     // Increment parent's replies_count
     if let Some(parent_id) = in_reply_to_id {
         let _ = sqlx::query!(
-            "UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1",
+            r#"INSERT INTO status_stats (status_id, replies_count, created_at, updated_at)
+               VALUES ($1, 1, now(), now())
+               ON CONFLICT (status_id) DO UPDATE
+                 SET replies_count = status_stats.replies_count + 1,
+                     updated_at = now()"#,
             parent_id,
         )
         .execute(&state.db)
@@ -232,7 +241,7 @@ async fn publish_one(
             Some(status.id),
             format!("{} mentioned you", account.display_name),
             account.acct().clone(),
-            account.avatar.clone().unwrap_or_default(),
+            crate::api::mastodon::convert::account_avatar_url_for(&account),
         ).await;
         notified.insert(parent_account_id);
     }
@@ -248,7 +257,7 @@ async fn publish_one(
             Some(status.id),
             format!("{} mentioned you", account.display_name),
             account.acct().clone(),
-            account.avatar.clone().unwrap_or_default(),
+            crate::api::mastodon::convert::account_avatar_url_for(&account),
         ).await;
         notified.insert(mentioned.id);
     }

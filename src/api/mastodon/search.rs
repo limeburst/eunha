@@ -132,10 +132,11 @@ pub async fn search(
                     crate::db::models::Account,
                     r#"SELECT a.* FROM accounts a
                        JOIN follows f ON f.target_account_id = a.id
+                       LEFT JOIN account_stats ast ON ast.account_id = a.id
                        WHERE a.suspended_at IS NULL
                          AND f.account_id = $3
                          AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
-                       ORDER BY a.followers_count DESC LIMIT $2 OFFSET $4"#,
+                       ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $4"#,
                     pattern, limit, vid, offset
                 )
                 .fetch_all(&state.db)
@@ -143,10 +144,11 @@ pub async fn search(
             } else {
                 sqlx::query_as!(
                     crate::db::models::Account,
-                    r#"SELECT * FROM accounts
-                       WHERE suspended_at IS NULL
-                         AND (lower(username) LIKE $1 OR lower(display_name) LIKE $1)
-                       ORDER BY followers_count DESC LIMIT $2 OFFSET $3"#,
+                    r#"SELECT a.* FROM accounts a
+                       LEFT JOIN account_stats ast ON ast.account_id = a.id
+                       WHERE a.suspended_at IS NULL
+                         AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
+                       ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $3"#,
                     pattern, limit, offset
                 )
                 .fetch_all(&state.db)
@@ -158,10 +160,11 @@ pub async fn search(
                 crate::db::models::Account,
                 r#"SELECT a.* FROM accounts a
                    JOIN follows f ON f.target_account_id = a.id
+                   LEFT JOIN account_stats ast ON ast.account_id = a.id
                    WHERE a.suspended_at IS NULL
                      AND f.account_id = $3
                      AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
-                   ORDER BY a.followers_count DESC LIMIT $2 OFFSET $4"#,
+                   ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $4"#,
                 pattern, limit, vid, offset
             )
             .fetch_all(&state.db)
@@ -169,10 +172,11 @@ pub async fn search(
         } else {
             sqlx::query_as!(
                 crate::db::models::Account,
-                r#"SELECT * FROM accounts
-                   WHERE suspended_at IS NULL
-                     AND (lower(username) LIKE $1 OR lower(display_name) LIKE $1)
-                   ORDER BY followers_count DESC LIMIT $2 OFFSET $3"#,
+                r#"SELECT a.* FROM accounts a
+                   LEFT JOIN account_stats ast ON ast.account_id = a.id
+                   WHERE a.suspended_at IS NULL
+                     AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
+                   ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $3"#,
                 pattern, limit, offset
             )
             .fetch_all(&state.db)

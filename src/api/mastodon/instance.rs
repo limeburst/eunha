@@ -463,7 +463,10 @@ async fn fetch_stats(state: &AppState) -> (i64, i64, i64) {
     .unwrap_or(0);
 
     let status_count = sqlx::query_scalar!(
-        "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE domain IS NULL",
+        r#"SELECT COALESCE(SUM(ast.statuses_count), 0)::bigint
+           FROM account_stats ast
+           JOIN accounts a ON a.id = ast.account_id
+           WHERE a.domain IS NULL"#,
     )
     .fetch_one(&state.db)
     .await
@@ -486,8 +489,9 @@ async fn fetch_contact_account(state: &AppState) -> Option<super::types::Account
         crate::db::models::Account,
         r#"SELECT a.* FROM accounts a
            JOIN users u ON u.account_id = a.id
-           WHERE u.role = 'admin'
-           ORDER BY a.created_at ASC
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE a.domain IS NULL
+           ORDER BY COALESCE(ur.position, 0) DESC, a.created_at ASC
            LIMIT 1"#,
     )
     .fetch_optional(&state.db)

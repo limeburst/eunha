@@ -6,10 +6,14 @@ use super::types;
 
 static DEFAULT_AVATAR: OnceLock<String> = OnceLock::new();
 static DEFAULT_HEADER: OnceLock<String> = OnceLock::new();
+static MEDIA_BASE_URL: OnceLock<String> = OnceLock::new();
 
 /// Call once at startup (before serving requests) to set the default avatar/header
 /// URLs from the configured media storage base URL.
 pub fn init_media_defaults(avatar: String, header: String) {
+    if let Some(base) = avatar.strip_suffix("/avatars/original/missing.png") {
+        MEDIA_BASE_URL.set(base.to_string()).ok();
+    }
     DEFAULT_AVATAR.set(avatar).ok();
     DEFAULT_HEADER.set(header).ok();
 }
@@ -20,6 +24,67 @@ pub(super) fn missing_avatar() -> &'static str {
 
 pub(super) fn missing_header() -> &'static str {
     DEFAULT_HEADER.get().map(|s| s.as_str()).unwrap_or("headers/original/missing.png")
+}
+
+fn media_base_url() -> &'static str {
+    MEDIA_BASE_URL.get().map(|s| s.as_str()).unwrap_or("")
+}
+
+pub fn account_avatar_url_for(a: &models::Account) -> String {
+    account_avatar_url(a)
+}
+
+pub fn account_header_url_for(a: &models::Account) -> String {
+    account_header_url(a)
+}
+
+fn account_avatar_url(a: &models::Account) -> String {
+    if let Some(url) = &a.avatar_remote_url {
+        if !url.is_empty() {
+            return url.clone();
+        }
+    }
+    if let Some(filename) = &a.avatar_file_name {
+        if !filename.is_empty() {
+            return format!("{}/accounts/avatars/{}/original/{}", media_base_url(), crate::media::int_to_path(a.id), filename);
+        }
+    }
+    missing_avatar().to_string()
+}
+
+fn account_header_url(a: &models::Account) -> String {
+    if !a.header_remote_url.is_empty() {
+        return a.header_remote_url.clone();
+    }
+    if let Some(filename) = &a.header_file_name {
+        if !filename.is_empty() {
+            return format!("{}/accounts/headers/{}/original/{}", media_base_url(), crate::media::int_to_path(a.id), filename);
+        }
+    }
+    missing_header().to_string()
+}
+
+pub fn media_url(m: &models::MediaAttachment) -> Option<String> {
+    if let Some(filename) = &m.file_file_name {
+        if !filename.is_empty() {
+            return Some(format!("{}/media_attachments/files/{}/original/{}", media_base_url(), crate::media::int_to_path(m.id), filename));
+        }
+    }
+    m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+pub fn media_preview_url(m: &models::MediaAttachment) -> Option<String> {
+    if let Some(filename) = &m.thumbnail_file_name {
+        if !filename.is_empty() {
+            return Some(format!("{}/media_attachments/files/{}/small/{}", media_base_url(), crate::media::int_to_path(m.id), filename));
+        }
+    }
+    if let Some(filename) = &m.file_file_name {
+        if !filename.is_empty() {
+            return Some(format!("{}/media_attachments/files/{}/small/{}", media_base_url(), crate::media::int_to_path(m.id), filename));
+        }
+    }
+    m.thumbnail_remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
 /// Format a timestamp in the Mastodon-standard format: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
@@ -51,7 +116,7 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         acct: a.acct(),
         display_name: if suspended { String::new() } else { a.display_name.clone() },
         locked: if suspended { false } else { a.locked },
-        bot: if suspended { false } else { a.bot },
+        bot: !suspended && a.actor_type.as_deref() == Some("Service"),
         group: !suspended && a.actor_type.as_deref() == Some("Group"),
         discoverable: if suspended { Some(false) } else { a.discoverable },
         indexable: !suspended && a.indexable,
@@ -60,14 +125,14 @@ pub fn account_from_db(a: &models::Account) -> types::Account {
         note: if suspended { String::new() } else { a.note.clone() },
         url,
         uri,
-        avatar: if suspended { missing_avatar().to_string() } else { a.avatar.clone().unwrap_or_else(|| missing_avatar().to_string()) },
-        avatar_static: if suspended { missing_avatar().to_string() } else { a.avatar_static.clone().unwrap_or_else(|| missing_avatar().to_string()) },
-        header: if suspended { missing_header().to_string() } else { a.header.clone().unwrap_or_else(|| missing_header().to_string()) },
-        header_static: if suspended { missing_header().to_string() } else { a.header_static.clone().unwrap_or_else(|| missing_header().to_string()) },
-        followers_count: a.followers_count,
-        following_count: a.following_count,
-        statuses_count: a.statuses_count,
-        last_status_at: a.last_status_at.map(|t| t.format("%Y-%m-%d").to_string()),
+        avatar: if suspended { missing_avatar().to_string() } else { account_avatar_url(a) },
+        avatar_static: if suspended { missing_avatar().to_string() } else { account_avatar_url(a) },
+        header: if suspended { missing_header().to_string() } else { account_header_url(a) },
+        header_static: if suspended { missing_header().to_string() } else { account_header_url(a) },
+        followers_count: 0,
+        following_count: 0,
+        statuses_count: 0,
+        last_status_at: None,
         emojis: vec![],
         fields: if suspended {
             vec![]
@@ -114,15 +179,14 @@ pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
     types::MediaAttachment {
         id: m.id.to_string(),
         media_type: super::media::media_type_str(m.r#type).to_string(),
-        url: m.file_url.clone()
-            .or_else(|| m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string)),
-        preview_url: m.preview_url.clone(),
+        url: media_url(m),
+        preview_url: media_preview_url(m),
         remote_url: m.remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string),
         preview_remote_url: m.thumbnail_remote_url.as_deref().filter(|s| !s.is_empty()).map(str::to_string),
         text_url: None,
         description: m.description.clone(),
         blurhash: m.blurhash.clone(),
-        meta: Some(m.meta.clone().unwrap_or_else(|| serde_json::json!({}))),
+        meta: Some(m.file_meta.clone().unwrap_or_else(|| serde_json::json!({}))),
     }
 }
 
@@ -161,25 +225,13 @@ fn build_quote_approval(
     s: &models::Status,
     viewer: Option<&StatusViewerContext>,
 ) -> types::QuoteApproval {
-    let policy = s.interaction_policy.as_ref();
-    let always_uris: Vec<String> = policy
-        .and_then(|p| p.get("can_quote"))
-        .and_then(|cq| cq.get("always"))
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-        .unwrap_or_else(|| {
-            if matches!(s.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
-                vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
-            } else {
-                vec![]
-            }
-        });
-    let with_approval_uris: Vec<String> = policy
-        .and_then(|p| p.get("can_quote"))
-        .and_then(|cq| cq.get("with_approval"))
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-        .unwrap_or_default();
+    let always_uris: Vec<String> =
+        if matches!(s.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
+            vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
+        } else {
+            vec![]
+        };
+    let with_approval_uris: Vec<String> = vec![];
 
     let automatic: Vec<String> = always_uris.iter().map(|u| ap_uri_to_policy_label(u).to_owned()).collect();
     let manual: Vec<String> = with_approval_uris.iter().map(|u| ap_uri_to_policy_label(u).to_owned()).collect();
@@ -294,10 +346,10 @@ pub fn status_from_db_with_app(
                 .map(String::from)
                 .or_else(|| status_url_from_uri(uri_str?))
         },
-        replies_count: s.replies_count,
-        reblogs_count: s.reblogs_count,
-        favourites_count: s.favourites_count,
-        quotes_count: s.quotes_count,
+        replies_count: 0,
+        reblogs_count: 0,
+        favourites_count: 0,
+        quotes_count: 0,
         edited_at: s.edited_at.map(|t| t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
         content,
         reblog: reblog_status,

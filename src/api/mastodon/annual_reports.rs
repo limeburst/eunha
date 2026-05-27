@@ -106,36 +106,39 @@ async fn generate_report_data(
 
     // Top statuses by reblogs, favourites, replies (public/unlisted originals only)
     let top_by_reblogs: Option<i64> = sqlx::query_scalar!(
-        "SELECT id FROM statuses
-         WHERE account_id = $1 AND deleted_at IS NULL
-           AND reblog_of_id IS NULL
-           AND visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
-           AND created_at >= $2 AND created_at < $3
-         ORDER BY reblogs_count DESC LIMIT 1",
+        r#"SELECT s.id FROM statuses s
+           LEFT JOIN status_stats ss ON ss.status_id = s.id
+           WHERE s.account_id = $1 AND s.deleted_at IS NULL
+             AND s.reblog_of_id IS NULL
+             AND s.visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
+             AND s.created_at >= $2 AND s.created_at < $3
+           ORDER BY COALESCE(ss.reblogs_count, 0) DESC LIMIT 1"#,
         account_id, start, end,
     ).fetch_optional(&state.db).await?;
 
     let top_by_favourites: Option<i64> = sqlx::query_scalar!(
-        "SELECT id FROM statuses
-         WHERE account_id = $1 AND deleted_at IS NULL
-           AND reblog_of_id IS NULL
-           AND visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
-           AND ($4::bigint IS NULL OR id != $4)
-           AND created_at >= $2 AND created_at < $3
-         ORDER BY favourites_count DESC LIMIT 1",
+        r#"SELECT s.id FROM statuses s
+           LEFT JOIN status_stats ss ON ss.status_id = s.id
+           WHERE s.account_id = $1 AND s.deleted_at IS NULL
+             AND s.reblog_of_id IS NULL
+             AND s.visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
+             AND ($4::bigint IS NULL OR s.id != $4)
+             AND s.created_at >= $2 AND s.created_at < $3
+           ORDER BY COALESCE(ss.favourites_count, 0) DESC LIMIT 1"#,
         account_id, start, end,
         top_by_reblogs,
     ).fetch_optional(&state.db).await?;
 
     let top_by_replies: Option<i64> = sqlx::query_scalar!(
-        "SELECT id FROM statuses
-         WHERE account_id = $1 AND deleted_at IS NULL
-           AND reblog_of_id IS NULL
-           AND visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
-           AND ($4::bigint IS NULL OR id != $4)
-           AND ($5::bigint IS NULL OR id != $5)
-           AND created_at >= $2 AND created_at < $3
-         ORDER BY replies_count DESC LIMIT 1",
+        r#"SELECT s.id FROM statuses s
+           LEFT JOIN status_stats ss ON ss.status_id = s.id
+           WHERE s.account_id = $1 AND s.deleted_at IS NULL
+             AND s.reblog_of_id IS NULL
+             AND s.visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
+             AND ($4::bigint IS NULL OR s.id != $4)
+             AND ($5::bigint IS NULL OR s.id != $5)
+             AND s.created_at >= $2 AND s.created_at < $3
+           ORDER BY COALESCE(ss.replies_count, 0) DESC LIMIT 1"#,
         account_id, start, end,
         top_by_reblogs, top_by_favourites,
     ).fetch_optional(&state.db).await?;

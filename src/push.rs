@@ -400,10 +400,11 @@ pub async fn notify_admins(
     notification_type: &'static str,
     report_id: Option<i64>,
 ) {
-    let admins = match sqlx::query_scalar!(
-        r#"SELECT a.id FROM accounts a
+    let admins: Vec<i64> = match sqlx::query_scalar!(
+        r#"SELECT a.id AS "id!: i64" FROM accounts a
            JOIN users u ON u.account_id = a.id
-           WHERE a.domain IS NULL AND u.role IN ('admin', 'moderator')"#,
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE a.domain IS NULL AND COALESCE(ur.position, 0) >= 100"#,
     )
     .fetch_all(&state.db)
     .await
@@ -422,8 +423,8 @@ pub async fn notify_admins(
 
         let row = if let Some(rid) = report_id {
             sqlx::query_scalar!(
-                r#"INSERT INTO notifications (account_id, from_account_id, "type", report_id)
-                   VALUES ($1, $2, $3, $4)
+                r#"INSERT INTO notifications (account_id, from_account_id, "type", activity_id, activity_type)
+                   VALUES ($1, $2, $3, $4, 'Report')
                    RETURNING id"#,
                 admin_id, from_account_id, notification_type, rid,
             )
@@ -553,10 +554,9 @@ async fn should_filter_notification(
     }
 
     let policy = sqlx::query!(
-        r#"SELECT notif_filter_not_following, notif_filter_not_followers,
-                  notif_filter_new_accounts, notif_filter_private_mentions,
-                  notif_filter_limited_accounts
-           FROM users WHERE account_id = $1"#,
+        r#"SELECT for_not_following, for_not_followers,
+                  for_new_accounts, for_private_mentions, for_limited_accounts
+           FROM notification_policies WHERE account_id = $1"#,
         recipient_id,
     )
     .fetch_optional(db)
@@ -565,20 +565,20 @@ async fn should_filter_notification(
     .flatten();
 
     let Some(policy) = policy else {
-        return false; // No user row = remote account, don't filter
+        return false; // No policy row = no filtering
     };
 
-    if !policy.notif_filter_not_following
-        && !policy.notif_filter_not_followers
-        && !policy.notif_filter_new_accounts
-        && !policy.notif_filter_private_mentions
-        && !policy.notif_filter_limited_accounts
+    if policy.for_not_following == 0
+        && policy.for_not_followers == 0
+        && policy.for_new_accounts == 0
+        && policy.for_private_mentions == 0
+        && policy.for_limited_accounts == 0
     {
         return false; // All filters off
     }
 
     // filter_not_following: sender is not followed by recipient
-    if policy.notif_filter_not_following {
+    if policy.for_not_following != 0 {
         let follows = sqlx::query_scalar!(
             "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2",
             recipient_id, from_account_id,
@@ -594,7 +594,7 @@ async fn should_filter_notification(
     }
 
     // filter_not_followers: sender does not follow recipient
-    if policy.notif_filter_not_followers {
+    if policy.for_not_followers != 0 {
         let is_follower = sqlx::query_scalar!(
             "SELECT 1 FROM follows WHERE account_id = $1 AND target_account_id = $2",
             from_account_id, recipient_id,
@@ -610,7 +610,7 @@ async fn should_filter_notification(
     }
 
     // filter_new_accounts: sender account is less than 30 days old
-    if policy.notif_filter_new_accounts {
+    if policy.for_new_accounts != 0 {
         let is_new = sqlx::query_scalar!(
             "SELECT 1 FROM accounts WHERE id = $1 AND created_at > now() - interval '30 days'",
             from_account_id,
@@ -626,7 +626,7 @@ async fn should_filter_notification(
     }
 
     // filter_private_mentions: unsolicited DM (direct mention, not a reply to own status)
-    if policy.notif_filter_private_mentions && notification_type == "mention" {
+    if policy.for_private_mentions != 0 && notification_type == "mention" {
         if let Some(sid) = status_id {
             let is_private_unsolicited = sqlx::query_scalar!(
                 r#"SELECT 1 FROM statuses s
@@ -651,7 +651,7 @@ async fn should_filter_notification(
     }
 
     // filter_limited_accounts: sender is silenced/limited on this instance
-    if policy.notif_filter_limited_accounts {
+    if policy.for_limited_accounts != 0 {
         let is_limited = sqlx::query_scalar!(
             "SELECT 1 FROM accounts WHERE id = $1 AND silenced_at IS NOT NULL",
             from_account_id,

@@ -163,7 +163,8 @@ pub async fn invite_tree(
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            LEFT JOIN invites i ON i.id = u.invite_id
-           LEFT JOIN accounts inv_a ON inv_a.id = i.created_by
+           LEFT JOIN users inv_u ON inv_u.id = i.user_id
+           LEFT JOIN accounts inv_a ON inv_a.id = inv_u.account_id
            WHERE a.domain IS NULL
            ORDER BY u.created_at ASC"#,
     )
@@ -186,7 +187,8 @@ pub async fn invite_tree(
              a.id       AS "created_by_account_id?: i64",
              a.username AS "created_by_username?: String"
            FROM invites i
-           LEFT JOIN accounts a ON a.id = i.created_by
+           LEFT JOIN users inv_u ON inv_u.id = i.user_id
+           LEFT JOIN accounts a ON a.id = inv_u.account_id
            ORDER BY i.created_at DESC"#,
     )
     .fetch_all(&state.db)
@@ -205,27 +207,8 @@ pub async fn invite_tree(
     })
     .collect();
 
-    let rejected = sqlx::query!(
-        r#"SELECT a.id AS account_id, a.username, u.email, u.reason,
-                  u.created_at, u.rejected_at AS "rejected_at!: chrono::DateTime<chrono::Utc>"
-           FROM users u
-           JOIN accounts a ON a.id = u.account_id
-           WHERE a.domain IS NULL
-             AND u.rejected_at IS NOT NULL
-           ORDER BY u.rejected_at DESC"#,
-    )
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .map(|r| RejectedMember {
-        account_id: r.account_id.to_string(),
-        username: r.username,
-        email: r.email,
-        reason: r.reason,
-        applied_at: r.created_at,
-        rejected_at: r.rejected_at,
-    })
-    .collect();
+    // Mastodon schema: users.approved=false for non-approved; no rejected_at
+    let rejected: Vec<RejectedMember> = vec![];
 
     Ok(Json(InviteTreeResponse { members, invites, rejected }))
 }
@@ -249,11 +232,16 @@ pub async fn create_console_invite(
         }
     }
 
-    let admin_id = sqlx::query_scalar!(
-        r#"SELECT a.id FROM accounts a
-           JOIN users u ON u.account_id = a.id
-           WHERE a.domain IS NULL
-           ORDER BY u.created_at ASC LIMIT 1"#,
+    // user_id in invites references users.id
+    let admin_user_id = sqlx::query_scalar!(
+        "SELECT u.id FROM users u JOIN accounts a ON a.id = u.account_id WHERE a.domain IS NULL ORDER BY u.created_at ASC LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let admin_account_id = sqlx::query_scalar!(
+        "SELECT account_id FROM users WHERE id = $1",
+        admin_user_id,
     )
     .fetch_optional(&state.db)
     .await?;
@@ -261,17 +249,17 @@ pub async fn create_console_invite(
     let code = crate::api::mastodon::invites::generate_code();
 
     let row = sqlx::query!(
-        r#"INSERT INTO invites (code, created_by, max_uses)
+        r#"INSERT INTO invites (code, user_id, max_uses)
            VALUES ($1, $2, $3)
            RETURNING id, code, max_uses, uses, expires_at, created_at"#,
         code,
-        admin_id,
+        admin_user_id,
         max_uses,
     )
     .fetch_one(&state.db)
     .await?;
 
-    let creator_username = if let Some(aid) = admin_id {
+    let creator_username = if let Some(aid) = admin_account_id {
         sqlx::query_scalar!("SELECT username FROM accounts WHERE id = $1", aid)
             .fetch_optional(&state.db)
             .await?
@@ -283,7 +271,7 @@ pub async fn create_console_invite(
         url: crate::api::mastodon::invites::invite_url(&state.instance.domain, &row.code),
         id: row.id.to_string(),
         code: row.code,
-        created_by_account_id: admin_id.map(|id| id.to_string()),
+        created_by_account_id: admin_account_id.map(|id| id.to_string()),
         created_by_username: creator_username,
         max_uses: row.max_uses,
         uses: row.uses,
@@ -309,12 +297,11 @@ pub async fn list_applications(
     Path(_domain): Path<String>,
 ) -> AppResult<Json<Vec<ApplicationResponse>>> {
     let rows = sqlx::query!(
-        r#"SELECT a.id AS account_id, a.username, u.email, u.reason, u.created_at
+        r#"SELECT a.id AS account_id, a.username, u.email, u.created_at
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            WHERE a.domain IS NULL
-             AND u.approved_at IS NULL
-             AND u.rejected_at IS NULL
+             AND u.approved = false
            ORDER BY u.created_at ASC"#,
     )
     .fetch_all(&state.db)
@@ -324,7 +311,7 @@ pub async fn list_applications(
         account_id: r.account_id.to_string(),
         username: r.username,
         email: r.email,
-        reason: r.reason,
+        reason: None,
         applied_at: r.created_at,
     }).collect()))
 }
@@ -335,7 +322,7 @@ pub async fn approve_application(
     Path((_domain, account_id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
     let rows_affected = sqlx::query!(
-        "UPDATE users SET approved_at = now(), updated_at = now() WHERE account_id = $1 AND approved_at IS NULL",
+        "UPDATE users SET approved = true, updated_at = now() WHERE account_id = $1 AND approved = false",
         account_id,
     )
     .execute(&state.db)
@@ -354,8 +341,9 @@ pub async fn reject_application(
     ConsoleAuth(_user): ConsoleAuth,
     Path((_domain, account_id)): Path<(String, i64)>,
 ) -> AppResult<StatusCode> {
+    // In Mastodon schema, rejection means deleting the user account
     let rows_affected = sqlx::query!(
-        "UPDATE users SET rejected_at = now(), updated_at = now() WHERE account_id = $1 AND approved_at IS NULL AND rejected_at IS NULL",
+        "DELETE FROM users WHERE account_id = $1 AND approved = false",
         account_id,
     )
     .execute(&state.db)

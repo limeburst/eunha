@@ -37,12 +37,12 @@ pub async fn get_bookmarks(
     let brows: Vec<BRow> = if min_id.is_some() {
         sqlx::query_as!(
             BRow,
-            r#"SELECT b.sort_id, b.status_id FROM bookmarks b
+            r#"SELECT b.id AS sort_id, b.status_id FROM bookmarks b
                JOIN statuses s ON s.id = b.status_id
                WHERE b.account_id = $1
                  AND s.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR b.sort_id > $2)
-               ORDER BY b.sort_id ASC LIMIT $3"#,
+                 AND ($2::bigint IS NULL OR b.id > $2)
+               ORDER BY b.id ASC LIMIT $3"#,
             auth.account_id, min_id, limit
         )
         .fetch_all(&state.db)
@@ -50,13 +50,13 @@ pub async fn get_bookmarks(
     } else {
         sqlx::query_as!(
             BRow,
-            r#"SELECT b.sort_id, b.status_id FROM bookmarks b
+            r#"SELECT b.id AS sort_id, b.status_id FROM bookmarks b
                JOIN statuses s ON s.id = b.status_id
                WHERE b.account_id = $1
                  AND s.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR b.sort_id < $2)
-                 AND ($3::bigint IS NULL OR b.sort_id > $3)
-               ORDER BY b.sort_id DESC LIMIT $4"#,
+                 AND ($2::bigint IS NULL OR b.id < $2)
+                 AND ($3::bigint IS NULL OR b.id > $3)
+               ORDER BY b.id DESC LIMIT $4"#,
             auth.account_id, max_id, since_id, limit
         )
         .fetch_all(&state.db)

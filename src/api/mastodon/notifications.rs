@@ -327,9 +327,15 @@ pub async fn get_notifications(
         std::collections::HashMap::new()
     };
 
-    // Batch-fetch reports for admin.report notifications
+    // Batch-fetch reports for admin.report notifications (via activity_id/activity_type polymorphic association)
     let report_ids: Vec<i64> = notifications.iter()
-        .filter_map(|n| if n.r#type.as_deref() == Some("admin.report") { n.report_id } else { None })
+        .filter_map(|n| {
+            if n.r#type.as_deref() == Some("admin.report") && n.activity_type.as_deref() == Some("Report") {
+                n.activity_id
+            } else {
+                None
+            }
+        })
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -339,7 +345,8 @@ pub async fn get_notifications(
     for n in &notifications {
         let Some(account) = from_account_map.get(&n.from_account_id) else { continue };
         let status = notif_status_map_v1.get(&n.id).and_then(|sid| status_api_map.get(sid)).cloned();
-        let report = n.report_id.and_then(|rid| report_map.get(&rid)).cloned();
+        let report_id = if n.activity_type.as_deref() == Some("Report") { n.activity_id } else { None };
+        let report = report_id.and_then(|rid| report_map.get(&rid)).cloned();
         let mut notif_account = account_from_db(account);
         notif_account.emojis = from_account_emojis_map.get(&account.id).cloned().unwrap_or_default();
         notif_account.roles = from_account_roles_map.get(&account.id).cloned().unwrap_or_default();
@@ -505,9 +512,15 @@ pub async fn get_notifications_v2(
         (batch_account_emojis(&state, &accs).await, batch_account_roles(&state, &accs).await)
     };
 
-    // Batch-fetch reports for admin.report groups
+    // Batch-fetch reports for admin.report groups (via activity_id/activity_type)
     let report_ids_v2: Vec<i64> = notifications.iter()
-        .filter_map(|n| if n.r#type.as_deref() == Some("admin.report") { n.report_id } else { None })
+        .filter_map(|n| {
+            if n.r#type.as_deref() == Some("admin.report") && n.activity_type.as_deref() == Some("Report") {
+                n.activity_id
+            } else {
+                None
+            }
+        })
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
@@ -646,7 +659,8 @@ pub async fn get_notifications_v2(
             }
         });
 
-        let report = n.report_id.and_then(|rid| report_map_v2.get(&rid)).cloned();
+        let report_id_v2 = if n.activity_type.as_deref() == Some("Report") { n.activity_id } else { None };
+        let report = report_id_v2.and_then(|rid| report_map_v2.get(&rid)).cloned();
 
         let id_str = n.id.to_string();
         groups.push(NotificationGroup {
@@ -713,8 +727,8 @@ pub async fn get_notification_group(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let report = if n.r#type.as_deref() == Some("admin.report") {
-        if let Some(rid) = n.report_id {
+    let report = if n.r#type.as_deref() == Some("admin.report") && n.activity_type.as_deref() == Some("Report") {
+        if let Some(rid) = n.activity_id {
             fetch_reports_map(&state, &[rid]).await?.remove(&rid)
         } else {
             None
@@ -872,21 +886,21 @@ pub async fn get_notification_policy(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationPolicy>> {
     auth.require_scope("read:notifications")?;
-    let user = sqlx::query!(
-        r#"SELECT notif_filter_not_following, notif_filter_not_followers,
-                  notif_filter_new_accounts, notif_filter_private_mentions,
-                  notif_filter_limited_accounts
-           FROM users WHERE account_id = $1"#,
+    // Fetch from notification_policies table (Mastodon schema)
+    let policy = sqlx::query!(
+        r#"SELECT for_not_following, for_not_followers, for_new_accounts,
+                  for_private_mentions, for_limited_accounts
+           FROM notification_policies WHERE account_id = $1"#,
         auth.account_id,
     )
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await?;
 
-    let any_filter = user.notif_filter_not_following
-        || user.notif_filter_not_followers
-        || user.notif_filter_new_accounts
-        || user.notif_filter_private_mentions
-        || user.notif_filter_limited_accounts;
+    let (nf_not_following, nf_not_followers, nf_new_accounts, nf_private_mentions, nf_limited_accounts) =
+        policy.map(|p| (p.for_not_following != 0, p.for_not_followers != 0, p.for_new_accounts != 0, p.for_private_mentions != 0, p.for_limited_accounts != 0))
+        .unwrap_or((false, false, false, false, false));
+
+    let any_filter = nf_not_following || nf_not_followers || nf_new_accounts || nf_private_mentions || nf_limited_accounts;
 
     let (pending_requests, pending_notifs) = if any_filter {
         let pending_requests: i64 = sqlx::query_scalar!(
@@ -909,11 +923,11 @@ pub async fn get_notification_policy(
     };
 
     Ok(Json(NotificationPolicy {
-        for_not_following: bool_to_policy(user.notif_filter_not_following),
-        for_not_followers: bool_to_policy(user.notif_filter_not_followers),
-        for_new_accounts: bool_to_policy(user.notif_filter_new_accounts),
-        for_private_mentions: bool_to_policy(user.notif_filter_private_mentions),
-        for_limited_accounts: bool_to_policy(user.notif_filter_limited_accounts),
+        for_not_following: bool_to_policy(nf_not_following),
+        for_not_followers: bool_to_policy(nf_not_followers),
+        for_new_accounts: bool_to_policy(nf_new_accounts),
+        for_private_mentions: bool_to_policy(nf_private_mentions),
+        for_limited_accounts: bool_to_policy(nf_limited_accounts),
         summary: NotificationPolicySummary {
             pending_requests_count: pending_requests,
             pending_notifications_count: pending_notifs,
@@ -938,20 +952,21 @@ pub async fn update_notification_policy(
     Json(form): Json<UpdateNotificationPolicyForm>,
 ) -> AppResult<Json<NotificationPolicy>> {
     auth.require_scope("write:notifications")?;
-    let filter_not_following    = form.for_not_following.as_deref().map(policy_to_bool);
-    let filter_not_followers    = form.for_not_followers.as_deref().map(policy_to_bool);
-    let filter_new_accounts     = form.for_new_accounts.as_deref().map(policy_to_bool);
-    let filter_private_mentions = form.for_private_mentions.as_deref().map(policy_to_bool);
-    let filter_limited_accounts = form.for_limited_accounts.as_deref().map(policy_to_bool);
+    let filter_not_following    = form.for_not_following.as_deref().map(|s| if policy_to_bool(s) { 1i32 } else { 0i32 });
+    let filter_not_followers    = form.for_not_followers.as_deref().map(|s| if policy_to_bool(s) { 1i32 } else { 0i32 });
+    let filter_new_accounts     = form.for_new_accounts.as_deref().map(|s| if policy_to_bool(s) { 1i32 } else { 0i32 });
+    let filter_private_mentions = form.for_private_mentions.as_deref().map(|s| if policy_to_bool(s) { 1i32 } else { 0i32 });
+    let filter_limited_accounts = form.for_limited_accounts.as_deref().map(|s| if policy_to_bool(s) { 1i32 } else { 0i32 });
     sqlx::query!(
-        r#"UPDATE users SET
-               notif_filter_not_following    = COALESCE($2, notif_filter_not_following),
-               notif_filter_not_followers    = COALESCE($3, notif_filter_not_followers),
-               notif_filter_new_accounts     = COALESCE($4, notif_filter_new_accounts),
-               notif_filter_private_mentions = COALESCE($5, notif_filter_private_mentions),
-               notif_filter_limited_accounts = COALESCE($6, notif_filter_limited_accounts),
-               updated_at = now()
-           WHERE account_id = $1"#,
+        r#"INSERT INTO notification_policies (account_id, for_not_following, for_not_followers, for_new_accounts, for_private_mentions, for_limited_accounts)
+           VALUES ($1, COALESCE($2, 0), COALESCE($3, 0), COALESCE($4, 0), COALESCE($5, 1), COALESCE($6, 1))
+           ON CONFLICT (account_id) DO UPDATE SET
+               for_not_following    = COALESCE($2, notification_policies.for_not_following),
+               for_not_followers    = COALESCE($3, notification_policies.for_not_followers),
+               for_new_accounts     = COALESCE($4, notification_policies.for_new_accounts),
+               for_private_mentions = COALESCE($5, notification_policies.for_private_mentions),
+               for_limited_accounts = COALESCE($6, notification_policies.for_limited_accounts),
+               updated_at = now()"#,
         auth.account_id,
         filter_not_following,
         filter_not_followers,
@@ -972,19 +987,23 @@ pub async fn get_notification_policy_v1(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationPolicyV1>> {
     auth.require_scope("read:notifications")?;
-    let user = sqlx::query!(
-        r#"SELECT notif_filter_not_following, notif_filter_not_followers,
-                  notif_filter_new_accounts, notif_filter_private_mentions
-           FROM users WHERE account_id = $1"#,
+    let policy = sqlx::query!(
+        r#"SELECT for_not_following, for_not_followers, for_new_accounts, for_private_mentions
+           FROM notification_policies WHERE account_id = $1"#,
         auth.account_id,
     )
-    .fetch_one(&state.db)
+    .fetch_optional(&state.db)
     .await?;
 
-    let any_filter = user.notif_filter_not_following
-        || user.notif_filter_not_followers
-        || user.notif_filter_new_accounts
-        || user.notif_filter_private_mentions;
+    let (filter_not_following, filter_not_followers, filter_new_accounts, filter_private_mentions) =
+        policy.map_or((false, false, false, false), |p| (
+            p.for_not_following != 0,
+            p.for_not_followers != 0,
+            p.for_new_accounts != 0,
+            p.for_private_mentions != 0,
+        ));
+
+    let any_filter = filter_not_following || filter_not_followers || filter_new_accounts || filter_private_mentions;
 
     let (pending_requests, pending_notifs) = if any_filter {
         let pending_requests: i64 = sqlx::query_scalar!(
@@ -1007,10 +1026,10 @@ pub async fn get_notification_policy_v1(
     };
 
     Ok(Json(NotificationPolicyV1 {
-        filter_not_following: user.notif_filter_not_following,
-        filter_not_followers: user.notif_filter_not_followers,
-        filter_new_accounts: user.notif_filter_new_accounts,
-        filter_private_mentions: user.notif_filter_private_mentions,
+        filter_not_following,
+        filter_not_followers,
+        filter_new_accounts,
+        filter_private_mentions,
         summary: NotificationPolicySummary {
             pending_requests_count: pending_requests,
             pending_notifications_count: pending_notifs,
@@ -1034,19 +1053,25 @@ pub async fn update_notification_policy_v1(
     Json(form): Json<UpdateNotificationPolicyV1Form>,
 ) -> AppResult<Json<NotificationPolicyV1>> {
     auth.require_scope("write:notifications")?;
+    let not_following = form.filter_not_following.map(|v| if v { 1_i32 } else { 0_i32 });
+    let not_followers = form.filter_not_followers.map(|v| if v { 1_i32 } else { 0_i32 });
+    let new_accounts = form.filter_new_accounts.map(|v| if v { 1_i32 } else { 0_i32 });
+    let private_mentions = form.filter_private_mentions.map(|v| if v { 1_i32 } else { 0_i32 });
     sqlx::query!(
-        r#"UPDATE users SET
-               notif_filter_not_following    = COALESCE($2, notif_filter_not_following),
-               notif_filter_not_followers    = COALESCE($3, notif_filter_not_followers),
-               notif_filter_new_accounts     = COALESCE($4, notif_filter_new_accounts),
-               notif_filter_private_mentions = COALESCE($5, notif_filter_private_mentions),
-               updated_at = now()
-           WHERE account_id = $1"#,
+        r#"INSERT INTO notification_policies
+               (account_id, for_not_following, for_not_followers, for_new_accounts, for_private_mentions)
+           VALUES ($1, COALESCE($2, 0), COALESCE($3, 0), COALESCE($4, 0), COALESCE($5, 1))
+           ON CONFLICT (account_id) DO UPDATE SET
+               for_not_following    = COALESCE($2, notification_policies.for_not_following),
+               for_not_followers    = COALESCE($3, notification_policies.for_not_followers),
+               for_new_accounts     = COALESCE($4, notification_policies.for_new_accounts),
+               for_private_mentions = COALESCE($5, notification_policies.for_private_mentions),
+               updated_at = now()"#,
         auth.account_id,
-        form.filter_not_following,
-        form.filter_not_followers,
-        form.filter_new_accounts,
-        form.filter_private_mentions,
+        not_following,
+        not_followers,
+        new_accounts,
+        private_mentions,
     )
     .execute(&state.db)
     .await?;
@@ -1070,16 +1095,8 @@ pub async fn get_notification_requests(
     let min_id = pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     let rows = sqlx::query!(
-        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at, nr.updated_at,
-                  a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
-                  a.note, a.note_text, a.url, a.uri, a.header, a.header_static,
-                  a.public_key, a.private_key, a.followers_count, a.following_count,
-                  a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
-                  a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
-                  a.suspended_at, a.silenced_at, a.hide_collections, a.last_status_at, a.fields,
-                  a.created_at AS account_created_at, a.updated_at AS account_updated_at
+        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at, nr.updated_at
            FROM notification_requests nr
-           JOIN accounts a ON a.id = nr.from_account_id
            WHERE nr.account_id = $1 AND NOT nr.dismissed
              AND ($3::bigint IS NULL OR nr.id < $3)
              AND ($4::bigint IS NULL OR nr.id > $4)
@@ -1190,73 +1207,14 @@ pub async fn get_notification_requests(
     };
     let req_acc_emojis_map = batch_account_emojis(&state, &req_db_accounts).await;
     let req_acc_roles_map = batch_account_roles(&state, &req_db_accounts).await;
+    let req_acc_map: std::collections::HashMap<i64, Account> =
+        req_db_accounts.into_iter().map(|a| (a.id, a)).collect();
 
     let mut result: Vec<NotificationRequest> = Vec::with_capacity(rows.len());
     for r in rows {
-        let acc = crate::db::models::Account {
-            id: r.from_account_id,
-            username: r.username,
-            domain: r.domain,
-            display_name: r.display_name,
-            note: r.note,
-            note_text: r.note_text,
-            url: r.url,
-            uri: r.uri,
-            avatar: r.avatar,
-            avatar_static: r.avatar_static,
-            header: r.header,
-            header_static: r.header_static,
-            private_key: r.private_key,
-            public_key: r.public_key,
-            followers_count: r.followers_count,
-            following_count: r.following_count,
-            statuses_count: r.statuses_count,
-            locked: r.locked,
-            bot: r.bot,
-            discoverable: r.discoverable,
-            indexable: r.indexable,
-            moved_to_uri: r.moved_to_uri,
-            inbox_url: r.inbox_url,
-            outbox_url: r.outbox_url,
-            shared_inbox_url: r.shared_inbox_url,
-            suspended_at: r.suspended_at,
-            silenced_at: r.silenced_at,
-            sensitized_at: None,
-            hide_collections: r.hide_collections,
-            last_status_at: r.last_status_at,
-            fields: r.fields,
-            attribution_domains: vec![],
-            created_at: r.account_created_at,
-            updated_at: r.account_updated_at,
-            actor_type: None,
-            also_known_as: None,
-            featured_collection_url: None,
-            followers_url: String::new(),
-            following_url: String::new(),
-            last_webfingered_at: None,
-            memorial: false,
-            moved_to_account_id: None,
-            protocol: 0,
-            requested_review_at: None,
-            reviewed_at: None,
-            suspension_origin: None,
-            trendable: None,
-            id_scheme: None,
-            avatar_file_name: None,
-            avatar_content_type: None,
-            avatar_file_size: None,
-            avatar_updated_at: None,
-            header_file_name: None,
-            header_content_type: None,
-            header_file_size: None,
-            header_updated_at: None,
-            avatar_remote_url: None,
-            header_remote_url: String::new(),
-            avatar_storage_schema_version: None,
-            header_storage_schema_version: None,
-        };
+        let Some(acc) = req_acc_map.get(&r.from_account_id) else { continue };
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
-        let mut api_account = super::convert::account_from_db(&acc);
+        let mut api_account = super::convert::account_from_db(acc);
         api_account.emojis = req_acc_emojis_map.get(&acc.id).cloned().unwrap_or_default();
         api_account.roles = req_acc_roles_map.get(&acc.id).cloned().unwrap_or_default();
         result.push(NotificationRequest {
@@ -1370,16 +1328,8 @@ pub async fn get_notification_request(
 ) -> AppResult<Json<NotificationRequest>> {
     auth.require_scope("read:notifications")?;
     let r = sqlx::query!(
-        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at, nr.updated_at,
-                  a.username, a.domain, a.display_name, a.avatar, a.avatar_static,
-                  a.note, a.note_text, a.url, a.uri, a.header, a.header_static,
-                  a.public_key, a.private_key, a.followers_count, a.following_count,
-                  a.statuses_count, a.locked, a.bot, a.discoverable, a.indexable,
-                  a.moved_to_uri, a.inbox_url, a.outbox_url, a.shared_inbox_url,
-                  a.suspended_at, a.silenced_at, a.hide_collections, a.last_status_at, a.fields,
-                  a.created_at AS account_created_at, a.updated_at AS account_updated_at
+        r#"SELECT nr.id, nr.from_account_id, nr.last_status_id, nr.notifications_count, nr.created_at, nr.updated_at
            FROM notification_requests nr
-           JOIN accounts a ON a.id = nr.from_account_id
            WHERE nr.id = $1 AND nr.account_id = $2"#,
         id, auth.account_id,
     )
@@ -1387,68 +1337,14 @@ pub async fn get_notification_request(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let acc = crate::db::models::Account {
-        id: r.from_account_id,
-        username: r.username,
-        domain: r.domain,
-        display_name: r.display_name,
-        note: r.note,
-        note_text: r.note_text,
-        url: r.url,
-        uri: r.uri,
-        avatar: r.avatar,
-        avatar_static: r.avatar_static,
-        header: r.header,
-        header_static: r.header_static,
-        private_key: r.private_key,
-        public_key: r.public_key,
-        followers_count: r.followers_count,
-        following_count: r.following_count,
-        statuses_count: r.statuses_count,
-        locked: r.locked,
-        bot: r.bot,
-        discoverable: r.discoverable,
-        indexable: r.indexable,
-        moved_to_uri: r.moved_to_uri,
-        inbox_url: r.inbox_url,
-        outbox_url: r.outbox_url,
-        shared_inbox_url: r.shared_inbox_url,
-        suspended_at: r.suspended_at,
-        silenced_at: r.silenced_at,
-        sensitized_at: None,
-        hide_collections: r.hide_collections,
-        last_status_at: r.last_status_at,
-        fields: r.fields,
-        attribution_domains: vec![],
-        created_at: r.account_created_at,
-        updated_at: r.account_updated_at,
-        actor_type: None,
-        also_known_as: None,
-        featured_collection_url: None,
-        followers_url: String::new(),
-        following_url: String::new(),
-        last_webfingered_at: None,
-        memorial: false,
-        moved_to_account_id: None,
-        protocol: 0,
-        requested_review_at: None,
-        reviewed_at: None,
-        suspension_origin: None,
-        trendable: None,
-        id_scheme: None,
-        avatar_file_name: None,
-        avatar_content_type: None,
-        avatar_file_size: None,
-        avatar_updated_at: None,
-        header_file_name: None,
-        header_content_type: None,
-        header_file_size: None,
-        header_updated_at: None,
-        avatar_remote_url: None,
-        header_remote_url: String::new(),
-        avatar_storage_schema_version: None,
-        header_storage_schema_version: None,
-    };
+    let acc = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE id = $1",
+        r.from_account_id,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
     let last_status = fetch_last_status(&state, r.last_status_id).await;
     let mut api_account = super::convert::account_from_db(&acc);
     api_account.emojis = fetch_account_emojis(&state, &acc).await;
@@ -1559,8 +1455,8 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         None
     };
 
-    let report = if n.r#type.as_deref() == Some("admin.report") {
-        if let Some(rid) = n.report_id {
+    let report = if n.r#type.as_deref() == Some("admin.report") && n.activity_type.as_deref() == Some("Report") {
+        if let Some(rid) = n.activity_id {
             sqlx::query!(
                 r#"SELECT r.id, r.comment, COALESCE(r.forwarded, false) AS "forwarded!",
                           CASE r.category WHEN 0 THEN 'other' WHEN 1 THEN 'spam' WHEN 2 THEN 'violation' ELSE 'other' END AS "category!",

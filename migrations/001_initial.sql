@@ -2,8 +2,6 @@
 -- Fresh installs only; no data migration.
 
 -- ── Sequences ────────────────────────────────────────────────────────────────
-CREATE SEQUENCE bookmark_sort_seq;
-CREATE SEQUENCE favourite_sort_seq;
 -- Named to match Mastodon's sequence (notifications_id_seq, plural)
 CREATE SEQUENCE notifications_id_seq START 1;
 CREATE SEQUENCE follows_id_seq;
@@ -89,30 +87,19 @@ CREATE TABLE accounts (
     domain                          TEXT,
     display_name                    TEXT NOT NULL DEFAULT '',
     note                            TEXT NOT NULL DEFAULT '',
-    note_text                       TEXT NOT NULL DEFAULT '',
     url                             TEXT,
     uri                             TEXT NOT NULL DEFAULT '',
-    avatar                          TEXT,
-    avatar_static                   TEXT,
-    header                          TEXT,
-    header_static                   TEXT,
     private_key                     TEXT,
     public_key                      TEXT NOT NULL DEFAULT '',
-    followers_count                 BIGINT NOT NULL DEFAULT 0,
-    following_count                 BIGINT NOT NULL DEFAULT 0,
-    statuses_count                  BIGINT NOT NULL DEFAULT 0,
     locked                          BOOLEAN NOT NULL DEFAULT false,
-    bot                             BOOLEAN NOT NULL DEFAULT false,
     discoverable                    BOOLEAN,
     indexable                       BOOLEAN NOT NULL DEFAULT false,
-    moved_to_uri                    TEXT,
     inbox_url                       TEXT NOT NULL DEFAULT '',
     outbox_url                      TEXT NOT NULL DEFAULT '',
     shared_inbox_url                TEXT NOT NULL DEFAULT '',
     suspended_at                    TIMESTAMPTZ,
     silenced_at                     TIMESTAMPTZ,
     sensitized_at                   TIMESTAMPTZ,
-    last_status_at                  TIMESTAMPTZ,
     hide_collections                BOOLEAN,
     fields                          JSONB,
     attribution_domains             TEXT[] NOT NULL DEFAULT '{}',
@@ -150,11 +137,12 @@ CREATE TABLE accounts (
 CREATE UNIQUE INDEX accounts_uri_unique ON accounts(uri) WHERE uri != '';
 CREATE INDEX accounts_by_domain ON accounts(domain) WHERE domain IS NOT NULL;
 
--- ── invites (without user_id — circular FK with users) ───────────────────────
+-- ── invites ───────────────────────────────────────────────────────────────────
+-- user_id FK to users is added after users table via ALTER TABLE below
 CREATE TABLE invites (
     id          BIGINT PRIMARY KEY DEFAULT nextval('invites_id_seq'),
     code        TEXT NOT NULL UNIQUE,
-    created_by  BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+    user_id     BIGINT,
     max_uses    INT,
     uses        INT NOT NULL DEFAULT 0,
     expires_at  TIMESTAMPTZ,
@@ -178,26 +166,11 @@ CREATE TABLE users (
     confirmation_sent_at        TIMESTAMPTZ,
     unconfirmed_email           TEXT,
     invite_id                   BIGINT REFERENCES invites(id) ON DELETE SET NULL,
-    role                        TEXT NOT NULL DEFAULT 'user',
     role_id                     BIGINT REFERENCES user_roles(id) ON DELETE SET NULL,
-    approved_at                 TIMESTAMPTZ,
-    rejected_at                 TIMESTAMPTZ,
-    reason                      TEXT,
-    default_privacy             TEXT NOT NULL DEFAULT 'public',
-    default_sensitive           BOOLEAN NOT NULL DEFAULT false,
-    default_language            TEXT,
-    default_quote_policy        TEXT NOT NULL DEFAULT 'public',
     locale                      TEXT,
     chosen_languages            TEXT[],
     time_zone                   TEXT,
     settings                    TEXT,
-    notif_filter_not_following  BOOLEAN NOT NULL DEFAULT false,
-    notif_filter_not_followers  BOOLEAN NOT NULL DEFAULT false,
-    notif_filter_new_accounts   BOOLEAN NOT NULL DEFAULT false,
-    notif_filter_private_mentions BOOLEAN NOT NULL DEFAULT true,
-    notif_filter_limited_accounts BOOLEAN NOT NULL DEFAULT false,
-    password_reset_token        TEXT,
-    password_reset_sent_at      TIMESTAMPTZ,
     reset_password_token        TEXT,
     reset_password_sent_at      TIMESTAMPTZ,
     sign_in_count               INTEGER NOT NULL DEFAULT 0,
@@ -228,12 +201,11 @@ CREATE INDEX users_by_invite ON users(invite_id) WHERE invite_id IS NOT NULL;
 CREATE INDEX index_users_on_role_id ON users(role_id) WHERE role_id IS NOT NULL;
 CREATE INDEX index_users_on_confirmation_token ON users(confirmation_token) WHERE confirmation_token IS NOT NULL;
 CREATE UNIQUE INDEX index_users_on_reset_password_token ON users(reset_password_token) WHERE reset_password_token IS NOT NULL;
-CREATE INDEX idx_users_password_reset_token ON users(password_reset_token) WHERE password_reset_token IS NOT NULL;
 CREATE INDEX index_users_on_unconfirmed_email ON users(unconfirmed_email) WHERE unconfirmed_email IS NOT NULL;
 CREATE INDEX index_users_on_created_by_application_id ON users(created_by_application_id) WHERE created_by_application_id IS NOT NULL;
 
 -- Complete circular FK: invites.user_id → users
-ALTER TABLE invites ADD COLUMN user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE invites ADD CONSTRAINT fk_invites_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 CREATE INDEX index_invites_on_user_id ON invites(user_id) WHERE user_id IS NOT NULL;
 
 -- ── instance_user_sessions ────────────────────────────────────────────────────
@@ -295,23 +267,16 @@ CREATE TABLE statuses (
     in_reply_to_id                  BIGINT REFERENCES statuses(id) ON DELETE SET NULL,
     in_reply_to_account_id          BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
     reblog_of_id                    BIGINT REFERENCES statuses(id) ON DELETE CASCADE,
-    visibility                      INTEGER NOT NULL DEFAULT 0 CHECK (visibility IN (0, 1, 2, 3, 4)),
+    visibility                      INTEGER NOT NULL DEFAULT 0,
     language                        TEXT,
     sensitive                       BOOLEAN NOT NULL DEFAULT false,
     url                             TEXT,
     uri                             TEXT,
-    replies_count                   BIGINT NOT NULL DEFAULT 0,
-    reblogs_count                   BIGINT NOT NULL DEFAULT 0,
-    favourites_count                BIGINT NOT NULL DEFAULT 0,
-    quotes_count                    BIGINT NOT NULL DEFAULT 0,
     deleted_at                      TIMESTAMPTZ,
     edited_at                       TIMESTAMPTZ,
-    idempotency_key                 TEXT,
     application_id                  BIGINT REFERENCES oauth_applications(id) ON DELETE SET NULL,
     reply                           BOOLEAN NOT NULL DEFAULT false,
     conversation_id                 BIGINT REFERENCES conversations(id),
-    quote_of_id                     BIGINT REFERENCES statuses(id) ON DELETE SET NULL,
-    interaction_policy              JSONB,
     fetched_replies_at              TIMESTAMPTZ,
     local                           BOOLEAN,
     ordered_media_attachment_ids    BIGINT[],
@@ -322,8 +287,6 @@ CREATE TABLE statuses (
     created_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX statuses_idempotency_key_idx
-    ON statuses(account_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX statuses_by_account
     ON statuses(account_id, id DESC) WHERE deleted_at IS NULL;
 CREATE INDEX statuses_by_account_id_desc
@@ -342,8 +305,7 @@ CREATE INDEX statuses_by_reply
     ON statuses(in_reply_to_id) WHERE in_reply_to_id IS NOT NULL AND deleted_at IS NULL;
 CREATE INDEX idx_statuses_conversation_id
     ON statuses(conversation_id) WHERE conversation_id IS NOT NULL;
-CREATE INDEX statuses_quote_of_id_idx
-    ON statuses(quote_of_id) WHERE quote_of_id IS NOT NULL;
+
 CREATE INDEX statuses_by_account_created_at
     ON statuses(account_id, created_at DESC) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX index_statuses_on_uri
@@ -394,7 +356,6 @@ CREATE TABLE status_edits (
     id                              BIGSERIAL PRIMARY KEY,
     status_id                       BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
     text                            TEXT NOT NULL DEFAULT '',
-    content                         TEXT NOT NULL DEFAULT '',
     spoiler_text                    TEXT NOT NULL DEFAULT '',
     sensitive                       BOOLEAN,
     created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -411,14 +372,9 @@ CREATE TABLE media_attachments (
     id                          BIGINT PRIMARY KEY,
     account_id                  BIGINT REFERENCES accounts(id) ON DELETE CASCADE,
     status_id                   BIGINT REFERENCES statuses(id) ON DELETE SET NULL,
-    file_key                    TEXT,
-    file_url                    TEXT,
-    preview_key                 TEXT,
-    preview_url                 TEXT,
     remote_url                  TEXT NOT NULL DEFAULT '',
     description                 TEXT,
     blurhash                    TEXT,
-    meta                        JSONB,
     type                        INTEGER NOT NULL DEFAULT 0,
     shortcode                   TEXT,
     file_meta                   JSON,
@@ -503,8 +459,6 @@ CREATE TABLE notifications (
     account_id      BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     from_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     type            TEXT,
-    report_id       BIGINT REFERENCES reports(id) ON DELETE CASCADE,
-    read            BOOLEAN NOT NULL DEFAULT false,
     filtered        BOOLEAN NOT NULL DEFAULT false,
     group_key       TEXT,
     activity_id     BIGINT,
@@ -713,25 +667,20 @@ CREATE TABLE favourites (
     id         BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     status_id  BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
-    uri        TEXT UNIQUE,
-    sort_id    BIGINT NOT NULL DEFAULT nextval('favourite_sort_seq'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, status_id)
 );
-CREATE INDEX idx_favourites_account_sort ON favourites(account_id, sort_id DESC);
 
 -- ── bookmarks ─────────────────────────────────────────────────────────────────
 CREATE TABLE bookmarks (
     id         BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     status_id  BIGINT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
-    sort_id    BIGINT NOT NULL DEFAULT nextval('bookmark_sort_seq'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, status_id)
 );
-CREATE INDEX idx_bookmarks_account_sort ON bookmarks(account_id, sort_id DESC);
 
 -- ── status_pins ───────────────────────────────────────────────────────────────
 CREATE TABLE status_pins (

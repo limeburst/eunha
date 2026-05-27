@@ -481,7 +481,7 @@ pub async fn invites_page(
            FROM users u
            JOIN accounts a ON a.id = u.account_id
            LEFT JOIN invites i ON i.id = u.invite_id
-           LEFT JOIN accounts inv_a ON inv_a.id = i.created_by
+           LEFT JOIN accounts inv_a ON inv_a.id = i.user_id
            WHERE a.domain IS NULL
            ORDER BY u.created_at ASC"#,
     )

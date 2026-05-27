@@ -28,7 +28,7 @@ pub async fn get_outbox(
     Query(q): Query<OutboxQuery>,
 ) -> AppResult<Response> {
     let account = sqlx::query!(
-        "SELECT id, statuses_count FROM accounts WHERE username = $1 AND domain IS NULL",
+        "SELECT a.id, COALESCE(st.statuses_count, 0) AS statuses_count FROM accounts a LEFT JOIN account_stats st ON st.account_id = a.id WHERE a.username = $1 AND a.domain IS NULL",
         username,
     )
     .fetch_optional(&state.db)
@@ -52,11 +52,12 @@ pub async fn get_outbox(
 
     let statuses = sqlx::query!(
         r#"SELECT s.id, s.text, s.spoiler_text, s.visibility, s.sensitive,
-                  s.created_at, s.uri, s.url, s.in_reply_to_id, s.quote_of_id,
-                  s.interaction_policy,
-                  q.uri AS quote_uri
+                  s.created_at, s.uri, s.url, s.in_reply_to_id,
+                  qr.quoted_status_id AS quote_of_id,
+                  quoted_s.uri AS quote_uri
            FROM statuses s
-           LEFT JOIN statuses q ON q.id = s.quote_of_id AND q.deleted_at IS NULL
+           LEFT JOIN quotes qr ON qr.status_id = s.id
+           LEFT JOIN statuses quoted_s ON quoted_s.id = qr.quoted_status_id AND quoted_s.deleted_at IS NULL
            WHERE s.account_id = $1
              AND s.deleted_at IS NULL
              AND s.visibility IN (0, 1) /* vis::PUBLIC, vis::UNLISTED */
@@ -122,24 +123,12 @@ pub async fn get_outbox(
             let mention_map = mention_maps.get(&s.id).unwrap_or(&empty_map);
             let content = render_content(&s.text, &instance.domain, mention_map);
             let quote_uri = s.quote_uri.clone();
-            let always = s.interaction_policy.as_ref()
-                .and_then(|p| p.get("can_quote"))
-                .and_then(|cq| cq.get("always"))
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
-                .unwrap_or_else(|| {
-                    if matches!(s.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
-                        vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
-                    } else {
-                        vec![]
-                    }
-                });
-            let with_approval = s.interaction_policy.as_ref()
-                .and_then(|p| p.get("can_quote"))
-                .and_then(|cq| cq.get("with_approval"))
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>())
-                .unwrap_or_default();
+            let always = if matches!(s.visibility, crate::db::models::vis::PUBLIC | crate::db::models::vis::UNLISTED) {
+                vec!["https://www.w3.org/ns/activitystreams#Public".to_string()]
+            } else {
+                vec![]
+            };
+            let with_approval: Vec<String> = vec![];
             json!({
                 "@context": [
                     "https://www.w3.org/ns/activitystreams",

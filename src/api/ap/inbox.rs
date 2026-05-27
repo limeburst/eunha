@@ -197,8 +197,8 @@ async fn handle_create(
     sqlx::query!(
         r#"INSERT INTO statuses
              (id, account_id, text, spoiler_text, visibility, sensitive,
-              uri, url, in_reply_to_id, quote_of_id, reply, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+              uri, url, in_reply_to_id, reply, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING"#,
         status_id,
         account_id,
@@ -209,18 +209,17 @@ async fn handle_create(
         note_uri,
         url,
         in_reply_to_id,
-        quote_of_id,
         in_reply_to_id.is_some(),
         created_at,
     )
     .execute(&state.db)
     .await?;
 
-    // Increment quotes_count on locally-known quoted status
+    // Insert into quotes table
     if let Some(qid) = quote_of_id {
         let _ = sqlx::query!(
-            "UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1",
-            qid,
+            "INSERT INTO quotes (status_id, quoted_status_id, state) VALUES ($1, $2, 1) ON CONFLICT DO NOTHING",
+            status_id, qid,
         )
         .execute(&state.db)
         .await;
@@ -279,14 +278,19 @@ async fn handle_like(
     .await? else { return Ok(()) };
 
     sqlx::query!(
-        "INSERT INTO favourites (account_id, status_id, uri) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
-        account_id, status.id, activity_uri
+        "INSERT INTO favourites (account_id, status_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        account_id, status.id
     )
     .execute(&state.db)
     .await?;
+    let _ = activity_uri; // no longer stored in favourites
 
     sqlx::query!(
-        "UPDATE statuses SET favourites_count = (SELECT COUNT(*) FROM favourites WHERE status_id = $1) WHERE id = $1",
+        r#"INSERT INTO status_stats (status_id, favourites_count, created_at, updated_at)
+           VALUES ($1, (SELECT COUNT(*) FROM favourites WHERE status_id = $1), now(), now())
+           ON CONFLICT (status_id) DO UPDATE
+             SET favourites_count = (SELECT COUNT(*) FROM favourites WHERE status_id = $1),
+                 updated_at = now()"#,
         status.id
     )
     .execute(&state.db)
@@ -358,7 +362,7 @@ async fn handle_quote_request(
 
     // Look up the local quoted status
     let Some(status) = sqlx::query!(
-        "SELECT id, account_id, interaction_policy FROM statuses WHERE uri = $1 AND deleted_at IS NULL",
+        "SELECT id, account_id, quote_approval_policy FROM statuses WHERE uri = $1 AND deleted_at IS NULL",
         object_uri,
     )
     .fetch_optional(&state.db)
@@ -369,13 +373,8 @@ async fn handle_quote_request(
         return Ok(());
     }
 
-    // Determine if the quoted status auto-approves quotes
-    let always_public = status.interaction_policy.as_ref()
-        .and_then(|p| p.get("can_quote"))
-        .and_then(|cq| cq.get("always"))
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().any(|v| v.as_str() == Some("https://www.w3.org/ns/activitystreams#Public")))
-        .unwrap_or(true); // default: public means auto-approve
+    // Determine if the quoted status auto-approves quotes (0 = public auto-approve)
+    let always_public = status.quote_approval_policy == 0;
 
     if always_public {
         // TODO: send Accept(QuoteRequest) via federation worker

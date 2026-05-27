@@ -65,31 +65,6 @@ pub async fn post_status(
     use axum::response::IntoResponse;
     auth.require_scope("write:statuses")?;
 
-    let idempotency_key = request
-        .headers()
-        .get("Idempotency-Key")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
-
-    // If idempotency key provided, check for an existing status.
-    if let Some(ref key) = idempotency_key {
-        let existing = sqlx::query_as!(
-            crate::db::models::Status,
-            "SELECT * FROM statuses WHERE account_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL",
-            auth.account_id, key,
-        )
-        .fetch_optional(&state.db)
-        .await?;
-        if let Some(s) = existing {
-            let account = fetch_account(&state, s.account_id).await?;
-            let media = fetch_status_media(&state, s.id).await?;
-            let reblog = fetch_reblog_data(&state, &s).await?;
-            let ctx = build_viewer_context(&state, auth.account_id, s.id).await.ok();
-            let status = build_status(&state, &s, &account, media, reblog, ctx).await?;
-            return Ok((axum::http::StatusCode::OK, Json(status)).into_response());
-        }
-    }
-
     let form = extract_post_status_form(request).await?;
     let account = fetch_account(&state, auth.account_id).await?;
     let text = form.status.clone().unwrap_or_default();
@@ -150,21 +125,9 @@ pub async fn post_status(
         return Ok((axum::http::StatusCode::CREATED, Json(resp)).into_response());
     }
 
-    let user_defaults = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
-        auth.account_id,
-    )
-    .fetch_optional(&state.db)
-    .await?;
-    let visibility = form.visibility.as_deref().map(str::to_owned).unwrap_or_else(|| {
-        user_defaults.as_ref().map(|u| u.default_privacy.clone()).unwrap_or_else(|| "public".to_owned())
-    });
-    let sensitive = form.sensitive.unwrap_or_else(|| {
-        user_defaults.as_ref().map(|u| u.default_sensitive).unwrap_or(false)
-    });
-    let language = form.language.clone().or_else(|| {
-        user_defaults.as_ref().and_then(|u| u.default_language.clone())
-    });
+    let visibility = form.visibility.as_deref().map(str::to_owned).unwrap_or_else(|| "public".to_owned());
+    let sensitive = form.sensitive.unwrap_or(false);
+    let language = form.language.clone();
     let in_reply_to_id = form.in_reply_to_id.as_deref().and_then(|s| s.parse::<i64>().ok());
 
     // Look up the parent author for in_reply_to_account_id
@@ -271,49 +234,14 @@ pub async fn post_status(
         vec![]
     };
 
-    // Build interaction_policy for the new status.
-    // Explicit quote_approval_policy param takes precedence; fall back to the user's
-    // stored default_quote_policy, which itself defaults to "public".
-    let actor_url = format!("https://{}/users/{}", instance.domain, account.username);
-    let effective_quote_policy = form.quote_approval_policy.clone().unwrap_or_else(|| {
-        user_defaults.as_ref()
-            .map(|u| u.default_quote_policy.clone())
-            .unwrap_or_else(|| "public".to_string())
-    });
-    let interaction_policy: Option<serde_json::Value> = {
-        let followers_uri = format!("{}/followers", actor_url);
-        let public_uri = "https://www.w3.org/ns/activitystreams#Public";
-        let (always, with_approval): (serde_json::Value, serde_json::Value) =
-            match effective_quote_policy.as_str() {
-                "followers" => (
-                    serde_json::json!([followers_uri]),
-                    serde_json::json!([]),
-                ),
-                "nobody" => (
-                    serde_json::json!([]),
-                    serde_json::json!([]),
-                ),
-                _ => (
-                    serde_json::json!([public_uri]),
-                    serde_json::json!([]),
-                ),
-            };
-        Some(serde_json::json!({
-            "can_quote": {
-                "always": always,
-                "with_approval": with_approval,
-            }
-        }))
-    };
-
     let is_reply = in_reply_to_id.is_some();
     let visibility_int = crate::db::models::vis::from_str(&visibility);
     let status = sqlx::query_as!(
         DbStatus,
         r#"INSERT INTO statuses
              (id, account_id, application_id, text, spoiler_text, visibility,
-              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, idempotency_key, uri, url, quote_of_id, interaction_policy)
-           VALUES ($1,$2,$11,$3,$4,$5,$6,$7,$8,$9,$13,$10,$12,$12,$14,$15)
+              language, sensitive, in_reply_to_id, in_reply_to_account_id, reply, uri, url)
+           VALUES ($1,$2,$10,$3,$4,$5,$6,$7,$8,$9,$12,$11,$11)
            RETURNING *"#,
         status_id,
         account.id,
@@ -324,28 +252,18 @@ pub async fn post_status(
         sensitive,
         in_reply_to_id,
         in_reply_to_account_id,
-        idempotency_key,
         auth.application_id,
         uri,
         is_reply,
-        quote_of_id,
-        interaction_policy as Option<serde_json::Value>,
     )
     .fetch_one(&state.db)
     .await?;
 
-    // Increment quotes_count and create a quotes record
+    // Create a quotes record if this is a quote post
     if let Some(qid) = quote_of_id {
-        let _ = sqlx::query!(
-            "UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1",
-            qid,
-        )
-        .execute(&state.db)
-        .await;
-
-        // Determine state based on the quoted status's interaction_policy
-        let quoted_policy = sqlx::query!(
-            "SELECT account_id, interaction_policy FROM statuses WHERE id = $1",
+        // Determine state based on the quoted status's visibility
+        let quoted = sqlx::query!(
+            "SELECT account_id, visibility FROM statuses WHERE id = $1",
             qid,
         )
         .fetch_optional(&state.db)
@@ -353,19 +271,12 @@ pub async fn post_status(
         .ok()
         .flatten();
 
-        let quote_state = if let Some(ref qp) = quoted_policy {
-            let always_public = qp.interaction_policy.as_ref()
-                .and_then(|p| p.get("can_quote"))
-                .and_then(|cq| cq.get("always"))
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().any(|v| v.as_str() == Some("https://www.w3.org/ns/activitystreams#Public")))
-                .unwrap_or(true); // default: public statuses allow quoting
-            if always_public { crate::db::models::quote_state::ACCEPTED } else { crate::db::models::quote_state::PENDING }
-        } else {
-            crate::db::models::quote_state::ACCEPTED
+        let quote_state = match quoted.as_ref().map(|q| q.visibility) {
+            Some(0) | Some(1) => crate::db::models::quote_state::ACCEPTED, // public, unlisted
+            _ => crate::db::models::quote_state::PENDING,
         };
 
-        let quoted_account_id = quoted_policy.map(|qp| qp.account_id).unwrap_or(account.id);
+        let quoted_account_id = quoted.map(|q| q.account_id).unwrap_or(account.id);
         let quote_row_id = crate::snowflake::next_id();
         let _ = sqlx::query!(
             r#"INSERT INTO quotes (id, status_id, quoted_status_id, account_id, quoted_account_id, state)
@@ -480,20 +391,28 @@ pub async fn post_status(
         }
     }
 
-    // Increment statuses count and advance last_status_at using the status's
-    // own created_at (matches Mastodon: GREATEST ensures it only moves forward).
+    // Advance last_status_at and increment statuses_count in account_stats
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = statuses_count + 1, last_status_at = GREATEST(last_status_at, $2) WHERE id = $1",
+        r#"INSERT INTO account_stats (account_id, statuses_count, last_status_at, created_at, updated_at)
+           VALUES ($1, 1, $2, now(), now())
+           ON CONFLICT (account_id) DO UPDATE
+             SET statuses_count = account_stats.statuses_count + 1,
+                 last_status_at = GREATEST(account_stats.last_status_at, $2),
+                 updated_at = now()"#,
         account.id,
         status.created_at,
     )
     .execute(&state.db)
     .await?;
 
-    // Increment parent's replies_count if this is a reply
+    // Increment parent's replies_count in status_stats if this is a reply
     if let Some(parent_id) = in_reply_to_id {
         let _ = sqlx::query!(
-            "UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1",
+            r#"INSERT INTO status_stats (status_id, replies_count, created_at, updated_at)
+               VALUES ($1, 1, now(), now())
+               ON CONFLICT (status_id) DO UPDATE
+                 SET replies_count = status_stats.replies_count + 1,
+                     updated_at = now()"#,
             parent_id
         )
         .execute(&state.db)
@@ -583,7 +502,7 @@ pub async fn post_status(
                 Some(status.id),
                 format!("{} mentioned you", account.display_name),
                 account.acct().clone(),
-                account.avatar.clone().unwrap_or_default(),
+                super::convert::account_avatar_url_for(&account),
             ).await;
             notified.insert(parent.account_id);
         }
@@ -602,7 +521,7 @@ pub async fn post_status(
             Some(status.id),
             format!("{} mentioned you", account.display_name),
             account.acct().clone(),
-            account.avatar.clone().unwrap_or_default(),
+            super::convert::account_avatar_url_for(&account),
         ).await;
         notified.insert(mentioned.id);
     }
@@ -627,7 +546,7 @@ pub async fn post_status(
                     Some(status.id),
                     format!("{} posted a new status", account.display_name),
                     account.acct().clone(),
-                    account.avatar.clone().unwrap_or_default(),
+                    super::convert::account_avatar_url_for(&account),
                 ).await;
             }
         }
@@ -1056,9 +975,9 @@ pub async fn delete_status(
 
     for reblogger_id in &reblogger_ids {
         let _ = sqlx::query!(
-            r#"UPDATE accounts SET
-                 statuses_count = GREATEST(statuses_count - 1, 0)
-               WHERE id = $1"#,
+            r#"UPDATE account_stats SET
+                 statuses_count = GREATEST(statuses_count - 1, 0), updated_at = now()
+               WHERE account_id = $1"#,
             reblogger_id
         )
         .execute(&state.db)
@@ -1073,7 +992,8 @@ pub async fn delete_status(
     .await?;
 
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
+        r#"UPDATE account_stats SET statuses_count = GREATEST(statuses_count - 1, 0), updated_at = now()
+           WHERE account_id = $1"#,
         account.id
     )
     .execute(&state.db)
@@ -1082,7 +1002,8 @@ pub async fn delete_status(
     // Decrement parent's replies_count if this was a reply
     if let Some(parent_id) = status.in_reply_to_id {
         let _ = sqlx::query!(
-            "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",
+            r#"UPDATE status_stats SET replies_count = GREATEST(replies_count - 1, 0), updated_at = now()
+               WHERE status_id = $1"#,
             parent_id
         )
         .execute(&state.db)
@@ -1092,18 +1013,9 @@ pub async fn delete_status(
     // Decrement original's reblogs_count if this was a boost
     if let Some(original_id) = status.reblog_of_id {
         let _ = sqlx::query!(
-            "UPDATE statuses SET reblogs_count = GREATEST(reblogs_count - 1, 0) WHERE id = $1",
+            r#"UPDATE status_stats SET reblogs_count = GREATEST(reblogs_count - 1, 0), updated_at = now()
+               WHERE status_id = $1"#,
             original_id
-        )
-        .execute(&state.db)
-        .await;
-    }
-
-    // Decrement quoted status's quotes_count if this was a quote post
-    if let Some(quoted_id) = status.quote_of_id {
-        let _ = sqlx::query!(
-            "UPDATE statuses SET quotes_count = GREATEST(quotes_count - 1, 0) WHERE id = $1",
-            quoted_id
         )
         .execute(&state.db)
         .await;
@@ -1174,7 +1086,11 @@ pub async fn favourite_status(
     .await?;
 
     sqlx::query!(
-        "UPDATE statuses SET favourites_count = (SELECT COUNT(*) FROM favourites WHERE status_id = $1) WHERE id = $1",
+        r#"INSERT INTO status_stats (status_id, favourites_count, created_at, updated_at)
+           VALUES ($1, 1, now(), now())
+           ON CONFLICT (status_id) DO UPDATE
+             SET favourites_count = (SELECT COUNT(*) FROM favourites WHERE status_id = $1),
+                 updated_at = now()"#,
         id
     )
     .execute(&state.db)
@@ -1198,7 +1114,7 @@ pub async fn favourite_status(
         Some(id),
         format!("{} favourited your post", from_display),
         account_from_db(&account).acct.clone(),
-        account.avatar.clone().unwrap_or_default(),
+        super::convert::account_avatar_url_for(&account),
     ).await;
 
     Ok(Json(build_status(&state, &status, &account, media, reblog, Some(ctx)).await?))
@@ -1223,7 +1139,9 @@ pub async fn unfavourite_status(
     .await?;
 
     sqlx::query!(
-        "UPDATE statuses SET favourites_count = (SELECT COUNT(*) FROM favourites WHERE status_id = $1) WHERE id = $1",
+        r#"UPDATE status_stats SET favourites_count = (SELECT COUNT(*) FROM favourites WHERE status_id = $1),
+               updated_at = now()
+           WHERE status_id = $1"#,
         id
     )
     .execute(&state.db)
@@ -1278,16 +1196,7 @@ pub async fn reblog_status(
         let requested = body.as_ref().and_then(|b| b.visibility.as_deref());
         match requested {
             Some(v) => crate::db::models::vis::from_str(v),
-            None => {
-                let user_default = sqlx::query_scalar!(
-                    "SELECT default_privacy FROM users WHERE account_id = $1",
-                    auth.account_id,
-                )
-                .fetch_optional(&state.db)
-                .await?
-                .unwrap_or_else(|| "public".to_owned());
-                crate::db::models::vis::from_str(&user_default)
-            }
+            None => crate::db::models::vis::from_str("public"),
         }
     };
 
@@ -1321,14 +1230,22 @@ pub async fn reblog_status(
     .await?;
 
     sqlx::query!(
-        "UPDATE statuses SET reblogs_count = reblogs_count + 1 WHERE id = $1",
+        r#"INSERT INTO status_stats (status_id, reblogs_count, created_at, updated_at)
+           VALUES ($1, 1, now(), now())
+           ON CONFLICT (status_id) DO UPDATE
+             SET reblogs_count = status_stats.reblogs_count + 1,
+                 updated_at = now()"#,
         original_id
     )
     .execute(&state.db)
     .await?;
 
     sqlx::query!(
-        "UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1",
+        r#"INSERT INTO account_stats (account_id, statuses_count, created_at, updated_at)
+           VALUES ($1, 1, now(), now())
+           ON CONFLICT (account_id) DO UPDATE
+             SET statuses_count = account_stats.statuses_count + 1,
+                 updated_at = now()"#,
         auth.account_id
     )
     .execute(&state.db)
@@ -1343,7 +1260,7 @@ pub async fn reblog_status(
         Some(original_id),
         format!("{} boosted your post", boost_account.display_name),
         boost_account.acct().clone(),
-        boost_account.avatar.clone().unwrap_or_default(),
+        super::convert::account_avatar_url_for(&boost_account),
     ).await;
 
     // Build viewer context against the ORIGINAL so the nested reblog object
@@ -1660,13 +1577,15 @@ pub async fn unreblog_status(
 
     if deleted.is_some() {
         sqlx::query!(
-            "UPDATE statuses SET reblogs_count = GREATEST(reblogs_count - 1, 0) WHERE id = $1",
+            r#"UPDATE status_stats SET reblogs_count = GREATEST(reblogs_count - 1, 0), updated_at = now()
+               WHERE status_id = $1"#,
             original_id
         )
         .execute(&state.db)
         .await?;
         sqlx::query!(
-            "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
+            r#"UPDATE account_stats SET statuses_count = GREATEST(statuses_count - 1, 0), updated_at = now()
+               WHERE account_id = $1"#,
             auth.account_id
         )
         .execute(&state.db)
@@ -2046,9 +1965,9 @@ pub async fn edit_status(
 
     // Save current version to edits before updating
     sqlx::query!(
-        r#"INSERT INTO status_edits (status_id, account_id, text, content, spoiler_text, sensitive)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
-        id, auth.account_id, status.text, old_content, status.spoiler_text, status.sensitive,
+        r#"INSERT INTO status_edits (status_id, account_id, text, spoiler_text, sensitive)
+           VALUES ($1, $2, $3, $4, $5)"#,
+        id, auth.account_id, status.text, status.spoiler_text, status.sensitive,
     )
     .execute(&state.db)
     .await?;
@@ -2140,7 +2059,7 @@ pub async fn edit_status(
             Some(id),
             notify_title.clone(),
             "".into(),
-            account.avatar.clone().unwrap_or_default(),
+            super::convert::account_avatar_url_for(&account),
         )
         .await;
     }
@@ -2265,7 +2184,7 @@ pub async fn get_status_history(
             serde_json::json!({ "options": opts.iter().map(|t| serde_json::json!({"title": t})).collect::<Vec<_>>() })
         });
         StatusEdit {
-            content: e.content.clone(),
+            content: ammonia::clean(&e.text),
             spoiler_text: e.spoiler_text.clone(),
             sensitive: e.sensitive.unwrap_or(false),
             created_at: super::convert::mastodon_date(e.created_at),
@@ -2417,42 +2336,24 @@ pub async fn update_interaction_policy(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
-    body: Option<Json<InteractionPolicyForm>>,
+    _body: Option<Json<InteractionPolicyForm>>,
 ) -> AppResult<Json<Status>> {
     auth.require_scope("write:statuses")?;
     // Verify the status exists and belongs to the authenticated user
-    let status = sqlx::query!(
+    let status_meta = sqlx::query!(
         "SELECT account_id FROM statuses WHERE id = $1 AND deleted_at IS NULL",
         id,
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or(AppError::NotFound)?;
-    if status.account_id != auth.account_id {
+    if status_meta.account_id != auth.account_id {
         return Err(AppError::Forbidden);
     }
 
-    if let Some(Json(form)) = body {
-        if let Some(cq) = form.can_quote {
-            let always = cq.always.unwrap_or_default();
-            let with_approval = cq.with_approval.unwrap_or_default();
-            let policy = serde_json::json!({
-                "can_quote": {
-                    "always": always,
-                    "with_approval": with_approval,
-                }
-            });
-            sqlx::query!(
-                "UPDATE statuses SET interaction_policy = $1 WHERE id = $2",
-                policy,
-                id,
-            )
-            .execute(&state.db)
-            .await?;
-        }
-    }
+    // interaction_policy column was removed for Mastodon schema compat; accept but no-op
 
-    // Re-fetch to get updated interaction_policy
+    // Re-fetch
     let status = sqlx::query_as!(
         DbStatus,
         "SELECT * FROM statuses WHERE id = $1 AND deleted_at IS NULL",

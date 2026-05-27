@@ -130,7 +130,8 @@ pub async fn trending_statuses(
                  WHERE mu.account_id = $3 AND mu.target_account_id = s.account_id
                    AND (mu.expires_at IS NULL OR mu.expires_at > now())
              ))
-           ORDER BY (s.favourites_count + s.reblogs_count * 2) DESC, s.created_at DESC
+           ORDER BY (COALESCE((SELECT favourites_count FROM status_stats WHERE status_id = s.id), 0)
+                   + COALESCE((SELECT reblogs_count FROM status_stats WHERE status_id = s.id), 0) * 2) DESC, s.created_at DESC
            LIMIT $1 OFFSET $2"#,
         limit,
         offset,

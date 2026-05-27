@@ -37,12 +37,12 @@ pub async fn get_favourites(
     let frows: Vec<FRow> = if min_id.is_some() {
         sqlx::query_as!(
             FRow,
-            r#"SELECT f.sort_id, f.status_id FROM favourites f
+            r#"SELECT f.id AS sort_id, f.status_id FROM favourites f
                JOIN statuses s ON s.id = f.status_id
                WHERE f.account_id = $1
                  AND s.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR f.sort_id > $2)
-               ORDER BY f.sort_id ASC LIMIT $3"#,
+                 AND ($2::bigint IS NULL OR f.id > $2)
+               ORDER BY f.id ASC LIMIT $3"#,
             auth.account_id, min_id, limit
         )
         .fetch_all(&state.db)
@@ -50,13 +50,13 @@ pub async fn get_favourites(
     } else {
         sqlx::query_as!(
             FRow,
-            r#"SELECT f.sort_id, f.status_id FROM favourites f
+            r#"SELECT f.id AS sort_id, f.status_id FROM favourites f
                JOIN statuses s ON s.id = f.status_id
                WHERE f.account_id = $1
                  AND s.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR f.sort_id < $2)
-                 AND ($3::bigint IS NULL OR f.sort_id > $3)
-               ORDER BY f.sort_id DESC LIMIT $4"#,
+                 AND ($2::bigint IS NULL OR f.id < $2)
+                 AND ($3::bigint IS NULL OR f.id > $3)
+               ORDER BY f.id DESC LIMIT $4"#,
             auth.account_id, max_id, since_id, limit
         )
         .fetch_all(&state.db)

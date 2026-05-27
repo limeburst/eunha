@@ -20,9 +20,9 @@ pub async fn get_actor(
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
 ) -> AppResult<Response> {
-    let account = sqlx::query!(
-        r#"SELECT a.* FROM accounts a
-           WHERE a.username = $1 AND a.domain IS NULL"#,
+    let account = sqlx::query_as!(
+        crate::db::models::Account,
+        "SELECT * FROM accounts WHERE username = $1 AND domain IS NULL",
         username,
     )
     .fetch_optional(&state.db)
@@ -31,6 +31,13 @@ pub async fn get_actor(
 
     let base = format!("https://{}", instance.domain);
     let actor_url = format!("{}/users/{}", base, username);
+
+    let has_avatar = account.avatar_file_name.as_ref().map_or(false, |s| !s.is_empty())
+        || account.avatar_remote_url.as_ref().map_or(false, |s| !s.is_empty());
+    let has_header = account.header_file_name.as_ref().map_or(false, |s| !s.is_empty())
+        || account.header_remote_url.is_empty() == false;
+    let avatar_url = crate::api::mastodon::convert::account_avatar_url_for(&account);
+    let header_url = crate::api::mastodon::convert::account_header_url_for(&account);
 
     let actor = json!({
         "@context": [
@@ -62,8 +69,8 @@ pub async fn get_actor(
         "discoverable": account.discoverable,
         "indexable": account.indexable,
         "published": account.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        "icon": account.avatar.map(|a| json!({ "type": "Image", "url": a })),
-        "image": account.header.map(|h| json!({ "type": "Image", "url": h })),
+        "icon": if has_avatar { Some(json!({ "type": "Image", "url": avatar_url })) } else { None },
+        "image": if has_header { Some(json!({ "type": "Image", "url": header_url })) } else { None },
         "publicKey": {
             "id": format!("{}#main-key", actor_url),
             "owner": actor_url,

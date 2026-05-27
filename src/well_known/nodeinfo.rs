@@ -44,7 +44,10 @@ pub async fn nodeinfo(
                  AND s.created_at > now() - interval '180 days'"#,
         ).fetch_one(&state.db),
         sqlx::query_scalar!(
-            "SELECT COALESCE(SUM(statuses_count), 0)::bigint FROM accounts WHERE domain IS NULL",
+            r#"SELECT COALESCE(SUM(ast.statuses_count), 0)::bigint
+               FROM account_stats ast
+               JOIN accounts a ON a.id = ast.account_id
+               WHERE a.domain IS NULL"#,
         ).fetch_one(&state.db),
     )?;
 

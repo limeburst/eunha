@@ -123,9 +123,9 @@ fn uuid_to_path(id: Uuid) -> String {
         .join("/")
 }
 
-fn int_to_path(id: i64) -> String {
-    // Format as zero-padded 18-digit decimal, split into 3-digit chunks
-    let s = format!("{:018}", id);
+pub fn int_to_path(id: i64) -> String {
+    // Format as zero-padded 9-digit decimal, split into 3-digit chunks — matches Mastodon's Paperclip convention
+    let s = format!("{:09}", id);
     s.as_bytes()
         .chunks(3)
         .map(|c| std::str::from_utf8(c).unwrap_or(""))
@@ -136,6 +136,10 @@ fn int_to_path(id: i64) -> String {
 fn random_hex() -> String {
     let bytes = Uuid::new_v4().into_bytes();
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+pub fn ext_for_content_type(content_type: &str) -> &'static str {
+    ext_for(content_type)
 }
 
 fn ext_for(content_type: &str) -> &'static str {

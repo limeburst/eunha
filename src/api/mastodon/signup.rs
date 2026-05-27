@@ -242,14 +242,13 @@ pub async fn confirm_email(
     let user_id = match sqlx::query_scalar!(
         r#"INSERT INTO users
              (account_id, email, encrypted_password,
-              confirmed_at, invite_id, approved_at, reason)
+              confirmed_at, invite_id, approved)
            VALUES ($1,$2,$3,
                    now(), $4,
-                   CASE WHEN $5 THEN NULL ELSE now() END,
-                   $6)
+                   NOT $5::boolean)
            RETURNING id"#,
         account_id, pending.email,
-        pending.password_hash, pending.invite_id, needs_approval, pending.reason,
+        pending.password_hash, pending.invite_id, needs_approval,
     ).fetch_one(&state.db).await {
         Ok(id) => id,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -344,7 +343,7 @@ pub async fn request_password_reset(
 
     let token = crypto::generate_token(32);
     let _ = sqlx::query!(
-        "UPDATE users SET password_reset_token = $1, password_reset_sent_at = now() WHERE id = $2",
+        "UPDATE users SET reset_password_token = $1, reset_password_sent_at = now() WHERE id = $2",
         token, row.id,
     )
     .execute(&state.db)
@@ -386,8 +385,8 @@ pub async fn apply_password_reset(
 
     let row = sqlx::query!(
         r#"SELECT id FROM users
-           WHERE password_reset_token = $1
-             AND password_reset_sent_at > now() - interval '1 hour'"#,
+           WHERE reset_password_token = $1
+             AND reset_password_sent_at > now() - interval '1 hour'"#,
         token,
     )
     .fetch_optional(&state.db)
@@ -403,7 +402,7 @@ pub async fn apply_password_reset(
     };
 
     let _ = sqlx::query!(
-        "UPDATE users SET encrypted_password = $1, password_reset_token = NULL, password_reset_sent_at = NULL WHERE id = $2",
+        "UPDATE users SET encrypted_password = $1, reset_password_token = NULL, reset_password_sent_at = NULL WHERE id = $2",
         hash, row.id,
     )
     .execute(&state.db)

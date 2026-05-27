@@ -100,11 +100,11 @@ pub async fn block_domain(
 
     for row in &removed {
         let _ = sqlx::query!(
-            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET following_count = GREATEST(following_count - 1, 0), updated_at = now() WHERE account_id = $1",
             row.account_id
         ).execute(&state.db).await;
         let _ = sqlx::query!(
-            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET followers_count = GREATEST(followers_count - 1, 0), updated_at = now() WHERE account_id = $1",
             row.target_account_id
         ).execute(&state.db).await;
     }

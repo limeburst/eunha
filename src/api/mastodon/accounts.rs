@@ -31,17 +31,8 @@ pub async fn verify_credentials(
     let mut api_account = account_from_db(&account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
 
-    let user_prefs = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
-        account.id
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (default_privacy, default_sensitive, default_language, default_quote_policy) = user_prefs.map_or(
-        ("public".to_string(), false, None, "public".to_string()),
-        |u| (u.default_privacy, u.default_sensitive, u.default_language, u.default_quote_policy),
-    );
+    let (default_privacy, default_sensitive, default_language, default_quote_policy) =
+        ("public".to_string(), false, None::<String>, "public".to_string());
 
     let follow_requests: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM (SELECT 1 FROM follow_requests WHERE target_account_id = $1 LIMIT 40) sub",
@@ -55,7 +46,7 @@ pub async fn verify_credentials(
         privacy: default_privacy,
         sensitive: default_sensitive,
         language: default_language,
-        note: account.note_text.clone(),
+        note: account.note.clone(),
         fields: super::convert::fields_from_db(account.fields.as_ref().unwrap_or(&serde_json::json!([]))),
         follow_requests_count: follow_requests,
         discoverable: account.discoverable,
@@ -74,47 +65,55 @@ pub async fn verify_credentials(
 /// Fetch highlighted roles for a local account.  Returns an empty vec for
 /// remote accounts (they have no row in `users`).
 async fn fetch_account_roles(state: &AppState, account_id: i64) -> Vec<super::types::AccountRole> {
-    let role = sqlx::query_scalar!(
-        "SELECT role FROM users WHERE account_id = $1",
+    let position: i32 = sqlx::query_scalar!(
+        r#"SELECT COALESCE(ur.position, 0) AS "pos!: i32"
+           FROM users u
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE u.account_id = $1"#,
         account_id,
     )
     .fetch_optional(&state.db)
     .await
     .ok()
-    .flatten();
+    .flatten()
+    .unwrap_or(0);
 
-    match role.as_deref() {
-        Some("admin") => vec![super::types::AccountRole {
-            id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
-        }],
-        Some("moderator") => vec![super::types::AccountRole {
-            id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
-        }],
-        _ => vec![],
+    if position >= 1000 {
+        vec![super::types::AccountRole { id: "1".into(), name: "Admin".into(), color: "#6364ff".into() }]
+    } else if position >= 100 {
+        vec![super::types::AccountRole { id: "2".into(), name: "Moderator".into(), color: "#6364ff".into() }]
+    } else {
+        vec![]
     }
 }
 
 /// Fetch the single current role for a local account (used in CredentialAccount).
 pub async fn fetch_account_role(state: &AppState, account_id: i64) -> Option<super::types::Role> {
-    let role = sqlx::query_scalar!(
-        "SELECT role FROM users WHERE account_id = $1",
+    let position: i32 = sqlx::query_scalar!(
+        r#"SELECT COALESCE(ur.position, 0) AS "pos!: i32"
+           FROM users u
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE u.account_id = $1"#,
         account_id,
     )
     .fetch_optional(&state.db)
     .await
     .ok()
-    .flatten();
+    .flatten()
+    .unwrap_or(0);
 
-    match role.as_deref() {
-        Some("admin") => Some(super::types::Role {
+    if position >= 1000 {
+        Some(super::types::Role {
             id: "1".into(), name: "Admin".into(), color: "#6364ff".into(),
             permissions: "2031612".into(), highlighted: true,
-        }),
-        Some("moderator") => Some(super::types::Role {
+        })
+    } else if position >= 100 {
+        Some(super::types::Role {
             id: "2".into(), name: "Moderator".into(), color: "#6364ff".into(),
             permissions: "1049884".into(), highlighted: true,
-        }),
-        _ => None,
+        })
+    } else {
+        None
     }
 }
 
@@ -224,7 +223,7 @@ pub async fn get_account(
         let approval_required = state.instance.approval_required;
         let ok = sqlx::query_scalar!(
             r#"SELECT u.confirmed_at IS NOT NULL
-                 AND (u.approved_at IS NOT NULL OR NOT $2) AS "ok!"
+                 AND (u.approved OR NOT $2) AS "ok!"
                FROM users u
                WHERE u.account_id = $1"#,
             account.id,
@@ -240,11 +239,11 @@ pub async fn get_account(
     let mut api_account = account_from_db(&account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
     api_account.roles = fetch_account_roles(&state, account.id).await;
-    if let Some(ref moved_uri) = account.moved_to_uri {
+    if let Some(moved_account_id) = account.moved_to_account_id {
         if let Ok(Some(moved)) = sqlx::query_as!(
             Account,
-            "SELECT * FROM accounts WHERE uri = $1 LIMIT 1",
-            moved_uri,
+            "SELECT * FROM accounts WHERE id = $1 LIMIT 1",
+            moved_account_id,
         )
         .fetch_optional(&state.db)
         .await {
@@ -743,7 +742,7 @@ pub async fn follow_account(
         push::create_and_push(
             &state, target_id, auth.account_id, "follow_request", None,
             format!("{} wants to follow you", requester.display_name),
-            requester.acct().clone(), requester.avatar.clone().unwrap_or_default(),
+            requester.acct().clone(), super::convert::account_avatar_url_for(&requester),
         ).await;
         return build_relationship(&state, auth.account_id, target_id).await.map(Json);
     }
@@ -757,13 +756,13 @@ pub async fn follow_account(
     .await?;
 
     sqlx::query!(
-        "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
+        "INSERT INTO account_stats (account_id, followers_count) VALUES ($1, 1) ON CONFLICT (account_id) DO UPDATE SET followers_count = account_stats.followers_count + 1, updated_at = now()",
         target_id
     )
     .execute(&state.db)
     .await?;
     sqlx::query!(
-        "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
+        "INSERT INTO account_stats (account_id, following_count) VALUES ($1, 1) ON CONFLICT (account_id) DO UPDATE SET following_count = account_stats.following_count + 1, updated_at = now()",
         auth.account_id
     )
     .execute(&state.db)
@@ -778,7 +777,7 @@ pub async fn follow_account(
         None,
         format!("{} followed you", follower.display_name),
         follower.acct().clone(),
-        follower.avatar.clone().unwrap_or_default(),
+        super::convert::account_avatar_url_for(&follower),
     ).await;
 
     let mut redis = state.redis.clone();
@@ -814,13 +813,13 @@ pub async fn unfollow_account(
 
     if deleted_accepted.is_some() {
         sqlx::query!(
-            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET followers_count = GREATEST(followers_count - 1, 0), updated_at = now() WHERE account_id = $1",
             target_id
         )
         .execute(&state.db)
         .await?;
         sqlx::query!(
-            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET following_count = GREATEST(following_count - 1, 0), updated_at = now() WHERE account_id = $1",
             auth.account_id
         )
         .execute(&state.db)
@@ -1290,7 +1289,9 @@ async fn do_update_credentials(
     let mut bot: Option<bool> = None;
     let mut discoverable: Option<bool> = None;
     let mut avatar_url: Option<String> = None;
+    let mut avatar_content_type: Option<String> = None;
     let mut header_url: Option<String> = None;
+    let mut header_content_type: Option<String> = None;
     let mut source_privacy: Option<String> = None;
     let mut source_sensitive: Option<bool> = None;
     let mut source_language: Option<Option<String>> = None;
@@ -1374,21 +1375,23 @@ async fn do_update_credentials(
                 indexable = Some(v == "true" || v == "1");
             }
             "avatar" => {
-                let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+                let ct = field.content_type().unwrap_or("application/octet-stream").to_string();
                 let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
-                    let key = crate::media::account_avatar_key(auth.account_id, &content_type);
-                    state.storage.store(&data, &key, &content_type).await?;
-                    avatar_url = Some(state.storage.public_url(&key));
+                    let key = crate::media::account_avatar_key(auth.account_id, &ct);
+                    state.storage.store(&data, &key, &ct).await?;
+                    avatar_url = key.rsplit('/').next().map(str::to_string);
+                    avatar_content_type = Some(ct);
                 }
             }
             "header" => {
-                let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+                let ct = field.content_type().unwrap_or("application/octet-stream").to_string();
                 let data = field.bytes().await.map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
-                    let key = crate::media::account_header_key(auth.account_id, &content_type);
-                    state.storage.store(&data, &key, &content_type).await?;
-                    header_url = Some(state.storage.public_url(&key));
+                    let key = crate::media::account_header_key(auth.account_id, &ct);
+                    state.storage.store(&data, &key, &ct).await?;
+                    header_url = key.rsplit('/').next().map(str::to_string);
+                    header_content_type = Some(ct);
                 }
             }
             _ => {}
@@ -1403,7 +1406,7 @@ async fn do_update_credentials(
         let domain = instance_domain;
         let note_html = super::formatting::render_content(n, domain, &std::collections::HashMap::new());
         let note_html = if note_html.is_empty() { String::new() } else { note_html };
-        sqlx::query!("UPDATE accounts SET note = $1, note_text = $2 WHERE id = $3", note_html, n, auth.account_id)
+        sqlx::query!("UPDATE accounts SET note = $1 WHERE id = $2", note_html, auth.account_id)
             .execute(&state.db).await?;
     }
     if let Some(l) = locked {
@@ -1427,13 +1430,13 @@ async fn do_update_credentials(
                 .execute(&state.db)
                 .await;
                 let _ = sqlx::query!(
-                    "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
+                    "INSERT INTO account_stats (account_id, followers_count) VALUES ($1, 1) ON CONFLICT (account_id) DO UPDATE SET followers_count = account_stats.followers_count + 1, updated_at = now()",
                     auth.account_id
                 )
                 .execute(&state.db)
                 .await;
                 let _ = sqlx::query!(
-                    "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
+                    "INSERT INTO account_stats (account_id, following_count) VALUES ($1, 1) ON CONFLICT (account_id) DO UPDATE SET following_count = account_stats.following_count + 1, updated_at = now()",
                     row.account_id
                 )
                 .execute(&state.db)
@@ -1453,7 +1456,8 @@ async fn do_update_credentials(
         }
     }
     if let Some(b) = bot {
-        sqlx::query!("UPDATE accounts SET bot = $1 WHERE id = $2", b, auth.account_id)
+        let actor_type = if b { "Service" } else { "Person" };
+        sqlx::query!("UPDATE accounts SET actor_type = $1 WHERE id = $2", actor_type, auth.account_id)
             .execute(&state.db).await?;
     }
     if let Some(d) = discoverable {
@@ -1464,17 +1468,17 @@ async fn do_update_credentials(
         sqlx::query!("UPDATE accounts SET indexable = $1 WHERE id = $2", ix, auth.account_id)
             .execute(&state.db).await?;
     }
-    if let Some(ref url) = avatar_url {
+    if let Some(ref filename) = avatar_url {
         sqlx::query!(
-            "UPDATE accounts SET avatar = $1, avatar_static = $1 WHERE id = $2",
-            url, auth.account_id
+            "UPDATE accounts SET avatar_file_name = $1, avatar_content_type = $2, avatar_updated_at = now() WHERE id = $3",
+            filename, avatar_content_type, auth.account_id
         )
         .execute(&state.db).await?;
     }
-    if let Some(ref url) = header_url {
+    if let Some(ref filename) = header_url {
         sqlx::query!(
-            "UPDATE accounts SET header = $1, header_static = $1 WHERE id = $2",
-            url, auth.account_id
+            "UPDATE accounts SET header_file_name = $1, header_content_type = $2, header_updated_at = now() WHERE id = $3",
+            filename, header_content_type, auth.account_id
         )
         .execute(&state.db).await?;
     }
@@ -1493,27 +1497,9 @@ async fn do_update_credentials(
         .execute(&state.db).await?;
     }
 
-    if let Some(ref p) = source_privacy {
-        sqlx::query!(
-            "UPDATE users SET default_privacy = $1 WHERE account_id = $2",
-            p, auth.account_id
-        )
-        .execute(&state.db).await?;
-    }
-    if let Some(s) = source_sensitive {
-        sqlx::query!(
-            "UPDATE users SET default_sensitive = $1 WHERE account_id = $2",
-            s, auth.account_id
-        )
-        .execute(&state.db).await?;
-    }
-    if let Some(ref lang) = source_language {
-        sqlx::query!(
-            "UPDATE users SET default_language = $1 WHERE account_id = $2",
-            *lang, auth.account_id
-        )
-        .execute(&state.db).await?;
-    }
+    // default_privacy, default_sensitive, default_language are stored in users.settings (YAML)
+    // in Mastodon's schema; we don't persist them here.
+    let _ = (&source_privacy, source_sensitive, &source_language);
     if let Some(hc) = source_hide_collections {
         sqlx::query!(
             "UPDATE accounts SET hide_collections = $1 WHERE id = $2",
@@ -1528,13 +1514,8 @@ async fn do_update_credentials(
         )
         .execute(&state.db).await?;
     }
-    if let Some(ref qp) = source_quote_policy {
-        sqlx::query!(
-            "UPDATE users SET default_quote_policy = $1 WHERE account_id = $2",
-            qp, auth.account_id
-        )
-        .execute(&state.db).await?;
-    }
+    // default_quote_policy is in users.settings (YAML) in Mastodon's schema; not persisted here.
+    let _ = &source_quote_policy;
 
     fetch_account(state, auth.account_id).await
 }
@@ -1594,16 +1575,16 @@ pub async fn patch_profile(
     Ok(Json(super::types::Profile {
         id: a.id.to_string(),
         display_name: a.display_name.clone(),
-        note: a.note_text.clone(),
+        note: a.note.clone(),
         fields,
         formatted_note: a.note.clone(),
         formatted_fields,
-        avatar: a.avatar.clone(),
-        avatar_static: a.avatar_static.clone(),
-        header: a.header.clone(),
-        header_static: a.header_static.clone(),
+        avatar: Some(super::convert::account_avatar_url_for(a)),
+        avatar_static: Some(super::convert::account_avatar_url_for(a)),
+        header: Some(super::convert::account_header_url_for(a)),
+        header_static: Some(super::convert::account_header_url_for(a)),
         locked: a.locked,
-        bot: a.bot,
+        bot: a.actor_type.as_deref() == Some("Service"),
         hide_collections: a.hide_collections,
         discoverable: a.discoverable,
         indexable: a.indexable,
@@ -1628,23 +1609,15 @@ async fn build_credential_account_response(
     .await?
     .unwrap_or(0);
 
-    let user_prefs = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
-        auth.account_id
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (default_privacy, default_sensitive, default_language, default_quote_policy) = user_prefs.map_or(
-        ("public".to_string(), false, None, "public".to_string()),
-        |u| (u.default_privacy, u.default_sensitive, u.default_language, u.default_quote_policy),
-    );
+    // User preferences are stored in users.settings (YAML); default to safe values
+    let (default_privacy, default_sensitive, default_language, default_quote_policy) =
+        ("public".to_string(), false, None::<String>, "public".to_string());
 
     api_account.source = Some(super::types::AccountSource {
         privacy: default_privacy,
         sensitive: default_sensitive,
         language: default_language,
-        note: account.note_text.clone(),
+        note: account.note.clone(),
         fields: fields.clone(),
         follow_requests_count,
         discoverable: account.discoverable,
@@ -1738,11 +1711,11 @@ pub async fn block_account(
     .await?;
     for row in &deleted {
         let _ = sqlx::query!(
-            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET following_count = GREATEST(following_count - 1, 0), updated_at = now() WHERE account_id = $1",
             row.account_id,
         ).execute(&state.db).await;
         let _ = sqlx::query!(
-            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET followers_count = GREATEST(followers_count - 1, 0), updated_at = now() WHERE account_id = $1",
             row.target_account_id,
         ).execute(&state.db).await;
     }
@@ -1915,17 +1888,8 @@ pub async fn get_preferences(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Preferences>> {
     auth.require_scope("read:accounts")?;
-    let user = sqlx::query!(
-        "SELECT default_privacy, default_sensitive, default_language, default_quote_policy FROM users WHERE account_id = $1",
-        auth.account_id,
-    )
-    .fetch_optional(&state.db)
-    .await?;
-
-    let (privacy, sensitive, language, quote_policy) = user.map_or(
-        ("public".to_string(), false, None, "public".to_string()),
-        |u| (u.default_privacy, u.default_sensitive, u.default_language, u.default_quote_policy),
-    );
+    let (privacy, sensitive, language, quote_policy) =
+        ("public".to_string(), false, None::<String>, "public".to_string());
 
     Ok(Json(Preferences {
         posting_default_visibility: privacy,
@@ -2021,14 +1985,14 @@ pub async fn authorize_follow_request(
         .execute(&state.db)
         .await?;
         sqlx::query!(
-            "UPDATE accounts SET followers_count = followers_count + 1 WHERE id = $1",
+            "INSERT INTO account_stats (account_id, followers_count) VALUES ($1, 1) ON CONFLICT (account_id) DO UPDATE SET followers_count = account_stats.followers_count + 1, updated_at = now()",
             auth.account_id
         )
         .execute(&state.db)
         .await?;
 
         sqlx::query!(
-            "UPDATE accounts SET following_count = following_count + 1 WHERE id = $1",
+            "INSERT INTO account_stats (account_id, following_count) VALUES ($1, 1) ON CONFLICT (account_id) DO UPDATE SET following_count = account_stats.following_count + 1, updated_at = now()",
             requester_id
         )
         .execute(&state.db)
@@ -2043,7 +2007,7 @@ pub async fn authorize_follow_request(
             None,
             format!("{} accepted your follow request", accepter.display_name),
             accepter.acct().clone(),
-            accepter.avatar.clone().unwrap_or_default(),
+            super::convert::account_avatar_url_for(&accepter),
         ).await;
 
         let mut redis = state.redis.clone();
@@ -2185,11 +2149,23 @@ pub async fn batch_quote_data(
 ) -> AppResult<std::collections::HashMap<i64, super::types::QuoteInfo>> {
     use std::collections::{HashMap, HashSet};
 
-    let quote_ids: Vec<i64> = statuses.iter()
-        .filter_map(|s| s.quote_of_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
+    let status_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+
+    // Fetch quote relationships from the quotes table
+    let quote_rows = sqlx::query!(
+        "SELECT status_id, quoted_status_id FROM quotes WHERE status_id = ANY($1::bigint[]) AND quoted_status_id IS NOT NULL",
+        &status_ids,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    // Map from quoting status ID → quoted status ID
+    let quote_of: HashMap<i64, i64> = quote_rows.iter()
+        .filter_map(|r| r.quoted_status_id.map(|qid| (r.status_id, qid)))
         .collect();
+
+    let quote_ids: Vec<i64> = quote_of.values().cloned().collect::<HashSet<_>>().into_iter().collect();
 
     if quote_ids.is_empty() {
         return Ok(HashMap::new());
@@ -2244,8 +2220,8 @@ pub async fn batch_quote_data(
         (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new())
     };
 
-    // Fetch quote states for all quoting statuses that have a quote_of_id
-    let quoting_ids: Vec<i64> = statuses.iter().filter(|s| s.quote_of_id.is_some()).map(|s| s.id).collect();
+    // Fetch quote states for all quoting statuses that have a quoted_status_id in quotes table
+    let quoting_ids: Vec<i64> = quote_of.keys().cloned().collect();
     let quote_states: HashMap<i64, String> = if !quoting_ids.is_empty() {
         let rows = sqlx::query!(
             "SELECT status_id, state FROM quotes WHERE status_id = ANY($1::bigint[])",
@@ -2282,21 +2258,20 @@ pub async fn batch_quote_data(
         HashSet::new()
     };
 
-    // Fetch shallow quote states for nested quotes (quoted_status's own quote_of_id).
-    // These correspond to REST::ShallowQuoteSerializer: {state, quoted_status_id}.
-    let nested_quoting_ids: Vec<i64> = quoted_statuses.iter()
-        .filter(|qs| qs.quote_of_id.is_some())
-        .map(|qs| qs.id)
-        .collect();
-    let nested_quote_states: HashMap<i64, String> = if !nested_quoting_ids.is_empty() {
+    // Fetch shallow quote states for nested quotes (quoted statuses that themselves quote something).
+    let nested_quoting_ids: Vec<i64> = quoted_statuses.iter().map(|qs| qs.id).collect();
+    // (status_id → (state, quoted_status_id)) for nested quotes
+    let nested_quote_info: HashMap<i64, (String, i64)> = if !nested_quoting_ids.is_empty() {
         let rows = sqlx::query!(
-            "SELECT status_id, state FROM quotes WHERE status_id = ANY($1::bigint[])",
+            "SELECT status_id, state, quoted_status_id FROM quotes WHERE status_id = ANY($1::bigint[]) AND quoted_status_id IS NOT NULL",
             &nested_quoting_ids,
         )
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
-        rows.into_iter().map(|r| (r.status_id, crate::db::models::quote_state::to_str(r.state).to_owned())).collect()
+        rows.into_iter()
+            .filter_map(|r| r.quoted_status_id.map(|qid| (r.status_id, (crate::db::models::quote_state::to_str(r.state).to_owned(), qid))))
+            .collect()
     } else {
         HashMap::new()
     };
@@ -2315,10 +2290,9 @@ pub async fn batch_quote_data(
         api.poll = polls_map.get(&qs.id).cloned();
         api.card = cards_map.get(&qs.id).cloned();
         // Attach shallow quote info for the nested quote (ShallowQuoteSerializer behavior)
-        if let Some(nested_qid) = qs.quote_of_id {
-            let state_str = nested_quote_states.get(&qs.id).cloned().unwrap_or_else(|| "accepted".to_string());
+        if let Some((state_str, nested_qid)) = nested_quote_info.get(&qs.id) {
             api.quote = Some(super::types::QuoteInfo {
-                state: state_str,
+                state: state_str.clone(),
                 quoted_status: None,
                 quoted_status_id: Some(nested_qid.to_string()),
             });
@@ -2332,7 +2306,7 @@ pub async fn batch_quote_data(
     // as viewer-computed overrides per Mastodon's REST::BaseQuoteSerializer logic.
     let mut result: HashMap<i64, super::types::QuoteInfo> = HashMap::new();
     for s in statuses {
-        let Some(qid) = s.quote_of_id else { continue };
+        let Some(&qid) = quote_of.get(&s.id) else { continue };
         let state_str = quote_states.get(&s.id).cloned().unwrap_or_else(|| "accepted".to_string());
 
         // Derive effective display state and whether to include the quoted status body
@@ -2876,14 +2850,22 @@ pub async fn move_account(
         return Err(AppError::Unauthorized);
     }
 
-    // Look up target account URI (by acct handle or URL)
+    // Look up target account by URI/acct handle
     let target_uri = form.acct.clone();
-    sqlx::query!(
-        "UPDATE accounts SET moved_to_uri = $1, updated_at = now() WHERE id = $2",
-        target_uri, auth.account_id,
+    let moved_account = sqlx::query_scalar!(
+        "SELECT id FROM accounts WHERE uri = $1 OR (username = $1 AND domain IS NULL) LIMIT 1",
+        target_uri,
     )
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
+    if let Some(moved_id) = moved_account {
+        sqlx::query!(
+            "UPDATE accounts SET moved_to_account_id = $1, updated_at = now() WHERE id = $2",
+            moved_id, auth.account_id,
+        )
+        .execute(&state.db)
+        .await?;
+    }
 
     Ok(Json(serde_json::json!({})))
 }
@@ -3014,13 +2996,13 @@ pub async fn remove_from_followers(
 
     if deleted.is_some() {
         sqlx::query!(
-            "UPDATE accounts SET followers_count = GREATEST(followers_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET followers_count = GREATEST(followers_count - 1, 0), updated_at = now() WHERE account_id = $1",
             auth.account_id
         )
         .execute(&state.db)
         .await?;
         sqlx::query!(
-            "UPDATE accounts SET following_count = GREATEST(following_count - 1, 0) WHERE id = $1",
+            "UPDATE account_stats SET following_count = GREATEST(following_count - 1, 0), updated_at = now() WHERE account_id = $1",
             requester_id
         )
         .execute(&state.db)
@@ -3247,16 +3229,16 @@ pub async fn get_profile(
     let profile = super::types::Profile {
         id: a.id.to_string(),
         display_name: a.display_name.clone(),
-        note: a.note_text.clone(),
+        note: a.note.clone(),
         fields,
         formatted_note: a.note.clone(),
         formatted_fields,
-        avatar: a.avatar.clone(),
-        avatar_static: a.avatar_static.clone(),
-        header: a.header.clone(),
-        header_static: a.header_static.clone(),
+        avatar: Some(super::convert::account_avatar_url_for(a)),
+        avatar_static: Some(super::convert::account_avatar_url_for(a)),
+        header: Some(super::convert::account_header_url_for(a)),
+        header_static: Some(super::convert::account_header_url_for(a)),
         locked: a.locked,
-        bot: a.bot,
+        bot: a.actor_type.as_deref() == Some("Service"),
         hide_collections: a.hide_collections,
         discoverable: a.discoverable,
         indexable: a.indexable,
@@ -3274,7 +3256,7 @@ pub async fn delete_profile_avatar(
 ) -> AppResult<Json<super::types::Account>> {
     auth.require_scope("write:accounts")?;
     sqlx::query!(
-        "UPDATE accounts SET avatar = NULL, avatar_static = NULL WHERE id = $1",
+        "UPDATE accounts SET avatar_file_name = NULL, avatar_content_type = NULL, avatar_file_size = NULL, avatar_updated_at = NULL WHERE id = $1",
         auth.account_id,
     )
     .execute(&state.db)
@@ -3300,7 +3282,7 @@ pub async fn delete_profile_header(
 ) -> AppResult<Json<super::types::Account>> {
     auth.require_scope("write:accounts")?;
     sqlx::query!(
-        "UPDATE accounts SET header = NULL, header_static = NULL WHERE id = $1",
+        "UPDATE accounts SET header_file_name = NULL, header_content_type = NULL, header_file_size = NULL, header_updated_at = NULL WHERE id = $1",
         auth.account_id,
     )
     .execute(&state.db)
@@ -3890,12 +3872,13 @@ pub async fn build_status_with_app(
     api.emojis = status_emojis;
     api.poll = fetch_status_poll(state, id, viewer_account_id).await?;
     api.card = fetch_status_card(state, id).await;
-    // Populate quoted status if present
-    if let Some(quote_of_id) = s.quote_of_id {
+    // Populate quoted status if present (check quotes table)
+    {
         let quote_statuses = vec![s.clone()];
         let qmap = batch_quote_data(state, &quote_statuses, viewer_account_id).await?;
-        api.quote = qmap.into_values().next();
-        let _ = quote_of_id; // consumed by batch_quote_data via s
+        if let Some(qi) = qmap.into_values().next() {
+            api.quote = Some(qi);
+        }
     }
     if let Some(ref mut rb) = api.reblog {
         let rid: i64 = rb.id.parse().unwrap_or(0);
@@ -4141,7 +4124,10 @@ pub async fn batch_account_roles(
         return std::collections::HashMap::new();
     }
     sqlx::query!(
-        "SELECT account_id, role FROM users WHERE account_id = ANY($1::bigint[])",
+        r#"SELECT u.account_id, COALESCE(ur.position, 0) AS "role_position!: i64"
+           FROM users u
+           LEFT JOIN user_roles ur ON ur.id = u.role_id
+           WHERE u.account_id = ANY($1::bigint[])"#,
         &local_ids,
     )
     .fetch_all(&state.db)
@@ -4149,10 +4135,12 @@ pub async fn batch_account_roles(
     .unwrap_or_default()
     .into_iter()
     .map(|r| {
-        let roles = match r.role.as_str() {
-            "admin" => vec![super::types::AccountRole { id: "1".into(), name: "Admin".into(), color: "#6364ff".into() }],
-            "moderator" => vec![super::types::AccountRole { id: "2".into(), name: "Moderator".into(), color: "#6364ff".into() }],
-            _ => vec![],
+        let roles = if r.role_position >= 1000 {
+            vec![super::types::AccountRole { id: "1".into(), name: "Admin".into(), color: "#6364ff".into() }]
+        } else if r.role_position >= 100 {
+            vec![super::types::AccountRole { id: "2".into(), name: "Moderator".into(), color: "#6364ff".into() }]
+        } else {
+            vec![]
         };
         (r.account_id, roles)
     })
