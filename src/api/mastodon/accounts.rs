@@ -446,6 +446,17 @@ pub async fn get_account_statuses(
                    JOIN tags t ON t.id = st.tag_id
                    WHERE st.status_id = statuses.id AND t.name = $9
                  ))
+                 AND ($11::bigint IS NULL OR reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM blocks b
+                   JOIN statuses orig ON orig.id = statuses.reblog_of_id
+                   WHERE b.account_id = $11 AND b.target_account_id = orig.account_id
+                 ))
+                 AND ($11::bigint IS NULL OR reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM account_domain_blocks adb
+                   JOIN statuses orig ON orig.id = statuses.reblog_of_id
+                   JOIN accounts orig_a ON orig_a.id = orig.account_id
+                   WHERE adb.account_id = $11 AND adb.domain = orig_a.domain
+                 ))
                ORDER BY id ASC
                LIMIT $7"#,
             account.id,
@@ -496,6 +507,17 @@ pub async fn get_account_statuses(
                    SELECT 1 FROM statuses_tags st
                    JOIN tags t ON t.id = st.tag_id
                    WHERE st.status_id = statuses.id AND t.name = $10
+                 ))
+                 AND ($12::bigint IS NULL OR reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM blocks b
+                   JOIN statuses orig ON orig.id = statuses.reblog_of_id
+                   WHERE b.account_id = $12 AND b.target_account_id = orig.account_id
+                 ))
+                 AND ($12::bigint IS NULL OR reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM account_domain_blocks adb
+                   JOIN statuses orig ON orig.id = statuses.reblog_of_id
+                   JOIN accounts orig_a ON orig_a.id = orig.account_id
+                   WHERE adb.account_id = $12 AND adb.domain = orig_a.domain
                  ))
                ORDER BY id DESC
                LIMIT $8"#,

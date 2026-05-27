@@ -660,18 +660,28 @@ async fn list_timeline_from_db(
 
 // ── GET /api/v1/timelines/tag/:hashtag ───────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct TagTimelineQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    pub local: Option<bool>,
+    pub only_media: Option<bool>,
+}
+
 pub async fn tag_timeline(
     State(state): State<AppState>,
     Path(hashtag): Path<String>,
     uri: Uri,
     req_headers: HeaderMap,
-    Query(q): Query<PaginationParams>,
+    Query(q): Query<TagTimelineQuery>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<impl IntoResponse> {
-    let limit = q.limit_clamped(20, 40);
-    let max_id = q.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let since_id = q.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
-    let min_id = q.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let limit = q.pagination.limit_clamped(20, 40);
+    let max_id = q.pagination.max_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let since_id = q.pagination.since_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let min_id = q.pagination.min_id.as_deref().and_then(|s| s.parse::<i64>().ok());
+    let local_only = q.local.unwrap_or(false);
+    let only_media = q.only_media.unwrap_or(false);
     let tag_name = hashtag.to_lowercase();
 
     let collect_tag_filter = |key_plain: &str, key_bracket: &str| -> Option<Vec<String>> {
@@ -685,10 +695,21 @@ pub async fn tag_timeline(
     let all_tags = collect_tag_filter("all", "all[]");
     let none_tags = collect_tag_filter("none", "none[]");
 
+    // $1=tag_name $4=any $5=all $6=none $7=local_only $8=only_media $9=viewer_id
     let base_conditions = r#"
+               JOIN accounts a ON a.id = s.account_id
                WHERE lower(t.name) = $1
                  AND s.visibility = 0
                  AND s.deleted_at IS NULL
+                 AND a.suspended_at IS NULL
+                 AND a.silenced_at IS NULL
+                 AND (a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM domain_blocks db WHERE db.domain = a.domain
+                 ))
+                 AND (NOT $7::bool OR a.domain IS NULL)
+                 AND (NOT $8::bool OR EXISTS (
+                     SELECT 1 FROM media_attachments WHERE status_id = s.id
+                 ))
                  AND ($4::text[] IS NULL OR EXISTS (
                      SELECT 1 FROM statuses_tags st2
                      JOIN tags t2 ON t2.id = st2.tag_id
@@ -703,6 +724,20 @@ pub async fn tag_timeline(
                      SELECT 1 FROM statuses_tags st2
                      JOIN tags t2 ON t2.id = st2.tag_id
                      WHERE st2.status_id = s.id AND lower(t2.name) = ANY($6)
+                 ))
+                 AND ($9::bigint IS NULL OR a.domain IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM account_domain_blocks udb
+                     WHERE udb.account_id = $9 AND udb.domain = a.domain
+                 ))
+                 AND ($9::bigint IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM blocks b
+                     WHERE (b.account_id = $9 AND b.target_account_id = s.account_id)
+                        OR (b.account_id = s.account_id AND b.target_account_id = $9)
+                 ))
+                 AND ($9::bigint IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM mutes mu
+                     WHERE mu.account_id = $9 AND mu.target_account_id = s.account_id
+                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
                  ))"#;
 
     let viewer_id: Option<i64> = auth.as_ref().map(|Extension(a)| a.account_id);
@@ -714,16 +749,6 @@ pub async fn tag_timeline(
                JOIN tags t ON t.id = st.tag_id
                {base_conditions}
                  AND ($2::bigint IS NULL OR s.id > $2)
-                 AND ($7::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $7 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $7)
-                 ))
-                 AND ($7::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $7 AND mu.target_account_id = s.account_id
-                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
-                 ))
                ORDER BY s.id ASC
                LIMIT $3"#
         );
@@ -734,6 +759,8 @@ pub async fn tag_timeline(
             .bind(&any_tags)
             .bind(&all_tags)
             .bind(&none_tags)
+            .bind(local_only)
+            .bind(only_media)
             .bind(viewer_id)
             .fetch_all(&state.db)
             .await?
@@ -745,18 +772,8 @@ pub async fn tag_timeline(
                {base_conditions}
                  AND ($2::bigint IS NULL OR s.id < $2)
                  AND ($3::bigint IS NULL OR s.id > $3)
-                 AND ($8::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM blocks b
-                     WHERE (b.account_id = $8 AND b.target_account_id = s.account_id)
-                        OR (b.account_id = s.account_id AND b.target_account_id = $8)
-                 ))
-                 AND ($8::bigint IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM mutes mu
-                     WHERE mu.account_id = $8 AND mu.target_account_id = s.account_id
-                       AND (mu.expires_at IS NULL OR mu.expires_at > now())
-                 ))
                ORDER BY s.id DESC
-               LIMIT $7"#
+               LIMIT $10"#
         );
         sqlx::query_as(&sql)
             .bind(&tag_name)
@@ -765,8 +782,10 @@ pub async fn tag_timeline(
             .bind(&any_tags)
             .bind(&all_tags)
             .bind(&none_tags)
-            .bind(limit)
+            .bind(local_only)
+            .bind(only_media)
             .bind(viewer_id)
+            .bind(limit)
             .fetch_all(&state.db)
             .await?
     };
