@@ -188,7 +188,11 @@ async fn handle_follow(
         }
 
         // Send Accept back to the remote follower
-        if let Some(private_key) = target.private_key.filter(|s| !s.is_empty()) {
+        let accept_private_key = target.private_key.filter(|s| !s.is_empty());
+        if accept_private_key.is_none() {
+            tracing::warn!(username = %target.username, "local account has no private key; cannot send Accept");
+        }
+        if let Some(private_key) = accept_private_key {
             let follower_inbox = sqlx::query_scalar!(
                 r#"SELECT CASE WHEN shared_inbox_url IS NOT NULL AND shared_inbox_url <> ''
                                THEN shared_inbox_url ELSE inbox_url END
@@ -199,32 +203,38 @@ async fn handle_follow(
             .await?
             .flatten();
 
-            if let Some(inbox) = follower_inbox.filter(|s| !s.is_empty()) {
-                let actor_url =
-                    format!("https://{}/users/{}", instance.domain, target.username);
-                let accept_id = format!(
-                    "https://{}/activities/{}",
-                    instance.domain,
-                    crate::snowflake::next_id()
-                );
-                let accept = feder_vocab::accept_follow(
-                    &accept_id,
-                    &actor_url,
-                    activity_uri,
-                    actor_uri,
-                    &actor_url,
-                );
-                let key_id = format!("{}#main-key", actor_url);
-                let http = state.http.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = crate::federation::delivery::deliver(
-                        &http, &accept, &inbox, &key_id, &private_key,
-                    )
-                    .await
-                    {
-                        tracing::warn!(inbox, error = %e, "failed to deliver Accept");
-                    }
-                });
+            match follower_inbox.filter(|s| !s.is_empty()) {
+                None => {
+                    tracing::warn!(actor_uri, "cannot send Accept: remote actor has no inbox URL");
+                }
+                Some(inbox) => {
+                    let actor_url =
+                        format!("https://{}/users/{}", instance.domain, target.username);
+                    let accept_id = format!(
+                        "https://{}/activities/{}",
+                        instance.domain,
+                        crate::snowflake::next_id()
+                    );
+                    let accept = feder_vocab::accept_follow(
+                        &accept_id,
+                        &actor_url,
+                        activity_uri,
+                        actor_uri,
+                        &actor_url,
+                    );
+                    let key_id = format!("{}#main-key", actor_url);
+                    let http = state.http.clone();
+                    tracing::debug!(inbox, actor_uri, "delivering Accept");
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::federation::delivery::deliver(
+                            &http, &accept, &inbox, &key_id, &private_key,
+                        )
+                        .await
+                        {
+                            tracing::warn!(inbox, error = %e, "failed to deliver Accept");
+                        }
+                    });
+                }
             }
         }
     }
@@ -792,6 +802,8 @@ pub async fn resolve_or_fetch_remote_account(
            ON CONFLICT (uri) WHERE uri != '' DO UPDATE
              SET display_name = EXCLUDED.display_name,
                  note = EXCLUDED.note,
+                 inbox_url = EXCLUDED.inbox_url,
+                 shared_inbox_url = EXCLUDED.shared_inbox_url,
                  public_key = EXCLUDED.public_key,
                  updated_at = now()
            RETURNING id"#,

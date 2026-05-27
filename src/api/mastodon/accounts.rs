@@ -834,7 +834,11 @@ pub async fn follow_account(
         .execute(&state.db)
         .await?;
 
-        if let Some(private_key) = requester.private_key.filter(|s| !s.is_empty()) {
+        let follow_private_key = requester.private_key.filter(|s| !s.is_empty());
+        if follow_private_key.is_none() {
+            tracing::warn!(username = %requester.username, "local account has no private key; cannot deliver Follow");
+        }
+        if let Some(private_key) = follow_private_key {
             let actor_url = format!(
                 "https://{}/users/{}",
                 state.instance.domain, requester.username
@@ -846,18 +850,50 @@ pub async fn follow_account(
             } else {
                 target.shared_inbox_url.clone()
             };
-            if !inbox.is_empty() {
-                let http = state.http.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = crate::federation::delivery::deliver(
-                        &http, &follow_activity, &inbox, &key_id, &private_key,
-                    )
-                    .await
-                    {
-                        tracing::warn!(inbox, error = %e, "failed to deliver Follow");
+            let target_uri = target.uri.clone();
+            // Re-fetch actor if inbox URL is missing (stale cache), then deliver.
+            let state2 = state.clone();
+            tokio::spawn(async move {
+                let inbox = if inbox.is_empty() {
+                    tracing::warn!(target_uri, "inbox URL missing; re-fetching actor profile");
+                    match crate::api::ap::inbox::resolve_or_fetch_remote_account(&state2, &target_uri).await {
+                        Err(e) => {
+                            tracing::warn!(target_uri, error = %e, "failed to re-fetch actor; dropping Follow");
+                            return;
+                        }
+                        Ok(_) => {
+                            let row = sqlx::query!(
+                                r#"SELECT CASE WHEN shared_inbox_url <> '' THEN shared_inbox_url ELSE inbox_url END AS inbox
+                                   FROM accounts WHERE uri = $1"#,
+                                target_uri,
+                            )
+                            .fetch_optional(&state2.db)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|r| r.inbox)
+                            .filter(|s| !s.is_empty());
+                            match row {
+                                Some(i) => i,
+                                None => {
+                                    tracing::warn!(target_uri, "still no inbox URL after re-fetch; dropping Follow");
+                                    return;
+                                }
+                            }
+                        }
                     }
-                });
-            }
+                } else {
+                    inbox
+                };
+                tracing::debug!(inbox, target_uri, "delivering Follow");
+                if let Err(e) = crate::federation::delivery::deliver(
+                    &state2.http, &follow_activity, &inbox, &key_id, &private_key,
+                )
+                .await
+                {
+                    tracing::warn!(inbox, error = %e, "failed to deliver Follow");
+                }
+            });
         }
 
         return build_relationship(&state, auth.account_id, target_id).await.map(Json);
@@ -2207,8 +2243,11 @@ pub async fn authorize_follow_request(
                     } else {
                         requester.shared_inbox_url.clone()
                     };
-                    if !inbox.is_empty() {
+                    if inbox.is_empty() {
+                        tracing::warn!(requester_uri = %requester.uri, "cannot deliver Accept: remote actor has no inbox URL");
+                    } else {
                         let http = state.http.clone();
+                        tracing::debug!(inbox, requester_uri = %requester.uri, "delivering Accept");
                         tokio::spawn(async move {
                             if let Err(e) = crate::federation::delivery::deliver(
                                 &http, &activity, &inbox, &key_id, &private_key,
