@@ -329,7 +329,7 @@ pub async fn create_and_push(
         });
     }
 
-    if matches!(notification_type, "mention" | "follow" | "favourite" | "reblog") {
+    if matches!(notification_type, "follow" | "favourite" | "reblog") {
         let email_info = sqlx::query!(
             r#"SELECT u.email, a.username, a.display_name
                FROM users u
