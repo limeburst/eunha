@@ -131,10 +131,16 @@ pub async fn log_failures(req: Request, next: Next) -> Response {
     let is_multipart = content_type.contains("multipart");
 
     let (parts, body) = req.into_parts();
+    // Buffer text bodies fully so the handler always receives the complete body.
+    // The log preview is capped to 2 KB; the 4 MB limit guards against runaway requests.
     let (body_preview, rebuilt) = if is_text && !is_multipart {
-        match axum::body::to_bytes(body, 4096).await {
+        match axum::body::to_bytes(body, 4 * 1024 * 1024).await {
             Ok(bytes) => {
-                let preview = String::from_utf8_lossy(&bytes).into_owned();
+                let preview = if bytes.len() > 2048 {
+                    format!("{}…({} bytes)", String::from_utf8_lossy(&bytes[..2048]), bytes.len())
+                } else {
+                    String::from_utf8_lossy(&bytes).into_owned()
+                };
                 let new_body = axum::body::Body::from(bytes);
                 (Some(preview), Request::from_parts(parts, new_body))
             }
