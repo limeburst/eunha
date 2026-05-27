@@ -845,11 +845,7 @@ pub async fn follow_account(
             );
             let key_id = format!("{}#main-key", actor_url);
             let follow_activity = feder_vocab::follow(&follow_uri, &actor_url, &target.uri);
-            let inbox = if target.shared_inbox_url.is_empty() {
-                target.inbox_url.clone()
-            } else {
-                target.shared_inbox_url.clone()
-            };
+            let inbox = target.inbox_url.clone();
             let target_uri = target.uri.clone();
             // Re-fetch actor if inbox URL is missing (stale cache), then deliver.
             let state2 = state.clone();
@@ -1022,11 +1018,7 @@ pub async fn unfollow_account(
             let undo = feder_vocab::undo_follow(
                 &undo_id, &actor_url, &follow_uri, &actor_url, &target.uri,
             );
-            let inbox = if target.shared_inbox_url.is_empty() {
-                target.inbox_url.clone()
-            } else {
-                target.shared_inbox_url.clone()
-            };
+            let inbox = target.inbox_url.clone();
             if !inbox.is_empty() {
                 let http = state.http.clone();
                 tokio::spawn(async move {
@@ -2238,11 +2230,7 @@ pub async fn authorize_follow_request(
                         &requester.uri,
                         &accepter_actor_url,
                     );
-                    let inbox = if requester.shared_inbox_url.is_empty() {
-                        requester.inbox_url.clone()
-                    } else {
-                        requester.shared_inbox_url.clone()
-                    };
+                    let inbox = requester.inbox_url.clone();
                     if inbox.is_empty() {
                         tracing::warn!(requester_uri = %requester.uri, "cannot deliver Accept: remote actor has no inbox URL");
                     } else {
@@ -2315,11 +2303,7 @@ pub async fn reject_follow_request(
                         &requester.uri,
                         &rejecter_actor_url,
                     );
-                    let inbox = if requester.shared_inbox_url.is_empty() {
-                        requester.inbox_url.clone()
-                    } else {
-                        requester.shared_inbox_url.clone()
-                    };
+                    let inbox = requester.inbox_url.clone();
                     if !inbox.is_empty() {
                         let http = state.http.clone();
                         tokio::spawn(async move {

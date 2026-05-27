@@ -195,14 +195,11 @@ async fn handle_follow(
         }
         if let Some(private_key) = accept_private_key {
             let follower_inbox = sqlx::query_scalar!(
-                r#"SELECT CASE WHEN shared_inbox_url IS NOT NULL AND shared_inbox_url <> ''
-                               THEN shared_inbox_url ELSE inbox_url END
-                   FROM accounts WHERE id = $1"#,
+                "SELECT inbox_url FROM accounts WHERE id = $1",
                 follower_id,
             )
             .fetch_optional(&state.db)
-            .await?
-            .flatten();
+            .await?;
 
             match follower_inbox.filter(|s| !s.is_empty()) {
                 None => {
