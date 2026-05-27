@@ -16,6 +16,8 @@ pub async fn deliver(
     let body = serde_json::to_vec(activity)?;
     let headers = signature::sign_request("post", inbox_url, &body, key_id, private_key_pem)?;
 
+    tracing::debug!(inbox = inbox_url, body = %activity, "delivering ActivityPub activity");
+
     let resp = http
         .post(inbox_url)
         .header("Content-Type", "application/activity+json")
@@ -33,6 +35,7 @@ pub async fn deliver(
         anyhow::bail!("HTTP {} from {}: {}", status.as_u16(), inbox_url, text);
     }
 
+    tracing::debug!(inbox = inbox_url, status = status.as_u16(), "federation delivery succeeded");
     Ok(())
 }
 

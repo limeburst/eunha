@@ -302,12 +302,13 @@ async fn handle_create(
         Err(_) => return Ok(()),
     };
 
-    // Parse tag[] array once: mentions, hashtags, emojis
-    let tags_arr: Vec<Value> = object
-        .get("tag")
-        .and_then(|t| t.as_array())
-        .cloned()
-        .unwrap_or_default();
+    // Parse tag array once: mentions, hashtags, emojis.
+    // ActivityPub allows "tag" to be either a single object or an array.
+    let tags_arr: Vec<Value> = match object.get("tag") {
+        Some(Value::Array(arr)) => arr.clone(),
+        Some(obj @ Value::Object(_)) => vec![obj.clone()],
+        _ => vec![],
+    };
 
     let mention_hrefs: Vec<String> = tags_arr
         .iter()
