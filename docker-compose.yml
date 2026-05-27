@@ -11,7 +11,7 @@ services:
       DATABASE_URL: postgres://limeburst@host.docker.internal/eunha
       BIND_ADDRESS: 0.0.0.0:3000
       CONSOLE_DOMAIN: ${CONSOLE_DOMAIN}
-      RUST_LOG: info
+      RUST_LOG: eunha=debug,tower_http=info,sqlx=warn
     ports:
       - "50000:3000"
     volumes:
