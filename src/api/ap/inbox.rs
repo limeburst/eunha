@@ -1,7 +1,6 @@
 use axum::{
     extract::{Extension, State},
     http::StatusCode,
-    Json,
 };
 use serde_json::Value;
 
@@ -15,18 +14,46 @@ use crate::{
 pub async fn shared_inbox(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
-    Json(activity): Json<Value>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
 ) -> AppResult<StatusCode> {
+    let activity: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return Ok(StatusCode::BAD_REQUEST),
+    };
+
     let activity_type = activity.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
     tracing::debug!(
         instance = %instance.domain,
-        activity_type = activity_type,
+        activity_type,
         "received ActivityPub activity"
     );
 
-    // TODO: verify HTTP Signature before processing
-    // For now, queue the activity for async processing
+    // Verify HTTP Signature; log failures but don't reject yet.
+    if let Some(sig_header) = headers.get("signature") {
+        if let Ok(sig_val) = sig_header.to_str() {
+            if let Some(kid) = feder_core::signature::key_id_from_header(sig_val) {
+                let actor_url = kid.split('#').next().unwrap_or(kid);
+                match fetch_public_key(&state, actor_url).await {
+                    Ok(pem) => {
+                        let hdr_vec = crate::federation::signature::headers_to_vec(&headers);
+                        let hdr_refs: Vec<(&str, &str)> =
+                            hdr_vec.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                        if let Err(e) = feder_core::signature::verify_request(
+                            "post", "/inbox", &hdr_refs, &body, &pem,
+                        ) {
+                            tracing::warn!(key_id = kid, error = %e, "HTTP Signature verification failed");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(key_id = kid, error = %e, "could not fetch public key for verification");
+                    }
+                }
+            }
+        }
+    }
+
     match activity_type {
         "Follow" => handle_follow(&state, &instance, &activity).await?,
         "Undo" => handle_undo(&state, &instance, &activity).await?,
@@ -45,53 +72,115 @@ pub async fn shared_inbox(
     Ok(StatusCode::ACCEPTED)
 }
 
+async fn fetch_public_key(state: &AppState, actor_url: &str) -> anyhow::Result<String> {
+    if let Some(pem) = sqlx::query_scalar!(
+        "SELECT public_key FROM accounts WHERE uri = $1 AND public_key != ''",
+        actor_url,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    {
+        return Ok(pem);
+    }
+
+    let resp = state
+        .http
+        .get(actor_url)
+        .header("Accept", "application/activity+json, application/ld+json")
+        .send()
+        .await?;
+    let actor: Value = resp.json().await?;
+    let pem = actor
+        .get("publicKey")
+        .and_then(|k| k.get("publicKeyPem"))
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| anyhow::anyhow!("no publicKeyPem"))?
+        .to_string();
+    Ok(pem)
+}
+
 async fn handle_follow(
     state: &AppState,
-    _instance: &crate::config::InstanceConfig,
+    instance: &crate::config::InstanceConfig,
     activity: &Value,
 ) -> AppResult<()> {
     let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
     let object_uri = activity.get("object").and_then(|o| o.as_str()).unwrap_or("");
     let activity_uri = activity.get("id").and_then(|i| i.as_str()).unwrap_or("");
 
-    // Resolve the target local account
     let target = sqlx::query!(
-        "SELECT id, locked FROM accounts WHERE uri = $1",
+        "SELECT id, locked, username, private_key FROM accounts WHERE uri = $1",
         object_uri,
     )
     .fetch_optional(&state.db)
     .await?;
-
     let Some(target) = target else { return Ok(()) };
 
-    // Resolve or fetch the remote actor
-    let follower = resolve_or_fetch_remote_account(state, actor_uri).await?;
+    let follower_id = resolve_or_fetch_remote_account(state, actor_uri).await?;
 
     if target.locked {
-        // Locked account: insert as a pending follow request
         sqlx::query!(
             r#"INSERT INTO follow_requests (account_id, target_account_id, uri)
                VALUES ($1, $2, $3)
                ON CONFLICT (account_id, target_account_id) DO UPDATE SET uri = EXCLUDED.uri"#,
-            follower,
+            follower_id,
             target.id,
             activity_uri,
         )
         .execute(&state.db)
         .await?;
     } else {
-        // Unlocked account: insert as an accepted follow directly
         sqlx::query!(
             r#"INSERT INTO follows (account_id, target_account_id, uri)
                VALUES ($1, $2, $3)
                ON CONFLICT (account_id, target_account_id) DO UPDATE SET uri = EXCLUDED.uri"#,
-            follower,
+            follower_id,
             target.id,
             activity_uri,
         )
         .execute(&state.db)
         .await?;
-        // TODO: queue outgoing Accept activity via federation worker
+
+        // Send Accept back to the remote follower
+        if let Some(private_key) = target.private_key.filter(|s| !s.is_empty()) {
+            let follower_inbox = sqlx::query_scalar!(
+                r#"SELECT CASE WHEN shared_inbox_url IS NOT NULL AND shared_inbox_url <> ''
+                               THEN shared_inbox_url ELSE inbox_url END
+                   FROM accounts WHERE id = $1"#,
+                follower_id,
+            )
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+            if let Some(inbox) = follower_inbox.filter(|s| !s.is_empty()) {
+                let actor_url =
+                    format!("https://{}/users/{}", instance.domain, target.username);
+                let accept_id = format!(
+                    "https://{}/activities/{}",
+                    instance.domain,
+                    crate::snowflake::next_id()
+                );
+                let accept = feder_vocab::accept_follow(
+                    &accept_id,
+                    &actor_url,
+                    activity_uri,
+                    actor_uri,
+                    &actor_url,
+                );
+                let key_id = format!("{}#main-key", actor_url);
+                let http = state.http.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::federation::delivery::deliver(
+                        &http, &accept, &inbox, &key_id, &private_key,
+                    )
+                    .await
+                    {
+                        tracing::warn!(inbox, error = %e, "failed to deliver Accept");
+                    }
+                });
+            }
+        }
     }
 
     Ok(())
@@ -106,8 +195,10 @@ async fn handle_undo(
     let object_type = object.and_then(|o| o.get("type")).and_then(|t| t.as_str());
 
     if object_type == Some("Follow") {
-        let follow_uri = object.and_then(|o| o.get("id")).and_then(|i| i.as_str()).unwrap_or("");
-        // Remove from both tables (might be accepted or still pending)
+        let follow_uri = object
+            .and_then(|o| o.get("id"))
+            .and_then(|i| i.as_str())
+            .unwrap_or("");
         sqlx::query!("DELETE FROM follows WHERE uri = $1", follow_uri)
             .execute(&state.db)
             .await?;
@@ -139,31 +230,43 @@ async fn handle_create(
         return Ok(());
     }
 
-    // Resolve the author account
     let account_id = match resolve_or_fetch_remote_account(state, actor_uri).await {
         Ok(id) => id,
         Err(_) => return Ok(()),
     };
 
-    let text = object.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-    let spoiler_text = object.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let sensitive = object.get("sensitive").and_then(|s| s.as_bool()).unwrap_or(false);
+    let text = object
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    let spoiler_text = object
+        .get("summary")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let sensitive = object
+        .get("sensitive")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
     let url = object.get("url").and_then(|u| u.as_str()).map(str::to_owned);
-    let published = object.get("published").and_then(|p| p.as_str())
+    let published = object
+        .get("published")
+        .and_then(|p| p.as_str())
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|t| t.with_timezone(&chrono::Utc));
 
-    // Determine visibility
-    let to = object.get("to").and_then(|v| v.as_array()).map(|a| {
-        a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()
-    }).unwrap_or_default();
+    let to = object
+        .get("to")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+        .unwrap_or_default();
     let visibility = if to.contains(&"https://www.w3.org/ns/activitystreams#Public") {
         crate::db::models::vis::PUBLIC
     } else {
         crate::db::models::vis::UNLISTED
     };
 
-    // Resolve in_reply_to
     let in_reply_to_uri = object.get("inReplyTo").and_then(|v| v.as_str());
     let in_reply_to_id: Option<i64> = if let Some(uri) = in_reply_to_uri {
         sqlx::query_scalar!("SELECT id FROM statuses WHERE uri = $1", uri)
@@ -175,8 +278,8 @@ async fn handle_create(
         None
     };
 
-    // Resolve quote_of_id from FEP-044f `quote` property or compat `quoteUrl`
-    let quote_uri = object.get("quote")
+    let quote_uri = object
+        .get("quote")
         .and_then(|v| v.as_str())
         .or_else(|| object.get("quoteUrl").and_then(|v| v.as_str()))
         .or_else(|| object.get("quoteUri").and_then(|v| v.as_str()))
@@ -215,11 +318,11 @@ async fn handle_create(
     .execute(&state.db)
     .await?;
 
-    // Insert into quotes table
     if let Some(qid) = quote_of_id {
         let _ = sqlx::query!(
             "INSERT INTO quotes (status_id, quoted_status_id, state) VALUES ($1, $2, 1) ON CONFLICT DO NOTHING",
-            status_id, qid,
+            status_id,
+            qid,
         )
         .execute(&state.db)
         .await;
@@ -234,7 +337,11 @@ async fn handle_delete(
     activity: &Value,
 ) -> AppResult<()> {
     let object_uri = activity.get("object").and_then(|o| {
-        if o.is_string() { o.as_str() } else { o.get("id").and_then(|i| i.as_str()) }
+        if o.is_string() {
+            o.as_str()
+        } else {
+            o.get("id").and_then(|i| i.as_str())
+        }
     });
 
     if let Some(uri) = object_uri {
@@ -250,11 +357,84 @@ async fn handle_delete(
 }
 
 async fn handle_announce(
-    _state: &AppState,
+    state: &AppState,
     _instance: &crate::config::InstanceConfig,
-    _activity: &Value,
+    activity: &Value,
 ) -> AppResult<()> {
-    // TODO: create boost (reblog) status
+    let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
+    let object = activity.get("object");
+    let announce_uri = activity.get("id").and_then(|i| i.as_str()).unwrap_or("");
+
+    // object can be a URI string or an embedded object
+    let boosted_uri = object.and_then(|o| {
+        if o.is_string() {
+            o.as_str()
+        } else {
+            o.get("id").and_then(|i| i.as_str())
+        }
+    });
+
+    let Some(boosted_uri) = boosted_uri else {
+        return Ok(());
+    };
+    if actor_uri.is_empty() || announce_uri.is_empty() {
+        return Ok(());
+    }
+
+    let booster_id = match resolve_or_fetch_remote_account(state, actor_uri).await {
+        Ok(id) => id,
+        Err(_) => return Ok(()),
+    };
+
+    // Find the boosted status in our database
+    let original = sqlx::query!(
+        "SELECT id FROM statuses WHERE uri = $1 AND deleted_at IS NULL",
+        boosted_uri,
+    )
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(original) = original else {
+        // We don't have this status locally; skip
+        return Ok(());
+    };
+
+    let published = activity
+        .get("published")
+        .and_then(|p| p.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+
+    let boost_id = crate::snowflake::next_id();
+    sqlx::query!(
+        r#"INSERT INTO statuses
+             (id, account_id, reblog_of_id, visibility, uri, url, created_at)
+           VALUES ($1, $2, $3, $4, $5, $5, $6)
+           ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING"#,
+        boost_id,
+        booster_id,
+        original.id,
+        crate::db::models::vis::PUBLIC,
+        announce_uri,
+        published,
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Update the original status's reblogs_count
+    let _ = sqlx::query!(
+        r#"INSERT INTO status_stats (status_id, reblogs_count, created_at, updated_at)
+           VALUES ($1, 1, now(), now())
+           ON CONFLICT (status_id) DO UPDATE
+             SET reblogs_count = (SELECT COUNT(*) FROM statuses
+                                  WHERE reblog_of_id = $1 AND deleted_at IS NULL),
+                 updated_at = now()"#,
+        original.id,
+    )
+    .execute(&state.db)
+    .await;
+
     Ok(())
 }
 
@@ -265,25 +445,29 @@ async fn handle_like(
 ) -> AppResult<()> {
     let actor_uri = activity.get("actor").and_then(|a| a.as_str()).unwrap_or("");
     let object_uri = activity.get("object").and_then(|o| o.as_str()).unwrap_or("");
-    let activity_uri = activity.get("id").and_then(|i| i.as_str()).unwrap_or("");
 
     let Some(status) = sqlx::query!("SELECT id FROM statuses WHERE uri = $1", object_uri)
         .fetch_optional(&state.db)
-        .await? else { return Ok(()) };
+        .await?
+    else {
+        return Ok(());
+    };
 
-    let Some(account_id) = sqlx::query_scalar!(
-        "SELECT id FROM accounts WHERE uri = $1", actor_uri
-    )
-    .fetch_optional(&state.db)
-    .await? else { return Ok(()) };
+    let Some(account_id) =
+        sqlx::query_scalar!("SELECT id FROM accounts WHERE uri = $1", actor_uri)
+            .fetch_optional(&state.db)
+            .await?
+    else {
+        return Ok(());
+    };
 
     sqlx::query!(
         "INSERT INTO favourites (account_id, status_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        account_id, status.id
+        account_id,
+        status.id
     )
     .execute(&state.db)
     .await?;
-    let _ = activity_uri; // no longer stored in favourites
 
     sqlx::query!(
         r#"INSERT INTO status_stats (status_id, favourites_count, created_at, updated_at)
@@ -307,12 +491,16 @@ async fn handle_accept_reject(
     let activity_type = activity.get("type").and_then(|t| t.as_str()).unwrap_or("");
     let object = activity.get("object");
     let follow_uri = object.and_then(|o| {
-        if o.is_string() { o.as_str() } else { o.get("id").and_then(|i| i.as_str()) }
+        if o.is_string() {
+            o.as_str()
+        } else {
+            o.get("id").and_then(|i| i.as_str())
+        }
     });
 
     if let Some(uri) = follow_uri {
         if activity_type == "Accept" {
-            // Promote follow_request → follows when remote accepts our follow
+            // Promote follow_request → follows when remote accepts our Follow
             let promoted = sqlx::query!(
                 "DELETE FROM follow_requests WHERE uri = $1 RETURNING account_id, target_account_id",
                 uri
@@ -323,13 +511,34 @@ async fn handle_accept_reject(
                 sqlx::query!(
                     r#"INSERT INTO follows (account_id, target_account_id, uri)
                        VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"#,
-                    row.account_id, row.target_account_id, uri
+                    row.account_id,
+                    row.target_account_id,
+                    uri
                 )
                 .execute(&state.db)
                 .await?;
+
+                // Update follower/following counts
+                let _ = sqlx::query!(
+                    r#"INSERT INTO account_stats (account_id, followers_count, created_at, updated_at)
+                       VALUES ($1, 1, now(), now())
+                       ON CONFLICT (account_id) DO UPDATE
+                         SET followers_count = account_stats.followers_count + 1, updated_at = now()"#,
+                    row.target_account_id,
+                )
+                .execute(&state.db)
+                .await;
+                let _ = sqlx::query!(
+                    r#"INSERT INTO account_stats (account_id, following_count, created_at, updated_at)
+                       VALUES ($1, 1, now(), now())
+                       ON CONFLICT (account_id) DO UPDATE
+                         SET following_count = account_stats.following_count + 1, updated_at = now()"#,
+                    row.account_id,
+                )
+                .execute(&state.db)
+                .await;
             }
         } else {
-            // Reject: remove the pending follow request
             sqlx::query!("DELETE FROM follow_requests WHERE uri = $1", uri)
                 .execute(&state.db)
                 .await?;
@@ -340,11 +549,77 @@ async fn handle_accept_reject(
 }
 
 async fn handle_update(
-    _state: &AppState,
+    state: &AppState,
     _instance: &crate::config::InstanceConfig,
-    _activity: &Value,
+    activity: &Value,
 ) -> AppResult<()> {
-    // TODO: handle actor updates, status edits
+    let object = match activity.get("object") {
+        Some(o) if o.is_object() => o,
+        _ => return Ok(()),
+    };
+
+    let obj_type = object.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    match obj_type {
+        "Person" | "Service" | "Application" | "Group" | "Organization" => {
+            let actor_uri = object.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            if actor_uri.is_empty() {
+                return Ok(());
+            }
+
+            let display_name = object
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+            let note = object
+                .get("summary")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string();
+            let inbox_url = object
+                .get("inbox")
+                .and_then(|i| i.as_str())
+                .unwrap_or("")
+                .to_string();
+            let shared_inbox_url = object
+                .get("endpoints")
+                .and_then(|e| e.get("sharedInbox"))
+                .and_then(|s| s.as_str())
+                .map(str::to_owned);
+            let public_key = object
+                .get("publicKey")
+                .and_then(|k| k.get("publicKeyPem"))
+                .and_then(|p| p.as_str())
+                .unwrap_or("")
+                .to_string();
+            let locked = object
+                .get("manuallyApprovesFollowers")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            sqlx::query!(
+                r#"UPDATE accounts
+                   SET display_name = $2, note = $3, inbox_url = $4,
+                       shared_inbox_url = $5, public_key = $6, locked = $7,
+                       updated_at = now()
+                   WHERE uri = $1 AND domain IS NOT NULL"#,
+                actor_uri,
+                display_name,
+                note,
+                inbox_url,
+                shared_inbox_url,
+                public_key,
+                locked,
+            )
+            .execute(&state.db)
+            .await?;
+        }
+        "Note" => {
+            // TODO: handle remote status edits (Update(Note))
+        }
+        _ => {}
+    }
+
     Ok(())
 }
 
@@ -360,36 +635,30 @@ async fn handle_quote_request(
         return Ok(());
     }
 
-    // Look up the local quoted status
     let Some(status) = sqlx::query!(
         "SELECT id, account_id, quote_approval_policy FROM statuses WHERE uri = $1 AND deleted_at IS NULL",
         object_uri,
     )
     .fetch_optional(&state.db)
-    .await? else { return Ok(()) };
+    .await?
+    else {
+        return Ok(());
+    };
 
-    // Look up or fetch the requesting remote account (ensure it exists locally)
-    if resolve_or_fetch_remote_account(state, actor_uri).await.is_err() {
+    if resolve_or_fetch_remote_account(state, actor_uri)
+        .await
+        .is_err()
+    {
         return Ok(());
     }
 
-    // Determine if the quoted status auto-approves quotes (0 = public auto-approve)
     let always_public = status.quote_approval_policy == 0;
-
     if always_public {
+        tracing::debug!(actor_uri, object_uri, "auto-accepting QuoteRequest");
         // TODO: send Accept(QuoteRequest) via federation worker
-        tracing::debug!(
-            actor_uri,
-            object_uri,
-            "auto-accepting QuoteRequest"
-        );
     } else {
+        tracing::debug!(actor_uri, object_uri, "queuing QuoteRequest for manual approval");
         // TODO: queue pending quote approval notification for the local account owner
-        tracing::debug!(
-            actor_uri,
-            object_uri,
-            "queuing QuoteRequest for manual approval"
-        );
     }
 
     Ok(())
@@ -405,11 +674,11 @@ pub async fn resolve_or_fetch_remote_account(
         actor_uri
     )
     .fetch_optional(&state.db)
-    .await? {
+    .await?
+    {
         return Ok(id);
     }
 
-    // Fetch the actor document
     let resp = state
         .http
         .get(actor_uri)
@@ -418,18 +687,44 @@ pub async fn resolve_or_fetch_remote_account(
         .await
         .map_err(|e| crate::error::AppError::Internal(e.into()))?;
 
-    let actor: Value = resp.json().await.map_err(|e| crate::error::AppError::Internal(e.into()))?;
+    let actor: Value = resp
+        .json()
+        .await
+        .map_err(|e| crate::error::AppError::Internal(e.into()))?;
 
-    let username = actor.get("preferredUsername").and_then(|u| u.as_str()).unwrap_or("unknown");
+    let username = actor
+        .get("preferredUsername")
+        .and_then(|u| u.as_str())
+        .unwrap_or("unknown");
     let domain = url::Url::parse(actor_uri)
         .ok()
         .and_then(|u| u.host_str().map(str::to_owned))
         .unwrap_or_default();
-    let display_name = actor.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-    let note = actor.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let url = actor.get("url").and_then(|u| u.as_str()).unwrap_or(actor_uri).to_string();
-    let inbox_url = actor.get("inbox").and_then(|i| i.as_str()).unwrap_or("").to_string();
-    let outbox_url = actor.get("outbox").and_then(|o| o.as_str()).unwrap_or("").to_string();
+    let display_name = actor
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .to_string();
+    let note = actor
+        .get("summary")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let url = actor
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or(actor_uri)
+        .to_string();
+    let inbox_url = actor
+        .get("inbox")
+        .and_then(|i| i.as_str())
+        .unwrap_or("")
+        .to_string();
+    let outbox_url = actor
+        .get("outbox")
+        .and_then(|o| o.as_str())
+        .unwrap_or("")
+        .to_string();
     let shared_inbox_url = actor
         .get("endpoints")
         .and_then(|e| e.get("sharedInbox"))
@@ -442,7 +737,7 @@ pub async fn resolve_or_fetch_remote_account(
         .unwrap_or("")
         .to_string();
 
-    let new_account_id = crate::snowflake::next_id();
+    let new_id = crate::snowflake::next_id();
     let id = sqlx::query_scalar!(
         r#"INSERT INTO accounts
              (id, username, domain, display_name, note, url, uri,
@@ -454,7 +749,7 @@ pub async fn resolve_or_fetch_remote_account(
                  public_key = EXCLUDED.public_key,
                  updated_at = now()
            RETURNING id"#,
-        new_account_id,
+        new_id,
         username,
         domain,
         display_name,

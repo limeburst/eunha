@@ -751,6 +751,58 @@ pub async fn follow_account(
     }
 
     let target = fetch_account(&state, target_id).await?;
+    let requester = fetch_account(&state, auth.account_id).await?;
+
+    // Remote account: always use follow_requests and send a Follow activity.
+    if target.domain.is_some() {
+        let follow_uri = format!(
+            "https://{}/users/{}/follows/{}",
+            state.instance.domain,
+            requester.username,
+            crate::snowflake::next_id()
+        );
+        sqlx::query!(
+            r#"INSERT INTO follow_requests (account_id, target_account_id, show_reblogs, notify, languages, uri)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (account_id, target_account_id) DO UPDATE SET uri = EXCLUDED.uri"#,
+            auth.account_id,
+            target_id,
+            show_reblogs,
+            notify,
+            &languages,
+            follow_uri,
+        )
+        .execute(&state.db)
+        .await?;
+
+        if let Some(private_key) = requester.private_key.filter(|s| !s.is_empty()) {
+            let actor_url = format!(
+                "https://{}/users/{}",
+                state.instance.domain, requester.username
+            );
+            let key_id = format!("{}#main-key", actor_url);
+            let follow_activity = feder_vocab::follow(&follow_uri, &actor_url, &target.uri);
+            let inbox = if target.shared_inbox_url.is_empty() {
+                target.inbox_url.clone()
+            } else {
+                target.shared_inbox_url.clone()
+            };
+            if !inbox.is_empty() {
+                let http = state.http.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::federation::delivery::deliver(
+                        &http, &follow_activity, &inbox, &key_id, &private_key,
+                    )
+                    .await
+                    {
+                        tracing::warn!(inbox, error = %e, "failed to deliver Follow");
+                    }
+                });
+            }
+        }
+
+        return build_relationship(&state, auth.account_id, target_id).await.map(Json);
+    }
 
     if target.locked {
         sqlx::query!(
@@ -760,7 +812,6 @@ pub async fn follow_account(
         )
         .execute(&state.db)
         .await?;
-        let requester = fetch_account(&state, auth.account_id).await?;
         push::create_and_push(
             &state, target_id, auth.account_id, "follow_request", None,
             format!("{} wants to follow you", requester.display_name),
@@ -790,16 +841,15 @@ pub async fn follow_account(
     .execute(&state.db)
     .await?;
 
-    let follower = fetch_account(&state, auth.account_id).await?;
     push::create_and_push(
         &state,
         target_id,
         auth.account_id,
         "follow",
         None,
-        format!("{} followed you", follower.display_name),
-        follower.acct().clone(),
-        super::convert::account_avatar_url_for(&follower),
+        format!("{} followed you", requester.display_name),
+        requester.acct().clone(),
+        super::convert::account_avatar_url_for(&requester),
     ).await;
 
     let mut redis = state.redis.clone();
@@ -824,16 +874,16 @@ pub async fn unfollow_account(
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
     auth.require_scope("write:follows")?;
-    // Delete accepted follow (and update counts)
-    let deleted_accepted = sqlx::query_scalar!(
-        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 RETURNING 1",
+
+    let deleted = sqlx::query!(
+        "DELETE FROM follows WHERE account_id = $1 AND target_account_id = $2 RETURNING uri",
         auth.account_id,
         target_id,
     )
     .fetch_optional(&state.db)
     .await?;
 
-    if deleted_accepted.is_some() {
+    if deleted.is_some() {
         sqlx::query!(
             "UPDATE account_stats SET followers_count = GREATEST(followers_count - 1, 0), updated_at = now() WHERE account_id = $1",
             target_id
@@ -847,13 +897,53 @@ pub async fn unfollow_account(
         .execute(&state.db)
         .await?;
     } else {
-        // Delete pending follow request if present
         sqlx::query!(
             "DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2",
-            auth.account_id, target_id,
+            auth.account_id,
+            target_id,
         )
         .execute(&state.db)
         .await?;
+    }
+
+    // Send Undo(Follow) to remote target
+    let target = fetch_account(&state, target_id).await?;
+    if target.domain.is_some() {
+        let requester = fetch_account(&state, auth.account_id).await?;
+        if let Some(private_key) = requester.private_key.filter(|s| !s.is_empty()) {
+            let actor_url = format!(
+                "https://{}/users/{}",
+                state.instance.domain, requester.username
+            );
+            let key_id = format!("{}#main-key", actor_url);
+            let follow_uri = deleted
+                .and_then(|r| r.uri)
+                .unwrap_or_else(|| actor_url.clone());
+            let undo_id = format!(
+                "https://{}/activities/{}",
+                state.instance.domain,
+                crate::snowflake::next_id()
+            );
+            let undo = feder_vocab::undo_follow(
+                &undo_id, &actor_url, &follow_uri, &actor_url, &target.uri,
+            );
+            let inbox = if target.shared_inbox_url.is_empty() {
+                target.inbox_url.clone()
+            } else {
+                target.shared_inbox_url.clone()
+            };
+            if !inbox.is_empty() {
+                let http = state.http.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::federation::delivery::deliver(&http, &undo, &inbox, &key_id, &private_key)
+                            .await
+                    {
+                        tracing::warn!(inbox, error = %e, "failed to deliver Undo(Follow)");
+                    }
+                });
+            }
+        }
     }
 
     build_relationship(&state, auth.account_id, target_id).await.map(Json)

@@ -1,5 +1,6 @@
 pub mod api;
 pub mod background;
+pub mod federation;
 pub mod config;
 pub mod feed;
 pub mod snowflake;

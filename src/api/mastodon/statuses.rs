@@ -446,7 +446,7 @@ pub async fn post_status(
     }
 
     let mut status = status;
-    status.uri = Some(uri);
+    status.uri = Some(uri.clone());
 
     // Load the application that created this status (for the author's view)
     let application = if let Some(app_id) = auth.application_id {
@@ -467,7 +467,7 @@ pub async fn post_status(
     let viewer_ctx = build_viewer_context(&state, auth.account_id, status.id).await.ok();
     let api_status = super::accounts::build_status_with_app(&state, &status, &account, media, None, viewer_ctx, application).await?;
 
-    spawn_card_fetch(&state, status.id, content);
+    spawn_card_fetch(&state, status.id, content.clone());
 
     if matches!(visibility.as_str(), "public" | "unlisted" | "private") {
         if let Ok(payload) = serde_json::to_string(&api_status) {
@@ -576,6 +576,56 @@ pub async fn post_status(
                 feed::fanout_new_status(&mut redis, &db, author_id, status_id, &tag_ids).await;
                 feed::fanout_to_lists(&mut redis, &db, author_id, status_id, reply_to_account, &vis).await;
             });
+        }
+    }
+
+    // Federate to remote followers for public, unlisted, and private statuses
+    if matches!(visibility.as_str(), "public" | "unlisted" | "private") {
+        if let Some(private_key) = account.private_key.clone().filter(|s| !s.is_empty()) {
+            let domain = &instance.domain;
+            let actor_url = format!("https://{}/users/{}", domain, account.username);
+            let followers_url = format!("{}/followers", actor_url);
+
+            let (to_strs, cc_strs): (Vec<&str>, Vec<&str>) = match visibility.as_str() {
+                "public" | "unlisted" => (vec![feder_vocab::AS_PUBLIC], vec![followers_url.as_str()]),
+                _ /* private */ => (vec![followers_url.as_str()], vec![]),
+            };
+
+            let published = status.created_at.to_rfc3339();
+            let in_reply_to_uri: Option<String> = if let Some(parent_id) = in_reply_to_id {
+                sqlx::query_scalar!("SELECT uri FROM statuses WHERE id = $1", parent_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+            } else {
+                None
+            };
+
+            let note = feder_vocab::NoteParams {
+                id: &uri,
+                attributed_to: &actor_url,
+                content: &content,
+                summary: if status.spoiler_text.is_empty() { None } else { Some(status.spoiler_text.as_str()) },
+                sensitive: form.sensitive.unwrap_or(false),
+                in_reply_to: in_reply_to_uri.as_deref(),
+                to: &to_strs,
+                cc: &cc_strs,
+                published: &published,
+                url: &uri,
+                quote_url: None,
+            };
+            let activity_id = format!("{}/activity", uri);
+            let activity = feder_vocab::create_note(&activity_id, &actor_url, note);
+            let key_id = format!("{}#main-key", actor_url);
+            crate::federation::delivery::fanout_to_followers(
+                &state,
+                activity,
+                account.id,
+                key_id,
+                private_key,
+            );
         }
     }
 
@@ -1057,6 +1107,24 @@ pub async fn delete_status(
                 feed::fanout_remove_status(&mut redis, &db, author_id, id).await;
                 feed::fanout_remove_from_lists(&mut redis, &db, author_id, id).await;
             });
+        }
+    }
+
+    // Federate Delete to remote followers
+    if let Some(private_key) = account.private_key.clone().filter(|s| !s.is_empty()) {
+        if let Some(ref status_uri) = status.uri {
+            let domain = &state.instance.domain;
+            let actor_url = format!("https://{}/users/{}", domain, account.username);
+            let delete_id = format!("https://{}/activities/{}", domain, crate::snowflake::next_id());
+            let activity = feder_vocab::delete(&delete_id, &actor_url, status_uri);
+            let key_id = format!("{}#main-key", actor_url);
+            crate::federation::delivery::fanout_to_followers(
+                &state,
+                activity,
+                account.id,
+                key_id,
+                private_key,
+            );
         }
     }
 

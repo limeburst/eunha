@@ -1778,6 +1778,8 @@ dependencies = [
  "clap",
  "config",
  "dotenvy",
+ "feder-core",
+ "feder-vocab",
  "futures",
  "hex",
  "hmac 0.12.1",
@@ -1849,6 +1851,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
+]
+
+[[package]]
+name = "feder-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "rsa 0.9.10",
+ "sha2 0.10.9",
+ "url",
+]
+
+[[package]]
+name = "feder-vocab"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
