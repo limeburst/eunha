@@ -315,11 +315,28 @@ async fn handle_create(
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         .unwrap_or_default();
-    let visibility = if to.contains(&"https://www.w3.org/ns/activitystreams#Public") {
+    let cc = object
+        .get("cc")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    const PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
+    let visibility = if to.contains(&PUBLIC) {
         crate::db::models::vis::PUBLIC
-    } else {
+    } else if cc.contains(&PUBLIC) {
         crate::db::models::vis::UNLISTED
+    } else if to.iter().any(|u| u.ends_with("/followers")) || cc.iter().any(|u| u.ends_with("/followers")) {
+        crate::db::models::vis::PRIVATE
+    } else {
+        crate::db::models::vis::DIRECT
     };
+
+    let language = object
+        .get("contentMap")
+        .and_then(|m| m.as_object())
+        .and_then(|m| m.keys().next())
+        .map(|s| s.to_string())
+        .filter(|s| ["ko", "en"].contains(&s.as_str()));
 
     let in_reply_to_uri = object.get("inReplyTo").and_then(|v| v.as_str());
     let in_reply_to_id: Option<i64> = if let Some(uri) = in_reply_to_uri {
@@ -354,8 +371,8 @@ async fn handle_create(
     let inserted = sqlx::query_scalar!(
         r#"INSERT INTO statuses
              (id, account_id, text, spoiler_text, visibility, sensitive,
-              uri, url, in_reply_to_id, reply, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+              uri, url, in_reply_to_id, reply, language, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING
            RETURNING id"#,
         status_id,
@@ -368,6 +385,7 @@ async fn handle_create(
         url,
         in_reply_to_id,
         in_reply_to_id.is_some(),
+        language,
         created_at,
     )
     .fetch_optional(&state.db)
