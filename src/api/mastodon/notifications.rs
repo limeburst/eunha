@@ -142,20 +142,15 @@ pub async fn get_notifications(
 
     let notifications: Vec<DbNotification> = if min_id.is_some() {
         sqlx::query_as(
-            r#"SELECT * FROM notifications
-               WHERE account_id = $1
-                 AND ($2::bigint IS NULL OR id > $2)
-                 AND ($5::text[] IS NULL OR "type" = ANY($5))
-                 AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
-                 AND ($7::bigint IS NULL OR from_account_id = $7)
-                 AND (NOT $8::boolean OR NOT filtered)
-                 AND NOT EXISTS (
-                     SELECT 1 FROM mutes m
-                     WHERE m.account_id = $1 AND m.target_account_id = from_account_id
-                       AND m.hide_notifications = true
-                       AND (m.expires_at IS NULL OR m.expires_at > now())
-                 )
-               ORDER BY id ASC
+            r#"SELECT n.* FROM notifications n
+               JOIN accounts a ON a.id = n.from_account_id AND a.suspended_at IS NULL
+               WHERE n.account_id = $1
+                 AND ($2::bigint IS NULL OR n.id > $2)
+                 AND ($5::text[] IS NULL OR n.type = ANY($5))
+                 AND ($6::text[] IS NULL OR NOT (n.type = ANY($6)))
+                 AND ($7::bigint IS NULL OR n.from_account_id = $7)
+                 AND (NOT $8::boolean OR NOT n.filtered)
+               ORDER BY n.id ASC
                LIMIT $4"#,
         )
         .bind(auth.account_id)
@@ -170,21 +165,16 @@ pub async fn get_notifications(
         .await?
     } else {
         sqlx::query_as(
-            r#"SELECT * FROM notifications
-               WHERE account_id = $1
-                 AND ($2::bigint IS NULL OR id < $2)
-                 AND ($3::bigint IS NULL OR id > $3)
-                 AND ($5::text[] IS NULL OR "type" = ANY($5))
-                 AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
-                 AND ($7::bigint IS NULL OR from_account_id = $7)
-                 AND (NOT $8::boolean OR NOT filtered)
-                 AND NOT EXISTS (
-                     SELECT 1 FROM mutes m
-                     WHERE m.account_id = $1 AND m.target_account_id = from_account_id
-                       AND m.hide_notifications = true
-                       AND (m.expires_at IS NULL OR m.expires_at > now())
-                 )
-               ORDER BY id DESC
+            r#"SELECT n.* FROM notifications n
+               JOIN accounts a ON a.id = n.from_account_id AND a.suspended_at IS NULL
+               WHERE n.account_id = $1
+                 AND ($2::bigint IS NULL OR n.id < $2)
+                 AND ($3::bigint IS NULL OR n.id > $3)
+                 AND ($5::text[] IS NULL OR n.type = ANY($5))
+                 AND ($6::text[] IS NULL OR NOT (n.type = ANY($6)))
+                 AND ($7::bigint IS NULL OR n.from_account_id = $7)
+                 AND (NOT $8::boolean OR NOT n.filtered)
+               ORDER BY n.id DESC
                LIMIT $4"#,
         )
         .bind(auth.account_id)
@@ -464,21 +454,16 @@ pub async fn get_notifications_v2(
     let exclude_filtered = !include_filtered && account_id.is_none();
 
     let notifications: Vec<DbNotification> = sqlx::query_as(
-        r#"SELECT * FROM notifications
-           WHERE account_id = $1
-             AND ($2::bigint IS NULL OR id < $2)
-             AND ($3::bigint IS NULL OR id > $3)
-             AND ($5::text[] IS NULL OR "type" = ANY($5))
-             AND ($6::text[] IS NULL OR NOT ("type" = ANY($6)))
-             AND ($7::bigint IS NULL OR from_account_id = $7)
-             AND (NOT $8::boolean OR NOT filtered)
-             AND NOT EXISTS (
-                 SELECT 1 FROM mutes m
-                 WHERE m.account_id = $1 AND m.target_account_id = from_account_id
-                   AND m.hide_notifications = true
-                   AND (m.expires_at IS NULL OR m.expires_at > now())
-             )
-           ORDER BY id DESC
+        r#"SELECT n.* FROM notifications n
+           JOIN accounts a ON a.id = n.from_account_id AND a.suspended_at IS NULL
+           WHERE n.account_id = $1
+             AND ($2::bigint IS NULL OR n.id < $2)
+             AND ($3::bigint IS NULL OR n.id > $3)
+             AND ($5::text[] IS NULL OR n.type = ANY($5))
+             AND ($6::text[] IS NULL OR NOT (n.type = ANY($6)))
+             AND ($7::bigint IS NULL OR n.from_account_id = $7)
+             AND (NOT $8::boolean OR NOT n.filtered)
+           ORDER BY n.id DESC
            LIMIT $4"#,
     )
     .bind(auth.account_id)
@@ -852,7 +837,10 @@ pub async fn get_notifications_unread_count(
 
     let count: i64 = if let Some(last_id) = last_read_id {
         sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM notifications WHERE account_id = $1 AND id > $2 LIMIT $3) sub",
+            r#"SELECT COUNT(*) FROM (
+               SELECT 1 FROM notifications n
+               JOIN accounts a ON a.id = n.from_account_id AND a.suspended_at IS NULL
+               WHERE n.account_id = $1 AND n.id > $2 AND NOT n.filtered LIMIT $3) sub"#,
             auth.account_id, last_id, limit,
         )
         .fetch_one(&state.db)
@@ -860,7 +848,10 @@ pub async fn get_notifications_unread_count(
         .unwrap_or(0)
     } else {
         sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM notifications WHERE account_id = $1 LIMIT $2) sub",
+            r#"SELECT COUNT(*) FROM (
+               SELECT 1 FROM notifications n
+               JOIN accounts a ON a.id = n.from_account_id AND a.suspended_at IS NULL
+               WHERE n.account_id = $1 AND NOT n.filtered LIMIT $2) sub"#,
             auth.account_id, limit,
         )
         .fetch_one(&state.db)
