@@ -28,6 +28,7 @@ pub async fn shared_inbox(
     tracing::debug!(
         instance = %instance.domain,
         activity_type,
+        body = %activity,
         "received ActivityPub activity"
     );
 
