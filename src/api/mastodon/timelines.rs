@@ -239,6 +239,12 @@ async fn hydrate_home_statuses(
                )
                WHERE orig.id = s.reblog_of_id
            ))
+           AND (s.reblog_of_id IS NULL OR NOT EXISTS (
+               SELECT 1 FROM statuses orig
+               JOIN accounts orig_a ON orig_a.id = orig.account_id
+               JOIN account_domain_blocks adb ON adb.account_id = $1 AND adb.domain = orig_a.domain
+               WHERE orig.id = s.reblog_of_id
+           ))
            AND NOT (
                s.reblog_of_id IS NOT NULL
                AND EXISTS (
@@ -336,6 +342,12 @@ async fn home_timeline_from_db(
                    )
                    WHERE orig.id = s.reblog_of_id
                ))
+               AND (s.reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM statuses orig
+                   JOIN accounts orig_a ON orig_a.id = orig.account_id
+                   JOIN account_domain_blocks adb ON adb.account_id = $1 AND adb.domain = orig_a.domain
+                   WHERE orig.id = s.reblog_of_id
+               ))
                AND NOT (
                    s.reblog_of_id IS NOT NULL
                    AND EXISTS (
@@ -357,6 +369,10 @@ async fn home_timeline_from_db(
                        WHERE m.status_id = s.id AND m.account_id = $1
                    )
                )
+               AND (s.in_reply_to_account_id IS NULL
+                    OR s.in_reply_to_account_id = s.account_id
+                    OR s.in_reply_to_account_id = $1
+                    OR EXISTS (SELECT 1 FROM follows f WHERE f.account_id = $1 AND f.target_account_id = s.in_reply_to_account_id))
                AND (s.text != ''
                     OR s.reblog_of_id IS NOT NULL
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
@@ -419,6 +435,12 @@ async fn home_timeline_from_db(
                    )
                    WHERE orig.id = s.reblog_of_id
                ))
+               AND (s.reblog_of_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM statuses orig
+                   JOIN accounts orig_a ON orig_a.id = orig.account_id
+                   JOIN account_domain_blocks adb ON adb.account_id = $1 AND adb.domain = orig_a.domain
+                   WHERE orig.id = s.reblog_of_id
+               ))
                AND NOT (
                    s.reblog_of_id IS NOT NULL
                    AND EXISTS (
@@ -440,6 +462,10 @@ async fn home_timeline_from_db(
                        WHERE m.status_id = s.id AND m.account_id = $1
                    )
                )
+               AND (s.in_reply_to_account_id IS NULL
+                    OR s.in_reply_to_account_id = s.account_id
+                    OR s.in_reply_to_account_id = $1
+                    OR EXISTS (SELECT 1 FROM follows f WHERE f.account_id = $1 AND f.target_account_id = s.in_reply_to_account_id))
                AND (s.text != ''
                     OR s.reblog_of_id IS NOT NULL
                     OR EXISTS (SELECT 1 FROM media_attachments WHERE status_id = s.id))
@@ -584,18 +610,12 @@ async fn list_timeline_from_db(
                         OR s.in_reply_to_account_id = s.account_id
                         OR s.in_reply_to_account_id = $5)",
         "list" => "AND (s.in_reply_to_id IS NULL
+                        OR s.in_reply_to_account_id = s.account_id
                         OR s.in_reply_to_account_id = $5
                         OR EXISTS (
-                            SELECT 1 FROM statuses s2
-                            JOIN list_accounts la2 ON la2.account_id = s2.account_id
-                            WHERE s2.id = s.in_reply_to_id AND la2.list_id = $1))",
-        _ => "AND (s.in_reply_to_id IS NULL OR EXISTS (
-                   SELECT 1 FROM statuses s2
-                   WHERE s2.id = s.in_reply_to_id
-                     AND (s2.account_id = $5 OR EXISTS (
-                         SELECT 1 FROM follows f
-                         WHERE f.account_id = $5 AND f.target_account_id = s2.account_id
-                     ))))",
+                            SELECT 1 FROM list_accounts la2
+                            WHERE la2.list_id = $1 AND la2.account_id = s.in_reply_to_account_id))",
+        _ => "",
     };
 
     if min_id.is_some() {
