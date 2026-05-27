@@ -68,8 +68,8 @@ pkcs8 = { version = "0.10", features = ["pem"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
 # ActivityPub federation library
-feder-vocab = { path = "../feder/crates/feder-vocab" }
-feder-core = { path = "../feder/crates/feder-core" }
+feder-vocab = { path = "crates/feder-vocab" }
+feder-core = { path = "crates/feder-core" }
 
 # Config / environment
 config = "0.15"
