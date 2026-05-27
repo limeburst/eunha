@@ -351,12 +351,13 @@ async fn handle_create(
     let status_id = crate::snowflake::next_id();
     let created_at = published.unwrap_or_else(chrono::Utc::now);
 
-    sqlx::query!(
+    let inserted = sqlx::query_scalar!(
         r#"INSERT INTO statuses
              (id, account_id, text, spoiler_text, visibility, sensitive,
               uri, url, in_reply_to_id, reply, created_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-           ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING"#,
+           ON CONFLICT (uri) WHERE uri IS NOT NULL AND uri != '' DO NOTHING
+           RETURNING id"#,
         status_id,
         account_id,
         text,
@@ -369,17 +370,44 @@ async fn handle_create(
         in_reply_to_id.is_some(),
         created_at,
     )
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
+
+    let Some(inserted_id) = inserted else {
+        return Ok(()); // duplicate
+    };
 
     if let Some(qid) = quote_of_id {
         let _ = sqlx::query!(
             "INSERT INTO quotes (status_id, quoted_status_id, state) VALUES ($1, $2, 1) ON CONFLICT DO NOTHING",
-            status_id,
+            inserted_id,
             qid,
         )
         .execute(&state.db)
         .await;
+    }
+
+    // Push to home and list feeds for all local followers.
+    let in_reply_to_account_id: Option<i64> = if let Some(irt_id) = in_reply_to_id {
+        sqlx::query_scalar!("SELECT account_id FROM statuses WHERE id = $1", irt_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let vis_str = crate::db::models::vis::to_str(visibility);
+    let mut redis = state.redis.clone();
+    let db = state.db.clone();
+    if crate::feed::sync_fanout() {
+        crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &[]).await;
+        crate::feed::fanout_to_lists(&mut redis, &db, account_id, inserted_id, in_reply_to_account_id, vis_str).await;
+    } else {
+        tokio::spawn(async move {
+            crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &[]).await;
+            crate::feed::fanout_to_lists(&mut redis, &db, account_id, inserted_id, in_reply_to_account_id, vis_str).await;
+        });
     }
 
     Ok(())
