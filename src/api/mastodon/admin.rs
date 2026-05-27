@@ -960,6 +960,56 @@ pub async fn get_measures(
                     })).collect::<Vec<_>>(),
                 })
             }
+            "interactions" => {
+                // Approximates Mastodon's Redis-backed interactions counter:
+                // statuses posted + favourites + follows by local users.
+                macro_rules! count_interactions {
+                    ($s:expr, $e:expr) => {
+                        sqlx::query_scalar!(
+                            r#"SELECT
+                               (SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
+                                WHERE a.domain IS NULL AND s.deleted_at IS NULL AND s.created_at BETWEEN $1 AND $2)
+                               +
+                               (SELECT COUNT(*) FROM favourites f JOIN accounts a ON a.id = f.account_id
+                                WHERE a.domain IS NULL AND f.created_at BETWEEN $1 AND $2)
+                               +
+                               (SELECT COUNT(*) FROM follows f JOIN accounts a ON a.id = f.account_id
+                                WHERE a.domain IS NULL AND f.created_at BETWEEN $1 AND $2)"#,
+                            $s, $e,
+                        ).fetch_one(&state.db).await?.unwrap_or(0)
+                    };
+                }
+                let total = count_interactions!(start, end);
+                let previous_total = count_interactions!(prev_start, start);
+                let data = sqlx::query!(
+                    r#"SELECT axis.day::timestamptz,
+                              (SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
+                               WHERE a.domain IS NULL AND s.deleted_at IS NULL
+                                 AND date_trunc('day', s.created_at)::date = axis.day)
+                              +
+                              (SELECT COUNT(*) FROM favourites f JOIN accounts a ON a.id = f.account_id
+                               WHERE a.domain IS NULL
+                                 AND date_trunc('day', f.created_at)::date = axis.day)
+                              +
+                              (SELECT COUNT(*) FROM follows f2 JOIN accounts a ON a.id = f2.account_id
+                               WHERE a.domain IS NULL
+                                 AND date_trunc('day', f2.created_at)::date = axis.day)
+                              AS n
+                       FROM (SELECT generate_series($1::timestamptz, $2::timestamptz, '1 day')::date AS day) AS axis
+                       ORDER BY axis.day"#,
+                    start, end,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key, "unit": null,
+                    "total": total.to_string(),
+                    "human_value": total.to_string(),
+                    "previous_total": previous_total.to_string(),
+                    "data": data.iter().map(|r| serde_json::json!({
+                        "date": r.day.map(super::convert::mastodon_date).unwrap_or_default(),
+                        "value": r.n.unwrap_or(0).to_string(),
+                    })).collect::<Vec<_>>(),
+                })
+            }
             _ => serde_json::json!({
                 "key": key, "unit": null, "total": "0",
                 "human_value": "0", "previous_total": "0", "data": [],
@@ -969,6 +1019,22 @@ pub async fn get_measures(
     }
 
     Ok(Json(result))
+}
+
+fn locale_name(code: &str) -> &'static str {
+    match code {
+        "ko" => "Korean",
+        "en" => "English",
+        "ja" => "Japanese",
+        "zh" => "Chinese",
+        "fr" => "French",
+        "de" => "German",
+        "es" => "Spanish",
+        "pt" => "Portuguese",
+        "ru" => "Russian",
+        "ar" => "Arabic",
+        _ => "Unknown",
+    }
 }
 
 fn parse_admin_date(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -1088,8 +1154,9 @@ pub async fn get_dimensions(
                     "key": key,
                     "data": rows.iter().map(|r| {
                         let v = r.n.unwrap_or(0).to_string();
+                        let human = locale_name(r.locale.as_deref().unwrap_or("und"));
                         serde_json::json!({
-                            "key": r.locale, "human_key": r.locale,
+                            "key": r.locale, "human_key": human,
                             "value": v, "unit": null, "human_value": v,
                         })
                     }).collect::<Vec<_>>(),
@@ -1135,10 +1202,11 @@ pub async fn get_dimensions(
                     .and_then(|v| v.parse().ok()).unwrap_or(0);
 
                 let media_size: i64 = sqlx::query_scalar!(
-                    r#"SELECT COALESCE(
-                        SUM(COALESCE(file_file_size, 0) + COALESCE(thumbnail_file_size, 0)),
-                        0
-                    ) FROM media_attachments"#
+                    r#"SELECT
+                       COALESCE((SELECT SUM(COALESCE(file_file_size,0) + COALESCE(thumbnail_file_size,0)) FROM media_attachments), 0)
+                       + COALESCE((SELECT SUM(COALESCE(image_file_size,0)) FROM custom_emojis), 0)
+                       + COALESCE((SELECT SUM(COALESCE(image_file_size,0)) FROM preview_cards), 0)
+                       + COALESCE((SELECT SUM(COALESCE(avatar_file_size,0) + COALESCE(header_file_size,0)) FROM accounts), 0)"#
                 ).fetch_one(&state.db).await?.unwrap_or(0);
 
                 serde_json::json!({

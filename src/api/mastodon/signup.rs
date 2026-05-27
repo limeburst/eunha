@@ -242,13 +242,17 @@ pub async fn confirm_email(
     let user_id = match sqlx::query_scalar!(
         r#"INSERT INTO users
              (account_id, email, encrypted_password,
-              confirmed_at, invite_id, approved)
+              confirmed_at, invite_id, approved,
+              locale, created_by_application_id)
            VALUES ($1,$2,$3,
                    now(), $4,
-                   NOT $5::boolean)
+                   NOT $5::boolean,
+                   $6, $7)
            RETURNING id"#,
         account_id, pending.email,
         pending.password_hash, pending.invite_id, needs_approval,
+        pending.locale.as_str(),
+        pending.app_id,
     ).fetch_one(&state.db).await {
         Ok(id) => id,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
