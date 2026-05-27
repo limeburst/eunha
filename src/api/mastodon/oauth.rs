@@ -173,7 +173,12 @@ pub async fn issue_token(
                 AppError::Unauthorized
             })?;
             let account_id = sqlx::query_scalar!(
-                "SELECT account_id FROM users WHERE id = $1",
+                r#"UPDATE users SET
+                     last_sign_in_at    = current_sign_in_at,
+                     current_sign_in_at = now(),
+                     sign_in_count      = sign_in_count + 1
+                   WHERE id = $1
+                   RETURNING account_id"#,
                 code.resource_owner_id,
             )
             .fetch_optional(&state.db)
@@ -198,6 +203,17 @@ pub async fn issue_token(
             .ok_or(AppError::Unauthorized)?;
 
             verify_password(password, &user.encrypted_password)?;
+
+            sqlx::query!(
+                r#"UPDATE users SET
+                     last_sign_in_at    = current_sign_in_at,
+                     current_sign_in_at = now(),
+                     sign_in_count      = sign_in_count + 1
+                   WHERE id = $1"#,
+                user.id,
+            )
+            .execute(&state.db)
+            .await?;
 
             (Some(user.account_id), normalize_scopes(form.scope.as_deref().or(app.scopes.as_deref()).unwrap_or("read")))
         }

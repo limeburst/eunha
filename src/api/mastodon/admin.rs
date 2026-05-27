@@ -822,22 +822,23 @@ pub async fn get_measures(
         let measure = match key.as_str() {
             "new_users" => {
                 let total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM accounts WHERE domain IS NULL AND created_at BETWEEN $1 AND $2",
+                    "SELECT COUNT(*) FROM users WHERE created_at BETWEEN $1 AND $2",
                     start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM accounts WHERE domain IS NULL AND created_at BETWEEN $1 AND $2",
+                    "SELECT COUNT(*) FROM users WHERE created_at BETWEEN $1 AND $2",
                     prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let data = sqlx::query!(
-                    r#"SELECT date_trunc('day', created_at)::timestamptz AS day, COUNT(*) AS n
-                       FROM accounts WHERE domain IS NULL AND created_at BETWEEN $1 AND $2
-                       GROUP BY day ORDER BY day"#,
+                    r#"SELECT axis.day::timestamptz,
+                              (SELECT COUNT(*) FROM users
+                               WHERE date_trunc('day', created_at)::date = axis.day) AS n
+                       FROM (SELECT generate_series($1::timestamptz, $2::timestamptz, '1 day')::date AS day) AS axis
+                       ORDER BY axis.day"#,
                     start, end,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
-                    "key": key,
-                    "unit": null,
+                    "key": key, "unit": null,
                     "total": total.to_string(),
                     "human_value": total.to_string(),
                     "previous_total": previous_total.to_string(),
@@ -848,28 +849,25 @@ pub async fn get_measures(
                 })
             }
             "active_users" => {
+                // Matches Mastodon: counts users by current_sign_in_at (updated on every login).
                 let total = sqlx::query_scalar!(
-                    r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
-                       JOIN accounts a ON a.id = s.account_id
-                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL"#,
+                    "SELECT COUNT(*) FROM users WHERE current_sign_in_at BETWEEN $1 AND $2",
                     start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    r#"SELECT COUNT(DISTINCT s.account_id) FROM statuses s
-                       JOIN accounts a ON a.id = s.account_id
-                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL"#,
+                    "SELECT COUNT(*) FROM users WHERE current_sign_in_at BETWEEN $1 AND $2",
                     prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let data = sqlx::query!(
-                    r#"SELECT date_trunc('day', s.created_at)::timestamptz AS day, COUNT(DISTINCT s.account_id) AS n
-                       FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL
-                       GROUP BY day ORDER BY day"#,
+                    r#"SELECT axis.day::timestamptz,
+                              (SELECT COUNT(*) FROM users
+                               WHERE date_trunc('day', current_sign_in_at)::date = axis.day) AS n
+                       FROM (SELECT generate_series($1::timestamptz, $2::timestamptz, '1 day')::date AS day) AS axis
+                       ORDER BY axis.day"#,
                     start, end,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
-                    "key": key,
-                    "unit": null,
+                    "key": key, "unit": null,
                     "total": total.to_string(),
                     "human_value": total.to_string(),
                     "previous_total": previous_total.to_string(),
@@ -891,15 +889,16 @@ pub async fn get_measures(
                     prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let data = sqlx::query!(
-                    r#"SELECT date_trunc('day', s.created_at)::timestamptz AS day, COUNT(*) AS n
-                       FROM statuses s JOIN accounts a ON a.id = s.account_id
-                       WHERE a.domain IS NULL AND s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL
-                       GROUP BY day ORDER BY day"#,
+                    r#"SELECT axis.day::timestamptz,
+                              (SELECT COUNT(*) FROM statuses s JOIN accounts a ON a.id = s.account_id
+                               WHERE a.domain IS NULL AND s.deleted_at IS NULL
+                                 AND date_trunc('day', s.created_at)::date = axis.day) AS n
+                       FROM (SELECT generate_series($1::timestamptz, $2::timestamptz, '1 day')::date AS day) AS axis
+                       ORDER BY axis.day"#,
                     start, end,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
-                    "key": key,
-                    "unit": null,
+                    "key": key, "unit": null,
                     "total": total.to_string(),
                     "human_value": total.to_string(),
                     "previous_total": previous_total.to_string(),
@@ -911,32 +910,56 @@ pub async fn get_measures(
             }
             "opened_reports" => {
                 let total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM reports r WHERE r.created_at BETWEEN $1 AND $2",
+                    "SELECT COUNT(*) FROM reports WHERE created_at BETWEEN $1 AND $2",
                     start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM reports r WHERE r.created_at BETWEEN $1 AND $2",
+                    "SELECT COUNT(*) FROM reports WHERE created_at BETWEEN $1 AND $2",
                     prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
+                let data = sqlx::query!(
+                    r#"SELECT axis.day::timestamptz,
+                              (SELECT COUNT(*) FROM reports
+                               WHERE date_trunc('day', created_at)::date = axis.day) AS n
+                       FROM (SELECT generate_series($1::timestamptz, $2::timestamptz, '1 day')::date AS day) AS axis
+                       ORDER BY axis.day"#,
+                    start, end,
+                ).fetch_all(&state.db).await?;
                 serde_json::json!({
                     "key": key, "unit": null,
                     "total": total.to_string(), "human_value": total.to_string(),
-                    "previous_total": previous_total.to_string(), "data": [],
+                    "previous_total": previous_total.to_string(),
+                    "data": data.iter().map(|r| serde_json::json!({
+                        "date": r.day.map(super::convert::mastodon_date).unwrap_or_default(),
+                        "value": r.n.unwrap_or(0).to_string(),
+                    })).collect::<Vec<_>>(),
                 })
             }
             "resolved_reports" => {
                 let total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM reports r WHERE r.action_taken_at BETWEEN $1 AND $2",
+                    "SELECT COUNT(*) FROM reports WHERE action_taken_at BETWEEN $1 AND $2",
                     start, end,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
                 let previous_total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM reports r WHERE r.action_taken_at BETWEEN $1 AND $2",
+                    "SELECT COUNT(*) FROM reports WHERE action_taken_at BETWEEN $1 AND $2",
                     prev_start, start,
                 ).fetch_one(&state.db).await?.unwrap_or(0);
+                let data = sqlx::query!(
+                    r#"SELECT axis.day::timestamptz,
+                              (SELECT COUNT(*) FROM reports
+                               WHERE date_trunc('day', action_taken_at)::date = axis.day) AS n
+                       FROM (SELECT generate_series($1::timestamptz, $2::timestamptz, '1 day')::date AS day) AS axis
+                       ORDER BY axis.day"#,
+                    start, end,
+                ).fetch_all(&state.db).await?;
                 serde_json::json!({
                     "key": key, "unit": null,
                     "total": total.to_string(), "human_value": total.to_string(),
-                    "previous_total": previous_total.to_string(), "data": [],
+                    "previous_total": previous_total.to_string(),
+                    "data": data.iter().map(|r| serde_json::json!({
+                        "date": r.day.map(super::convert::mastodon_date).unwrap_or_default(),
+                        "value": r.n.unwrap_or(0).to_string(),
+                    })).collect::<Vec<_>>(),
                 })
             }
             _ => serde_json::json!({
@@ -1004,8 +1027,44 @@ pub async fn get_dimensions(
                 })
             }
             "sources" => {
-                // Statuses don't store the originating OAuth application — not trackable.
-                serde_json::json!({"key": key, "data": []})
+                let rows = sqlx::query!(
+                    r#"SELECT COALESCE(a.name, 'web') AS name, COUNT(*) AS n
+                       FROM users u
+                       LEFT JOIN oauth_applications a ON a.id = u.created_by_application_id
+                       WHERE u.created_at BETWEEN $1 AND $2
+                       GROUP BY a.name ORDER BY n DESC LIMIT $3"#,
+                    start, end, limit,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key,
+                    "data": rows.iter().map(|r| {
+                        let v = r.n.unwrap_or(0).to_string();
+                        serde_json::json!({
+                            "key": r.name, "human_key": r.name,
+                            "value": v, "unit": null, "human_value": v,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            }
+            "languages" => {
+                let rows = sqlx::query!(
+                    r#"SELECT COALESCE(u.locale, 'und') AS locale, COUNT(*) AS n
+                       FROM users u
+                       WHERE u.current_sign_in_at BETWEEN $1 AND $2
+                         AND u.locale IS NOT NULL
+                       GROUP BY u.locale ORDER BY n DESC LIMIT $3"#,
+                    start, end, limit,
+                ).fetch_all(&state.db).await?;
+                serde_json::json!({
+                    "key": key,
+                    "data": rows.iter().map(|r| {
+                        let v = r.n.unwrap_or(0).to_string();
+                        serde_json::json!({
+                            "key": r.locale, "human_key": r.locale,
+                            "value": v, "unit": null, "human_value": v,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
             }
             _ => serde_json::json!({"key": key, "data": []}),
         };
@@ -1017,14 +1076,15 @@ pub async fn get_dimensions(
 
 // ── POST /api/v1/admin/retention ─────────────────────────────────────────
 //
-// Returns cohort retention: for each signup period, how many users were still
-// posting in each subsequent period.
+// Matches Mastodon: cohorts are groups of users who signed up in the same
+// period; a user is "retained" in a later period if current_sign_in_at
+// falls within that period (i.e. they logged in again).
 
 #[derive(Debug, Deserialize)]
 pub struct RetentionRequest {
     pub start_at: Option<String>,
     pub end_at: Option<String>,
-    pub frequency: Option<String>, // "day" or "week"
+    pub frequency: Option<String>, // "day" or "month"
 }
 
 pub async fn get_retention(
@@ -1042,103 +1102,99 @@ pub async fn get_retention(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|d| d.with_timezone(&chrono::Utc))
         .unwrap_or_else(chrono::Utc::now);
-    // frequency must be a valid date_trunc unit: "day", "week", or "month"
     let frequency = match body.frequency.as_deref().unwrap_or("day") {
-        "week" => "week",
         "month" => "month",
         _ => "day",
     };
 
-    let cohort_rows = sqlx::query!(
+    // Mirrors Mastodon's retention SQL exactly: for every (cohort_period,
+    // retention_period) pair where retention_period >= cohort_period, count
+    // users whose signup was in cohort_period and whose current_sign_in_at
+    // is >= retention_period.
+    let rows = sqlx::query!(
         r#"SELECT
-               date_trunc($2, a.created_at)::timestamptz AS period,
-               a.id AS account_id
-           FROM accounts a
-           WHERE a.domain IS NULL
-             AND a.created_at BETWEEN $1 AND $3
-           ORDER BY period"#,
+               axis.cohort_period::timestamptz,
+               axis.retention_period::timestamptz,
+               (
+                 WITH new_users AS (
+                   SELECT users.id FROM users
+                   WHERE date_trunc($3, users.created_at)::date = axis.cohort_period
+                 ),
+                 retained_users AS (
+                   SELECT users.id FROM users
+                   INNER JOIN new_users ON new_users.id = users.id
+                   WHERE date_trunc($3, users.current_sign_in_at) >= axis.retention_period
+                 )
+                 SELECT ARRAY[
+                   count(*)::bigint,
+                   (count(*)::float /
+                    GREATEST((SELECT count(*) FROM new_users), 1) * 1000000)::bigint
+                 ]
+                 FROM retained_users
+               ) AS retention_value_and_rate
+           FROM (
+             WITH cohort_periods AS (
+               SELECT generate_series(
+                 date_trunc($3, $1::timestamptz)::date,
+                 date_trunc($3, $2::timestamptz)::date,
+                 ('1 ' || $3)::interval
+               ) AS cohort_period
+             ),
+             retention_periods AS (
+               SELECT cohort_period AS retention_period FROM cohort_periods
+             )
+             SELECT * FROM cohort_periods, retention_periods
+             WHERE retention_period >= cohort_period
+           ) AS axis
+           ORDER BY axis.cohort_period, axis.retention_period"#,
         start,
-        frequency,
         end,
+        frequency,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let mut cohorts: std::collections::BTreeMap<
+    let mut cohorts: indexmap::IndexMap<
         chrono::DateTime<chrono::Utc>,
-        Vec<i64>,
-    > = std::collections::BTreeMap::new();
-    for row in cohort_rows {
-        if let Some(period) = row.period {
-            cohorts.entry(period).or_default().push(row.account_id);
-        }
-    }
+        Vec<serde_json::Value>,
+    > = indexmap::IndexMap::new();
 
-    // Cap iterations to avoid very long loops
-    let max_periods: usize = 100;
+    for row in &rows {
+        let cohort_period = match row.cohort_period {
+            Some(p) => p,
+            None => continue,
+        };
+        let retention_period = match row.retention_period {
+            Some(p) => p,
+            None => continue,
+        };
+        let (value, rate_millionths) = match row.retention_value_and_rate.as_deref() {
+            Some([v, r]) => (*v, *r),
+            _ => (0, 0),
+        };
+        let rate = rate_millionths as f64 / 1_000_000.0;
 
-    let mut data = Vec::new();
-    for (period, account_ids) in &cohorts {
-        let cohort_size = account_ids.len() as i64;
-        let mut retention_data = Vec::new();
-        let mut check_period = *period;
-        let mut count = 0;
-        while check_period <= end && count < max_periods {
-            let next_period = advance_period(check_period, frequency);
-            let active_count = sqlx::query_scalar!(
-                r#"SELECT COUNT(DISTINCT s.account_id)
-                   FROM statuses s
-                   WHERE s.account_id = ANY($1::bigint[])
-                     AND s.deleted_at IS NULL
-                     AND s.created_at >= $2
-                     AND s.created_at < $3"#,
-                account_ids,
-                check_period,
-                next_period,
-            )
-            .fetch_one(&state.db)
-            .await?
-            .unwrap_or(0);
-
-            let rate = if cohort_size > 0 {
-                active_count as f64 / cohort_size as f64
-            } else {
-                0.0
-            };
-            retention_data.push(serde_json::json!({
-                "date": super::convert::mastodon_date(check_period),
-                "rate": rate,
-                "value": active_count,
-            }));
-            check_period = next_period;
-            count += 1;
-        }
-
-        data.push(serde_json::json!({
-            "period": super::convert::mastodon_date(*period),
-            "frequency": frequency,
-            "cohort_size": cohort_size,
-            "data": retention_data,
+        cohorts.entry(cohort_period).or_default().push(serde_json::json!({
+            "date": super::convert::mastodon_date(retention_period),
+            "rate": rate,
+            "value": value.to_string(),
         }));
     }
 
-    Ok(Json(data))
-}
+    let data: Vec<serde_json::Value> = cohorts.into_iter().map(|(period, entries)| {
+        let cohort_size = entries.first()
+            .and_then(|e| e["value"].as_str())
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        serde_json::json!({
+            "period": super::convert::mastodon_date(period),
+            "frequency": frequency,
+            "cohort_size": cohort_size,
+            "data": entries,
+        })
+    }).collect();
 
-fn advance_period(dt: chrono::DateTime<chrono::Utc>, frequency: &str) -> chrono::DateTime<chrono::Utc> {
-    use chrono::Datelike;
-    match frequency {
-        "month" => {
-            let (year, month) = if dt.month() == 12 {
-                (dt.year() + 1, 1u32)
-            } else {
-                (dt.year(), dt.month() + 1)
-            };
-            dt.with_year(year).and_then(|d| d.with_month(month)).unwrap_or(dt + chrono::Duration::days(30))
-        }
-        "week" => dt + chrono::Duration::days(7),
-        _ => dt + chrono::Duration::days(1),
-    }
+    Ok(Json(data))
 }
 
 // ── Admin CustomEmoji type ────────────────────────────────────────────────

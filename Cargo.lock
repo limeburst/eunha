@@ -1785,6 +1785,7 @@ dependencies = [
  "hmac 0.12.1",
  "image",
  "img-parts",
+ "indexmap",
  "itertools 0.14.0",
  "mime",
  "mime_guess",
