@@ -505,6 +505,86 @@ async fn handle_create(
         .await;
     }
 
+    // Conversation management for direct messages
+    if visibility == crate::db::models::vis::DIRECT {
+        // Reuse the parent status's conversation if this is a reply, otherwise create a new one.
+        let conversation_id: i64 = if let Some(parent_id) = in_reply_to_id {
+            let parent_conv = sqlx::query_scalar!(
+                "SELECT conversation_id FROM statuses WHERE id = $1",
+                parent_id,
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+            if let Some(cid) = parent_conv {
+                cid
+            } else {
+                sqlx::query_scalar!(
+                    "INSERT INTO conversations (created_at, updated_at) VALUES (now(), now()) RETURNING id"
+                )
+                .fetch_one(&state.db)
+                .await?
+            }
+        } else {
+            sqlx::query_scalar!(
+                "INSERT INTO conversations (created_at, updated_at) VALUES (now(), now()) RETURNING id"
+            )
+            .fetch_one(&state.db)
+            .await?
+        };
+
+        let _ = sqlx::query!(
+            "UPDATE statuses SET conversation_id = $1 WHERE id = $2",
+            conversation_id,
+            inserted_id,
+        )
+        .execute(&state.db)
+        .await;
+
+        // Collect all participant IDs: the sender + every local account in to/cc.
+        let local_recipient_ids: Vec<i64> = sqlx::query_scalar!(
+            "SELECT id FROM accounts WHERE uri = ANY($1) AND domain IS NULL",
+            &audience as &[String],
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        let mut all_participant_ids: Vec<i64> = std::iter::once(account_id)
+            .chain(local_recipient_ids.iter().copied())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        all_participant_ids.sort_unstable();
+
+        // For each local recipient, upsert account_conversations.
+        // participant_account_ids = everyone else in the conversation (not this recipient).
+        for &local_id in &local_recipient_ids {
+            let mut others: Vec<i64> = all_participant_ids.iter()
+                .copied()
+                .filter(|&id| id != local_id)
+                .collect();
+            others.sort_unstable();
+            let _ = sqlx::query!(
+                r#"INSERT INTO account_conversations
+                     (account_id, conversation_id, participant_account_ids, status_ids, last_status_id, unread)
+                   VALUES ($1, $2, $3, ARRAY[$4::bigint], $4, true)
+                   ON CONFLICT (account_id, conversation_id, participant_account_ids) DO UPDATE
+                     SET status_ids = array_append(account_conversations.status_ids, $4),
+                         last_status_id = $4,
+                         unread = true"#,
+                local_id,
+                conversation_id,
+                &others,
+                inserted_id,
+            )
+            .execute(&state.db)
+            .await;
+        }
+    }
+
     // Media attachments
     let attachments: Vec<Value> = object
         .get("attachment")
