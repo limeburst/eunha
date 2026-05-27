@@ -10,6 +10,34 @@ use crate::{
     state::AppState,
 };
 
+/// Returns true if a tag's `type` field equals `type_name`, handling both
+/// string (`"Mention"`) and array (`["Mention", "Link"]`) forms.
+fn tag_type_is(tag: &Value, type_name: &str) -> bool {
+    match tag.get("type") {
+        Some(Value::String(s)) => s == type_name,
+        Some(Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some(type_name)),
+        _ => false,
+    }
+}
+
+/// Normalises a JSON field that may be a string, an array of strings, or absent
+/// into an owned `Vec<String>`. Handles both `"x"` and `["x","y"]`.
+fn as_string_vec(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        _ => vec![],
+    }
+}
+
+/// Returns true when the two URI strings share the same host.
+fn same_host(a: &str, b: &str) -> bool {
+    match (url::Url::parse(a), url::Url::parse(b)) {
+        (Ok(ua), Ok(ub)) => ua.host_str() == ub.host_str(),
+        _ => false,
+    }
+}
+
 /// Handles both `/inbox` (shared inbox) and `/users/:username/inbox`.
 pub async fn shared_inbox(
     State(state): State<AppState>,
@@ -311,9 +339,21 @@ async fn handle_create(
 
     let mention_hrefs: Vec<String> = tags_arr
         .iter()
-        .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("Mention"))
+        .filter(|t| tag_type_is(t, "Mention"))
         .filter_map(|t| t.get("href").and_then(|v| v.as_str()).map(str::to_owned))
         .collect();
+
+    // Collect to/cc from both the activity wrapper and the Note object (Mastodon merges both).
+    // Both fields may be a string or an array.
+    let audience: Vec<String> = {
+        let mut a = as_string_vec(activity.get("to"));
+        a.extend(as_string_vec(activity.get("cc")));
+        a.extend(as_string_vec(object.get("to")));
+        a.extend(as_string_vec(object.get("cc")));
+        a.sort_unstable();
+        a.dedup();
+        a
+    };
 
     // Look up inReplyTo status (id + account_id + whether account is local)
     let in_reply_to_uri = object.get("inReplyTo").and_then(|v| v.as_str());
@@ -335,7 +375,8 @@ async fn handle_create(
     let in_reply_to_account_id = in_reply_to_row.as_ref().map(|r| r.account_id);
     let in_reply_to_local = in_reply_to_row.as_ref().is_some_and(|r| r.is_local);
 
-    // Acceptance filter: only process if related to local activity
+    // Acceptance filter: only process if related to local activity (mirrors Mastodon's
+    // related_to_local_activity? / addresses_local_accounts? checks).
     let is_followed_locally = sqlx::query_scalar!(
         r#"SELECT EXISTS(
             SELECT 1 FROM follows f
@@ -348,10 +389,11 @@ async fn handle_create(
     .await?
     .unwrap_or(false);
 
-    let mentions_local = if !mention_hrefs.is_empty() {
+    // Any URI in to/cc (from either the activity or the Note) that is a local account.
+    let addresses_local = if !audience.is_empty() {
         sqlx::query_scalar!(
             "SELECT EXISTS(SELECT 1 FROM accounts WHERE uri = ANY($1) AND domain IS NULL)",
-            &mention_hrefs as &[String],
+            &audience as &[String],
         )
         .fetch_one(&state.db)
         .await?
@@ -360,7 +402,7 @@ async fn handle_create(
         false
     };
 
-    if !is_followed_locally && !mentions_local && !in_reply_to_local {
+    if !is_followed_locally && !addresses_local && !in_reply_to_local {
         tracing::debug!(note_uri, "Create(Note): ignoring, not related to local activity");
         return Ok(());
     }
@@ -381,23 +423,16 @@ async fn handle_create(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|t| t.with_timezone(&chrono::Utc));
 
-    let to: Vec<&str> = object
-        .get("to")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    let cc: Vec<&str> = object
-        .get("cc")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
+    // Visibility is determined from the Note object's own to/cc fields.
+    let note_to = as_string_vec(object.get("to"));
+    let note_cc = as_string_vec(object.get("cc"));
     const PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
-    let visibility = if to.contains(&PUBLIC) {
+    let visibility = if note_to.iter().any(|u| u == PUBLIC) {
         crate::db::models::vis::PUBLIC
-    } else if cc.contains(&PUBLIC) {
+    } else if note_cc.iter().any(|u| u == PUBLIC) {
         crate::db::models::vis::UNLISTED
-    } else if to.iter().any(|u| u.ends_with("/followers"))
-        || cc.iter().any(|u| u.ends_with("/followers"))
+    } else if note_to.iter().any(|u| u.ends_with("/followers"))
+        || note_cc.iter().any(|u| u.ends_with("/followers"))
     {
         crate::db::models::vis::PRIVATE
     } else {
@@ -559,7 +594,7 @@ async fn handle_create(
         let mut seen = std::collections::HashSet::new();
         tags_arr
             .iter()
-            .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("Hashtag"))
+            .filter(|t| tag_type_is(t, "Hashtag"))
             .filter_map(|t| {
                 t.get("name")
                     .and_then(|v| v.as_str())
@@ -655,7 +690,7 @@ async fn handle_create(
         .and_then(|u| u.host_str().map(str::to_owned));
     for tag in tags_arr
         .iter()
-        .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("Emoji"))
+        .filter(|t| tag_type_is(t, "Emoji"))
     {
         let shortcode = match tag.get("name").and_then(|v| v.as_str()) {
             Some(n) => n.trim_matches(':').to_string(),
@@ -796,13 +831,41 @@ async fn handle_delete(
             .await?;
             tracing::debug!(actor_uri, "suspended remote account on Delete(actor)");
         } else {
-            // Delete(Note) or Delete(Tombstone) — remote status deleted
+            // Reject if the actor's domain doesn't match the object's domain —
+            // prevents one server from deleting another server's content.
+            if !same_host(actor_uri, uri) {
+                tracing::warn!(actor_uri, uri, "Delete: actor domain does not match object domain, ignoring");
+                return Ok(());
+            }
+
+            // Delete(Note/Tombstone) — soft-delete the status
             sqlx::query!(
                 "UPDATE statuses SET deleted_at = now() WHERE uri = $1",
                 uri,
             )
             .execute(&state.db)
             .await?;
+
+            // Create a tombstone so that a subsequent Create with the same URI is rejected.
+            let actor_id = sqlx::query_scalar!(
+                "SELECT id FROM accounts WHERE uri = $1",
+                actor_uri,
+            )
+            .fetch_optional(&state.db)
+            .await?;
+            if let Some(actor_id) = actor_id {
+                let tombstone_id = crate::snowflake::next_id();
+                let _ = sqlx::query!(
+                    r#"INSERT INTO tombstones (id, account_id, uri, created_at, updated_at)
+                       SELECT $1, $2, $3, now(), now()
+                       WHERE NOT EXISTS (SELECT 1 FROM tombstones WHERE uri = $3)"#,
+                    tombstone_id,
+                    actor_id,
+                    uri,
+                )
+                .execute(&state.db)
+                .await;
+            }
         }
     }
 
