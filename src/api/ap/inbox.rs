@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, State},
+    extract::{Extension, OriginalUri, State},
     http::StatusCode,
 };
 use serde_json::Value;
@@ -14,6 +14,7 @@ use crate::{
 pub async fn shared_inbox(
     State(state): State<AppState>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
+    OriginalUri(uri): OriginalUri,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> AppResult<StatusCode> {
@@ -41,7 +42,7 @@ pub async fn shared_inbox(
                         let hdr_refs: Vec<(&str, &str)> =
                             hdr_vec.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                         if let Err(e) = feder_core::signature::verify_request(
-                            "post", "/inbox", &hdr_refs, &body, &pem,
+                            "post", uri.path(), &hdr_refs, &body, &pem,
                         ) {
                             tracing::warn!(key_id = kid, error = %e, "HTTP Signature verification failed");
                         }
