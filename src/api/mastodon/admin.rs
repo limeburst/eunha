@@ -807,12 +807,10 @@ pub async fn get_measures(
     require_admin(&state, auth.account_id).await?;
 
     let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .and_then(parse_admin_date)
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(7));
     let end: chrono::DateTime<chrono::Utc> = body.end_at.as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .and_then(parse_admin_date)
         .unwrap_or_else(chrono::Utc::now);
     let prev_start = start - (end - start);
 
@@ -973,6 +971,17 @@ pub async fn get_measures(
     Ok(Json(result))
 }
 
+fn parse_admin_date(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    // Mastodon sends date-only strings like "2026-04-27"
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return date.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc());
+    }
+    None
+}
+
 fn human_size(bytes: i64) -> String {
     const KB: i64 = 1024;
     const MB: i64 = 1024 * KB;
@@ -1013,12 +1022,10 @@ pub async fn get_dimensions(
     require_admin(&state, auth.account_id).await?;
 
     let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .and_then(parse_admin_date)
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(7));
     let end: chrono::DateTime<chrono::Utc> = body.end_at.as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .and_then(parse_admin_date)
         .unwrap_or_else(chrono::Utc::now);
     let limit = body.limit.unwrap_or(10).min(50).max(1);
 
@@ -1184,12 +1191,10 @@ pub async fn get_retention(
     require_admin(&state, auth.account_id).await?;
 
     let start: chrono::DateTime<chrono::Utc> = body.start_at.as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .and_then(parse_admin_date)
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::days(30));
     let end: chrono::DateTime<chrono::Utc> = body.end_at.as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|d| d.with_timezone(&chrono::Utc))
+        .and_then(parse_admin_date)
         .unwrap_or_else(chrono::Utc::now);
     let frequency = match body.frequency.as_deref().unwrap_or("day") {
         "month" => "month",
