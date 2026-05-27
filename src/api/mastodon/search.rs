@@ -37,7 +37,7 @@ pub async fn search(
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<SearchResults>> {
     let limit = q.limit.unwrap_or(20).min(40).max(1);
-    let pattern = format!("%{}%", q.q.to_lowercase());
+    let account_pattern = format!("%{}%", q.q.to_lowercase());
     let search_type = q.search_type.as_deref();
     let viewer_id = auth.as_ref().map(|Extension(a)| a.account_id);
 
@@ -134,10 +134,11 @@ pub async fn search(
                        JOIN follows f ON f.target_account_id = a.id
                        LEFT JOIN account_stats ast ON ast.account_id = a.id
                        WHERE a.suspended_at IS NULL
+                         AND a.moved_to_account_id IS NULL
                          AND f.account_id = $3
                          AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
                        ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $4"#,
-                    pattern, limit, vid, offset
+                    account_pattern, limit, vid, offset
                 )
                 .fetch_all(&state.db)
                 .await?
@@ -147,9 +148,10 @@ pub async fn search(
                     r#"SELECT a.* FROM accounts a
                        LEFT JOIN account_stats ast ON ast.account_id = a.id
                        WHERE a.suspended_at IS NULL
+                         AND a.moved_to_account_id IS NULL
                          AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
                        ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $3"#,
-                    pattern, limit, offset
+                    account_pattern, limit, offset
                 )
                 .fetch_all(&state.db)
                 .await?
@@ -162,10 +164,11 @@ pub async fn search(
                    JOIN follows f ON f.target_account_id = a.id
                    LEFT JOIN account_stats ast ON ast.account_id = a.id
                    WHERE a.suspended_at IS NULL
+                     AND a.moved_to_account_id IS NULL
                      AND f.account_id = $3
                      AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
                    ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $4"#,
-                pattern, limit, vid, offset
+                account_pattern, limit, vid, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -175,9 +178,10 @@ pub async fn search(
                 r#"SELECT a.* FROM accounts a
                    LEFT JOIN account_stats ast ON ast.account_id = a.id
                    WHERE a.suspended_at IS NULL
+                     AND a.moved_to_account_id IS NULL
                      AND (lower(a.username) LIKE $1 OR lower(a.display_name) LIKE $1)
                    ORDER BY COALESCE(ast.followers_count, 0) DESC LIMIT $2 OFFSET $3"#,
-                pattern, limit, offset
+                account_pattern, limit, offset
             )
             .fetch_all(&state.db)
             .await?
@@ -299,9 +303,18 @@ pub async fn search(
     };
 
     let hashtags = if search_type.is_none() || search_type == Some("hashtags") {
+        // Strip leading # and use prefix match (Mastodon's matches_name scope)
+        let tag_term = q.q.trim().trim_start_matches('#').to_lowercase();
+        let tag_prefix = format!("{}%", tag_term);
+        let exclude_unreviewed = q.exclude_unreviewed.unwrap_or(false);
         sqlx::query!(
-            "SELECT id, name FROM tags WHERE lower(name) LIKE $1 ORDER BY name LIMIT $2 OFFSET $3",
-            pattern, limit, offset
+            r#"SELECT id, name FROM tags
+               WHERE lower(name) LIKE $1
+                 AND (listable IS NULL OR listable = true)
+                 AND (NOT $4::boolean OR reviewed_at IS NOT NULL OR lower(name) = $5)
+               ORDER BY LENGTH(name) ASC, name ASC
+               LIMIT $2 OFFSET $3"#,
+            tag_prefix, limit, offset, exclude_unreviewed, tag_term
         )
         .fetch_all(&state.db)
         .await?
