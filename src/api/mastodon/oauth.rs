@@ -7,6 +7,8 @@ use axum::{
 use serde::Deserialize;
 
 /// Extractor that accepts both JSON and form-encoded bodies.
+/// For non-JSON requests, parses the raw body as URL-encoded regardless of
+/// Content-Type, to stay compatible with clients that omit or vary the header.
 pub struct FormOrJson<T>(pub T);
 
 impl<T, S> FromRequest<S> for FormOrJson<T>
@@ -30,10 +32,14 @@ where
                 .map(|Json(v)| FormOrJson(v))
                 .map_err(IntoResponse::into_response)
         } else {
-            Form::<T>::from_request(req, state)
+            let bytes = axum::body::Bytes::from_request(req, state)
                 .await
-                .map(|Form(v)| FormOrJson(v))
-                .map_err(IntoResponse::into_response)
+                .map_err(IntoResponse::into_response)?;
+            serde_urlencoded::from_bytes::<T>(&bytes)
+                .map(FormOrJson)
+                .map_err(|e| {
+                    (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response()
+                })
         }
     }
 }
