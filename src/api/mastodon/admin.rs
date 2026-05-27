@@ -973,6 +973,28 @@ pub async fn get_measures(
     Ok(Json(result))
 }
 
+fn human_size(bytes: i64) -> String {
+    const KB: i64 = 1024;
+    const MB: i64 = 1024 * KB;
+    const GB: i64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn parse_redis_info_field(info: &str, field: &str) -> Option<String> {
+    info.lines()
+        .find(|l| l.starts_with(field))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .map(|v| v.trim().to_string())
+}
+
 // ── POST /api/v1/admin/dimensions ─────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1009,7 +1031,7 @@ pub async fn get_dimensions(
                     r#"SELECT COALESCE(a.domain, 'local') AS server, COUNT(*) AS n
                        FROM statuses s JOIN accounts a ON a.id = s.account_id
                        WHERE s.created_at BETWEEN $1 AND $2 AND s.deleted_at IS NULL
-                       GROUP BY server ORDER BY n DESC LIMIT $3"#,
+                       GROUP BY COALESCE(a.domain, 'local') ORDER BY n DESC LIMIT $3"#,
                     start, end, limit,
                 ).fetch_all(&state.db).await?;
                 serde_json::json!({
@@ -1064,6 +1086,73 @@ pub async fn get_dimensions(
                             "value": v, "unit": null, "human_value": v,
                         })
                     }).collect::<Vec<_>>(),
+                })
+            }
+            "software_versions" => {
+                let pg_version_raw: String = sqlx::query_scalar!("SELECT version()")
+                    .fetch_one(&state.db).await?
+                    .unwrap_or_default();
+                let pg_version = pg_version_raw
+                    .split_whitespace().nth(1).unwrap_or("unknown").to_string();
+
+                let mut redis = state.redis.clone();
+                let redis_info: String = redis::cmd("INFO")
+                    .arg("server")
+                    .query_async(&mut redis).await
+                    .unwrap_or_default();
+                let redis_version = parse_redis_info_field(&redis_info, "redis_version")
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let eunha_version = env!("CARGO_PKG_VERSION").to_string();
+
+                serde_json::json!({
+                    "key": key,
+                    "data": [
+                        {"key": "mastodon", "human_key": "Eunha", "value": eunha_version.clone(), "human_value": eunha_version},
+                        {"key": "postgresql", "human_key": "PostgreSQL", "value": pg_version.clone(), "human_value": pg_version},
+                        {"key": "redis", "human_key": "Redis", "value": redis_version.clone(), "human_value": redis_version},
+                    ],
+                })
+            }
+            "space_usage" => {
+                let pg_size: i64 = sqlx::query_scalar!(
+                    "SELECT pg_database_size(current_database())"
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+
+                let mut redis = state.redis.clone();
+                let redis_mem_info: String = redis::cmd("INFO")
+                    .arg("memory")
+                    .query_async(&mut redis).await
+                    .unwrap_or_default();
+                let redis_size: i64 = parse_redis_info_field(&redis_mem_info, "used_memory")
+                    .and_then(|v| v.parse().ok()).unwrap_or(0);
+
+                let media_size: i64 = sqlx::query_scalar!(
+                    r#"SELECT COALESCE(
+                        SUM(COALESCE(file_file_size, 0) + COALESCE(thumbnail_file_size, 0)),
+                        0
+                    ) FROM media_attachments"#
+                ).fetch_one(&state.db).await?.unwrap_or(0);
+
+                serde_json::json!({
+                    "key": key,
+                    "data": [
+                        {
+                            "key": "postgresql", "human_key": "PostgreSQL",
+                            "value": pg_size.to_string(), "unit": "bytes",
+                            "human_value": human_size(pg_size),
+                        },
+                        {
+                            "key": "redis", "human_key": "Redis",
+                            "value": redis_size.to_string(), "unit": "bytes",
+                            "human_value": human_size(redis_size),
+                        },
+                        {
+                            "key": "media", "human_key": "Media storage",
+                            "value": media_size.to_string(), "unit": "bytes",
+                            "human_value": human_size(media_size),
+                        },
+                    ],
                 })
             }
             _ => serde_json::json!({"key": key, "data": []}),
