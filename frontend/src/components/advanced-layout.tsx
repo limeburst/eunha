@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
+import { DragDropProvider, KeyboardSensor, PointerSensor } from '@dnd-kit/react'
+import { PointerActivationConstraints } from '@dnd-kit/dom'
+import { isSortable, useSortable } from '@dnd-kit/react/sortable'
+import { arrayMove } from '@dnd-kit/helpers'
 
 import { getToken } from '../auth.ts'
 import { cn } from '@/lib/utils.ts'
@@ -51,6 +55,76 @@ function PaneBody({
   )
 }
 
+// One column: a sortable whose header bar is the handle.
+//
+// What follows the cursor is this element itself — dnd-kit lifts the column
+// and leaves a hidden placeholder holding its place in the row. That is what
+// was wanted here and it is also the only sound choice: the `clone` feedback
+// would copy a live timeline, and a copy of a timeline is a second timeline,
+// mounting its own feed for as long as the drag lasted.
+function Pane({
+  id,
+  index,
+  onClose,
+  canClose,
+  token,
+  openCompose,
+}: {
+  id: PaneId
+  index: number
+  onClose: () => void
+  canClose: boolean
+  token: string | null
+  openCompose: ReturnType<typeof useComposeModal>['openCompose']
+}) {
+  const { ref, handleRef, isDragSource } = useSortable({
+    id,
+    index,
+    // `idle` so a column also slides when the order changes with no drag in
+    // progress — closing a pane, or a keyboard move that has already landed.
+    transition: { idle: true },
+  })
+
+  return (
+    <div ref={ref} className={cn('advanced-pane', isDragSource && 'shadow-xl')}>
+      <ColumnHeader title={paneTitle(id)} gripRef={handleRef}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Close ${paneTitle(id)}`}
+          title={
+            canClose ? `Close ${paneTitle(id)}` : 'The last column cannot be closed'
+          }
+          disabled={!canClose}
+          onClick={onClose}
+        >
+          <X />
+        </Button>
+      </ColumnHeader>
+      <div className="flex-1 space-y-2 overflow-y-auto p-3">
+        <PaneBody id={id} token={token} openCompose={openCompose} />
+      </div>
+    </div>
+  )
+}
+
+// A press on the bar has to move before it counts as picking the column up.
+//
+// Left alone, a mouse press on a handle starts a drag immediately, and that
+// costs the title its click: press and release, and a drag has been and gone
+// before the click can land. Touch keeps the press-and-hold the library uses
+// by default, so that a finger dragging a timeline scrolls it rather than
+// carrying the column off.
+const sensors = [
+  PointerSensor.configure({
+    activationConstraints: (event) =>
+      event.pointerType === 'touch'
+        ? [new PointerActivationConstraints.Delay({ value: 250, tolerance: 5 })]
+        : [new PointerActivationConstraints.Distance({ value: 5 })],
+  }),
+  KeyboardSensor,
+]
+
 // Kept in step with `.advanced-frame` and `.sidebar-frame` in styles.css.
 const RAIL_REM = 14
 const GAP_REM = 0.75
@@ -65,11 +139,6 @@ export function AdvancedLayout() {
   const [panes, setPanes] = useState<PaneId[]>(() => readPanes())
 
   const frameRef = useRef<HTMLDivElement>(null)
-  // The panes' own elements: what is drawn under the cursor while one of them
-  // is dragged, and what both the slide and the drop are measured from.
-  const paneNodes = useRef(new Map<PaneId, HTMLDivElement>())
-  // Where each pane sat at the last render, for the slide between orders.
-  const lefts = useRef(new Map<PaneId, number>())
 
   // Tells the stylesheet this layout is mounted: the rail's default `left`
   // assumes a centred reading column, which this does not have.
@@ -133,38 +202,6 @@ export function AdvancedLayout() {
     writePanes(next)
   }
 
-  // Columns slide to the place the reorder gave them rather than appearing in
-  // it. A pane that moves aside while another is dragged over it has to be
-  // seen doing so, or the row simply differs from one frame to the next and
-  // the reader is left to work out what changed.
-  //
-  // Measured after the layout effect above rather than before: closing a pane
-  // moves every other one twice over — once for the gap it leaves and once
-  // for the re-centring — and reading the position between the two would
-  // animate from a place the panes were never in.
-  useLayoutEffect(() => {
-    const was = lefts.current
-    const now = new Map<PaneId, number>()
-    for (const [id, node] of paneNodes.current) {
-      now.set(id, node.getBoundingClientRect().left)
-    }
-    lefts.current = now
-    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (was.size === 0 || still) return
-    for (const [id, node] of paneNodes.current) {
-      const from = was.get(id)
-      const to = now.get(id)
-      if (from === undefined || to === undefined || from === to) continue
-      // Put it back where it was without a transition, then take that away
-      // with one: the browser animates the difference rather than the layout.
-      node.style.transition = 'none'
-      node.style.transform = `translateX(${from - to}px)`
-      node.getBoundingClientRect()
-      node.style.transition = ''
-      node.style.transform = ''
-    }
-  }, [panes])
-
   // The last pane stays. Closing it would leave the layout with nothing in it
   // and no way back except the Add menu, which is a dead end rather than a
   // choice — and "advanced layout, showing nothing" is not a state worth being
@@ -177,143 +214,63 @@ export function AdvancedLayout() {
   const add = (id: PaneId) => update([...panes, id])
   const available = PANES.filter((p) => !panes.includes(p.id))
 
-  // Which pane the pointer is carrying, if any. The order the row was in when
-  // it was picked up is kept beside it — not to apply at the drop, which needs
-  // nothing applied, but to put back if the drag is abandoned.
-  const [dragging, setDragging] = useState<PaneId | null>(null)
-  const before = useRef<PaneId[]>([])
-
-  // Move a pane to where another one sits, closing the gap it leaves behind.
-  const moveTo = (id: PaneId, to: number) => {
-    const from = panes.indexOf(id)
-    if (from < 0 || to < 0 || to >= panes.length || to === from) return
-    const next = [...panes]
-    next.splice(to, 0, ...next.splice(from, 1))
-    update(next)
-  }
-
-  // Carrying a column out of the row and letting go there is how a drag is
-  // called off: the order goes back to the one it was picked up from.
-  const outsideRow = (at: { x: number; y: number }) => {
-    const box = frameRef.current?.getBoundingClientRect()
-    if (!box) return false
-    return at.x < box.left || at.x > box.right || at.y < box.top || at.y > box.bottom
-  }
-
-  // Which place in the row the pointer is over — measured from the row rather
-  // than read off whatever element is under the cursor.
-  //
-  // Asking what is under it is the obvious way and it flaps: a pane sliding
-  // into its new place is *drawn* where it used to be for as long as the slide
-  // lasts, so the pointer that just moved a column right is still over that
-  // column's old neighbour, and the next `dragover` moves it back. A drag
-  // creeping across one boundary was seen swapping and unswapping. The layout
-  // is unmoved by any of that — every pane is one width, so which place the
-  // pointer is in is arithmetic.
-  const placeUnder = (clientX: number) => {
-    const row = frameRef.current
-    const pane = paneNodes.current.values().next().value
-    if (!row || !pane) return -1
-    const style = getComputedStyle(row)
-    const step = pane.offsetWidth + (parseFloat(style.columnGap) || 0)
-    const pad = parseFloat(style.paddingLeft) || 0
-    const x = clientX - row.getBoundingClientRect().left + row.scrollLeft - pad
-    return Math.max(0, Math.min(panes.length - 1, Math.floor(x / step)))
-  }
-
   return (
     <>
       <TopBar />
-      <div
-        ref={frameRef}
-        className="advanced-frame"
-        // The row is the drop target, not each pane: what a place in it means
-        // is the row's arithmetic, and the gaps and the Add button at the end
-        // are as much a part of it as the columns are.
-        onDragOver={(e) => {
-          if (!dragging) return
-          e.preventDefault()
-          e.dataTransfer.dropEffect = 'move'
-          moveTo(dragging, placeUnder(e.clientX))
-        }}
-        // Nothing to apply at the drop: the row is already in the order the
-        // pointer left it in.
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(null)
+      {/* The row is one sortable list: the columns move aside as the pointer
+          passes and the order is committed when it is let go. */}
+      <DragDropProvider
+        sensors={sensors}
+        onDragEnd={(event) => {
+          // Commit the place the column was left in, not the one the drop
+          // landed on. Released anywhere but over another column there is no
+          // drop target at all — below the row, off the window — and the
+          // columns have been moving aside the whole time, so what is on
+          // screen is the answer to what was meant. Reading the target
+          // instead leaves the row showing an order that was never stored.
+          //
+          // Escape is the one exception, and the library puts the row back
+          // itself, so there is nothing to commit.
+          if (event.canceled) return
+          const { source } = event.operation
+          if (!isSortable(source)) return
+          update(arrayMove(panes, source.initialIndex, source.index))
         }}
       >
-        {panes.map((id, i) => (
-          <div
-            key={id}
-            ref={(node) => {
-              if (node) paneNodes.current.set(id, node)
-              else paneNodes.current.delete(id)
-            }}
-            className={cn('advanced-pane', dragging === id && 'opacity-40')}
-          >
-            <ColumnHeader
-              title={paneTitle(id)}
-              // A lone pane has no order to be in, so its bar is a plain
-              // header rather than a grip that can only put it back.
-              reorder={
-                panes.length > 1
-                  ? {
-                      column: () => paneNodes.current.get(id) ?? null,
-                      onDragStart: () => {
-                        before.current = panes
-                        setDragging(id)
-                      },
-                      onDragEnd: (at) => {
-                        if (outsideRow(at)) update(before.current)
-                        setDragging(null)
-                      },
-                      onMove: (by) => moveTo(id, i + by),
-                    }
-                  : undefined
-              }
-            >
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={`Close ${paneTitle(id)}`}
-                title={
-                  canClose
-                    ? `Close ${paneTitle(id)}`
-                    : 'The last column cannot be closed'
-                }
-                disabled={!canClose}
-                onClick={() => remove(id)}
-              >
-                <X />
-              </Button>
-            </ColumnHeader>
-            <div className="flex-1 space-y-2 overflow-y-auto p-3">
-              <PaneBody id={id} token={token} openCompose={openCompose} />
-            </div>
-          </div>
-        ))}
+        <div ref={frameRef} className="advanced-frame">
+          {panes.map((id, i) => (
+            <Pane
+              key={id}
+              id={id}
+              index={i}
+              onClose={() => remove(id)}
+              canClose={canClose}
+              token={token}
+              openCompose={openCompose}
+            />
+          ))}
 
-        {available.length > 0 && (
-          <div className="shrink-0 self-start pt-3">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<Button variant="outline" size="sm" />}
-                aria-label="Add a timeline"
-              >
-                <Plus /> Add
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {available.map((p) => (
-                  <DropdownMenuItem key={p.id} onClick={() => add(p.id)}>
-                    {p.title}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )}
-      </div>
+          {available.length > 0 && (
+            <div className="shrink-0 self-start pt-3">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<Button variant="outline" size="sm" />}
+                  aria-label="Add a timeline"
+                >
+                  <Plus /> Add
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {available.map((p) => (
+                    <DropdownMenuItem key={p.id} onClick={() => add(p.id)}>
+                      {p.title}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+        </div>
+      </DragDropProvider>
     </>
   )
 }
