@@ -179,3 +179,100 @@ test('the last pane cannot be closed', async ({ page }) => {
   await close.click({ force: true })
   await expect(page.locator('.advanced-pane')).toHaveCount(1)
 })
+
+// The order of the columns is the reader's, not ours. Dragging a header is
+// the way a pointer says so; the arrows are the way anything else does.
+test('a column can be dragged into a new place, and it sticks', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  const titles = page.locator('.advanced-pane > header > button')
+  await expect(titles).toHaveText(['Following', 'Notifications', 'Local'])
+
+  // Local, from the far end, onto Following at the near one.
+  await page
+    .locator('.advanced-pane')
+    .nth(2)
+    .locator('header')
+    .dragTo(page.locator('.advanced-pane').nth(0))
+  await expect(titles).toHaveText(['Local', 'Following', 'Notifications'])
+
+  // Stored, not just state: an order that forgets itself on reload is not an
+  // order anybody would arrange.
+  await page.reload()
+  await expect(titles).toHaveText(['Local', 'Following', 'Notifications'])
+
+  // The far end in one pass and let go. The row reorders as the pointer
+  // passes, and each pass costs a render, so a column crossing the whole row
+  // in one movement is the case that would land short of where it was
+  // dropped.
+  const centre = async (n: number) => {
+    const b = await page.locator('.advanced-pane').nth(n).boundingBox()
+    return { x: b!.x + b!.width / 2, y: b!.y + 12 }
+  }
+  const from = await centre(0)
+  const to = await centre(2)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y)
+  await page.mouse.up()
+  await expect(titles).toHaveText(['Following', 'Notifications', 'Local'])
+})
+
+// The row reorders under the pointer rather than at the drop, so a drag that
+// is called off has already moved things. Letting go of nothing puts them back.
+test('an abandoned drag leaves the order alone', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  const titles = page.locator('.advanced-pane > header > button')
+  await expect(titles).toHaveText(['Following', 'Notifications', 'Local'])
+
+  const pane = await page.locator('.advanced-pane').nth(0).boundingBox()
+  const last = await page.locator('.advanced-pane').nth(2).boundingBox()
+  await page.mouse.move(pane!.x + pane!.width / 2, pane!.y + 12)
+  await page.mouse.down()
+  // Out over the third column — the order moves — and then out of the row
+  // entirely, where there is nothing to drop onto. Twice, because the first
+  // move while held is what starts the drag; the second is what is dragged
+  // *over* something.
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + 12)
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + 14)
+  await expect(titles).toHaveText(['Notifications', 'Local', 'Following'])
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + last!.height + 40)
+  await page.mouse.up()
+
+  await expect(titles).toHaveText(['Following', 'Notifications', 'Local'])
+  await page.reload()
+  await expect(titles).toHaveText(['Following', 'Notifications', 'Local'])
+})
+
+// Dragging is the only move a mouse offers and the one nothing else can make,
+// so the same move is on the arrow keys, from the header\'s own controls.
+test('a column can be moved with the arrow keys', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  const titles = page.locator('.advanced-pane > header > button')
+  await titles.nth(0).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(titles).toHaveText(['Notifications', 'Following', 'Local'])
+
+  // Focus travels with the column rather than staying at the position, so a
+  // second press carries on moving the same one.
+  await page.keyboard.press('ArrowRight')
+  await expect(titles).toHaveText(['Notifications', 'Local', 'Following'])
+
+  // And it stops at the end rather than wrapping around to the front.
+  await page.keyboard.press('ArrowRight')
+  await expect(titles).toHaveText(['Notifications', 'Local', 'Following'])
+
+  await page.keyboard.press('ArrowLeft')
+  await expect(titles).toHaveText(['Notifications', 'Following', 'Local'])
+})

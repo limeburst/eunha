@@ -138,13 +138,87 @@ export function AdvancedLayout() {
   const add = (id: PaneId) => update([...panes, id])
   const available = PANES.filter((p) => !panes.includes(p.id))
 
+  // Which pane the pointer is carrying, if any. The order the row was in when
+  // it was picked up is kept beside it — not to apply at the drop, which needs
+  // nothing applied, but to put back if the drag is abandoned.
+  const [dragging, setDragging] = useState<PaneId | null>(null)
+  const before = useRef<PaneId[]>([])
+
+  // Move a pane to where another one sits, closing the gap it leaves behind.
+  const moveTo = (id: PaneId, to: number) => {
+    const from = panes.indexOf(id)
+    if (from < 0 || to < 0 || to >= panes.length || to === from) return
+    const next = [...panes]
+    next.splice(to, 0, ...next.splice(from, 1))
+    update(next)
+  }
+
+  // Carrying a column out of the row and letting go there is how a drag is
+  // called off: the order goes back to the one it was picked up from.
+  const outsideRow = (at: { x: number; y: number }) => {
+    const box = frameRef.current?.getBoundingClientRect()
+    if (!box) return false
+    return at.x < box.left || at.x > box.right || at.y < box.top || at.y > box.bottom
+  }
+
+  // Reordering happens as the pointer passes rather than at the drop: the pane
+  // being dragged takes the place of whichever one it is over, so the row
+  // always shows the order that letting go would leave. That needs no
+  // insertion line to read, and it cannot oscillate — every pane is one width,
+  // so a swap leaves the dragged pane, not a boundary, back under the pointer.
+  const dragOver = (over: PaneId) => {
+    if (!dragging || over === dragging) return
+    moveTo(dragging, panes.indexOf(over))
+  }
+
   return (
     <>
       <TopBar />
       <div ref={frameRef} className="advanced-frame">
-        {panes.map((id) => (
-          <div key={id} className="advanced-pane">
-            <ColumnHeader title={paneTitle(id)}>
+        {panes.map((id, i) => (
+          <div
+            key={id}
+            className="advanced-pane"
+            // The whole pane is the target, not just its header: aiming at a
+            // 2rem bar to say "here" is harder than aiming at the column it
+            // belongs to, and the column is what is being placed.
+            onDragOver={(e) => {
+              if (!dragging) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              dragOver(id)
+            }}
+            // Nothing to apply at the drop: the row is already in the order
+            // the pointer left it in. Settling it once more against whatever
+            // is under the cursor was tried and is wrong — the pane the last
+            // `dragover` named has by then been pushed along by that very
+            // swap, so re-reading it moves the dragged pane one place too far.
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragging(null)
+            }}
+          >
+            <ColumnHeader
+              title={paneTitle(id)}
+              // A lone pane has no order to be in, so its bar is a plain
+              // header rather than a grip that can only put it back.
+              reorder={
+                panes.length > 1
+                  ? {
+                      dragging: dragging === id,
+                      onDragStart: () => {
+                        before.current = panes
+                        setDragging(id)
+                      },
+                      onDragEnd: (at) => {
+                        if (outsideRow(at)) update(before.current)
+                        setDragging(null)
+                      },
+                      onMove: (by) => moveTo(id, i + by),
+                    }
+                  : undefined
+              }
+            >
               <Button
                 variant="ghost"
                 size="icon"
