@@ -254,6 +254,30 @@ test('the whole bar is the grip, except the close button', async ({ page }) => {
   await expect(page.locator('.advanced-pane')).toHaveCount(3)
 })
 
+// The bar says it can be picked up by the cursor it shows, and the title is
+// the widest part of it. A button carries a cursor of its own, so left alone
+// the grip looks like it stops at the padding around the words.
+test('the whole bar shows a cursor that says it can be dragged', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  const cursors = await page.evaluate(() => {
+    const bar = document.querySelector('.advanced-pane > header')!
+    const buttons = bar.querySelectorAll('button')
+    return {
+      bar: getComputedStyle(bar).cursor,
+      title: getComputedStyle(buttons[0]).cursor,
+      close: getComputedStyle(buttons[1]).cursor,
+    }
+  })
+  expect(cursors.bar).toBe('grab')
+  expect(cursors.title).toBe('grab')
+  // And the close button does not claim to be a grip, because it is not one.
+  expect(cursors.close).not.toBe('grab')
+})
+
 // The bar being a handle must not cost the title its click: pressing on the
 // handle is where a drag begins, and a press that never moves is still a
 // click that scrolls the column back to the top.

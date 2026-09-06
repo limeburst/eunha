@@ -43,13 +43,20 @@ export function ColumnHeader({
       aria-label={gripRef ? `${title} column` : undefined}
       className={cn(
         'bg-card/85 sticky top-0 z-30 flex items-center gap-2 rounded-t-lg border-b px-3 py-2 backdrop-blur',
-        gripRef && 'cursor-grab active:cursor-grabbing',
+        // Always a definite cursor, because the title inherits it: left to
+        // `auto` the title's own text would put an I-beam in the middle of a
+        // bar you cannot select anything in.
+        gripRef ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
         className,
       )}
     >
       <button
         type="button"
-        className="min-w-0 flex-1 truncate text-left text-sm font-semibold"
+        // `cursor-[inherit]` so the title reads as part of the handle it sits
+        // in. The bar sets the cursor, but preflight sets one on every button,
+        // and the title is the widest part of the bar — so the grip looked
+        // like it stopped at the padding.
+        className="min-w-0 flex-1 cursor-[inherit] truncate text-left text-sm font-semibold"
         title={gripRef ? 'Drag to reorder, or press Space and use the arrows' : undefined}
         onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
       >
