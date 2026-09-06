@@ -221,6 +221,136 @@ test('a column can be dragged into a new place, and it sticks', async ({ page })
   await expect(titles).toHaveText(['Following', 'Notifications', 'Local'])
 })
 
+// The bar is the grip, all of it: the title, the space either side of it, the
+// padding above and below. Only the controls at the end are not, because
+// pressing Close is not a way to start moving a column.
+test('the whole bar is the grip, except the close button', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  const titles = page.locator('.advanced-pane > header > button')
+  const header = page.locator('.advanced-pane > header').first()
+  const box = (await header.boundingBox())!
+
+  // Above the title, where the bar is padding and nothing else.
+  const second = (await page.locator('.advanced-pane').nth(1).boundingBox())!
+  await page.mouse.move(box.x + 40, box.y + 3)
+  await page.mouse.down()
+  await page.mouse.move(second.x + second.width / 2, box.y + 3)
+  await page.mouse.up()
+  await expect(titles).toHaveText(['Notifications', 'Following', 'Local'])
+
+  // And the close button moves nothing — nor does the drag that was refused
+  // leave a click behind that closes the column.
+  const close = page.getByRole('button', { name: 'Close Notifications' })
+  const cb = (await close.boundingBox())!
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(cb.x + 200, cb.y)
+  await page.mouse.up()
+  await expect(titles).toHaveText(['Notifications', 'Following', 'Local'])
+  await expect(page.locator('.advanced-pane')).toHaveCount(3)
+})
+
+// A pane sliding into its new place is drawn where it used to be for as long
+// as the slide lasts, so a drop decided by what is under the cursor puts the
+// column back where it came from: creeping across one boundary was seen
+// swapping and unswapping, ending where it started. The place is measured off
+// the row instead, which the slide does not move.
+test('creeping across a boundary settles on one order', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  const header = page.locator('.advanced-pane > header').first()
+  const hb = (await header.boundingBox())!
+  const second = (await page.locator('.advanced-pane').nth(1).boundingBox())!
+  const read = async () =>
+    (await page.locator('.advanced-pane > header > button').allTextContents()).join()
+
+  const seen: string[] = []
+  await page.mouse.move(hb.x + 40, hb.y + 3)
+  await page.mouse.down()
+  for (let x = hb.x + 60; x < second.x + second.width - 20; x += 12) {
+    await page.mouse.move(x, hb.y + 3)
+    const now = await read()
+    if (seen[seen.length - 1] !== now) seen.push(now)
+  }
+  await page.mouse.up()
+
+  expect(seen).toEqual(['Following,Notifications,Local', 'Notifications,Following,Local'])
+  expect(await read()).toBe('Notifications,Following,Local')
+})
+
+// What follows the cursor is the column, not the bar it was picked up by.
+test('the column is what is drawn under the cursor', async ({ page }) => {
+  await signedIn(page)
+  await page.addInitScript(() => {
+    const real = DataTransfer.prototype.setDragImage
+    ;(window as never as { __ghost: string[] }).__ghost = []
+    DataTransfer.prototype.setDragImage = function (el, x, y) {
+      ;(window as never as { __ghost: string[] }).__ghost.push(
+        (el as HTMLElement).className,
+      )
+      return real.call(this, el, x, y)
+    }
+  })
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  await page
+    .locator('.advanced-pane')
+    .nth(0)
+    .locator('header')
+    .dragTo(page.locator('.advanced-pane').nth(1))
+
+  const ghost = await page.evaluate(
+    () => (window as never as { __ghost: string[] }).__ghost,
+  )
+  expect(ghost).toHaveLength(1)
+  expect(ghost[0]).toContain('advanced-pane')
+})
+
+// A column that moves aside has to be seen doing it, or the row simply differs
+// from one frame to the next and the reader has to work out what changed.
+test('columns slide into their new places', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/settings')
+  await page.getByRole('switch').first().click()
+  await page.goto('/')
+
+  await page.evaluate(() => {
+    ;(window as never as { __slid: string[] }).__slid = []
+    document.addEventListener(
+      'transitionstart',
+      (e) => {
+        const t = e as TransitionEvent
+        if (t.propertyName === 'transform') {
+          ;(window as never as { __slid: string[] }).__slid.push(
+            (t.target as HTMLElement).className,
+          )
+        }
+      },
+      true,
+    )
+  })
+
+  const titles = page.locator('.advanced-pane > header > button')
+  await titles.nth(0).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(titles).toHaveText(['Notifications', 'Following', 'Local'])
+
+  // Both of the two that changed places, not just the one that was moved.
+  const slid = await page.evaluate(
+    () => (window as never as { __slid: string[] }).__slid,
+  )
+  expect(slid.filter((c) => c.includes('advanced-pane'))).toHaveLength(2)
+})
+
 // The row reorders under the pointer rather than at the drop, so a drag that
 // is called off has already moved things. Letting go of nothing puts them back.
 test('an abandoned drag leaves the order alone', async ({ page }) => {

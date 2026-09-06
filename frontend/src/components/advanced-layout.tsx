@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Plus, X } from 'lucide-react'
 
 import { getToken } from '../auth.ts'
+import { cn } from '@/lib/utils.ts'
 import { PANES, paneTitle, readPanes, writePanes, type PaneId } from '../lib/panes.ts'
 import { TopBar } from '@/components/top-bar.tsx'
 import { ColumnHeader } from '@/components/column-header.tsx'
@@ -64,6 +65,11 @@ export function AdvancedLayout() {
   const [panes, setPanes] = useState<PaneId[]>(() => readPanes())
 
   const frameRef = useRef<HTMLDivElement>(null)
+  // The panes' own elements: what is drawn under the cursor while one of them
+  // is dragged, and what both the slide and the drop are measured from.
+  const paneNodes = useRef(new Map<PaneId, HTMLDivElement>())
+  // Where each pane sat at the last render, for the slide between orders.
+  const lefts = useRef(new Map<PaneId, number>())
 
   // Tells the stylesheet this layout is mounted: the rail's default `left`
   // assumes a centred reading column, which this does not have.
@@ -126,6 +132,39 @@ export function AdvancedLayout() {
     setPanes(next)
     writePanes(next)
   }
+
+  // Columns slide to the place the reorder gave them rather than appearing in
+  // it. A pane that moves aside while another is dragged over it has to be
+  // seen doing so, or the row simply differs from one frame to the next and
+  // the reader is left to work out what changed.
+  //
+  // Measured after the layout effect above rather than before: closing a pane
+  // moves every other one twice over — once for the gap it leaves and once
+  // for the re-centring — and reading the position between the two would
+  // animate from a place the panes were never in.
+  useLayoutEffect(() => {
+    const was = lefts.current
+    const now = new Map<PaneId, number>()
+    for (const [id, node] of paneNodes.current) {
+      now.set(id, node.getBoundingClientRect().left)
+    }
+    lefts.current = now
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (was.size === 0 || still) return
+    for (const [id, node] of paneNodes.current) {
+      const from = was.get(id)
+      const to = now.get(id)
+      if (from === undefined || to === undefined || from === to) continue
+      // Put it back where it was without a transition, then take that away
+      // with one: the browser animates the difference rather than the layout.
+      node.style.transition = 'none'
+      node.style.transform = `translateX(${from - to}px)`
+      node.getBoundingClientRect()
+      node.style.transition = ''
+      node.style.transform = ''
+    }
+  }, [panes])
+
   // The last pane stays. Closing it would leave the layout with nothing in it
   // and no way back except the Add menu, which is a dead end rather than a
   // choice — and "advanced layout, showing nothing" is not a state worth being
@@ -161,42 +200,57 @@ export function AdvancedLayout() {
     return at.x < box.left || at.x > box.right || at.y < box.top || at.y > box.bottom
   }
 
-  // Reordering happens as the pointer passes rather than at the drop: the pane
-  // being dragged takes the place of whichever one it is over, so the row
-  // always shows the order that letting go would leave. That needs no
-  // insertion line to read, and it cannot oscillate — every pane is one width,
-  // so a swap leaves the dragged pane, not a boundary, back under the pointer.
-  const dragOver = (over: PaneId) => {
-    if (!dragging || over === dragging) return
-    moveTo(dragging, panes.indexOf(over))
+  // Which place in the row the pointer is over — measured from the row rather
+  // than read off whatever element is under the cursor.
+  //
+  // Asking what is under it is the obvious way and it flaps: a pane sliding
+  // into its new place is *drawn* where it used to be for as long as the slide
+  // lasts, so the pointer that just moved a column right is still over that
+  // column's old neighbour, and the next `dragover` moves it back. A drag
+  // creeping across one boundary was seen swapping and unswapping. The layout
+  // is unmoved by any of that — every pane is one width, so which place the
+  // pointer is in is arithmetic.
+  const placeUnder = (clientX: number) => {
+    const row = frameRef.current
+    const pane = paneNodes.current.values().next().value
+    if (!row || !pane) return -1
+    const style = getComputedStyle(row)
+    const step = pane.offsetWidth + (parseFloat(style.columnGap) || 0)
+    const pad = parseFloat(style.paddingLeft) || 0
+    const x = clientX - row.getBoundingClientRect().left + row.scrollLeft - pad
+    return Math.max(0, Math.min(panes.length - 1, Math.floor(x / step)))
   }
 
   return (
     <>
       <TopBar />
-      <div ref={frameRef} className="advanced-frame">
+      <div
+        ref={frameRef}
+        className="advanced-frame"
+        // The row is the drop target, not each pane: what a place in it means
+        // is the row's arithmetic, and the gaps and the Add button at the end
+        // are as much a part of it as the columns are.
+        onDragOver={(e) => {
+          if (!dragging) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          moveTo(dragging, placeUnder(e.clientX))
+        }}
+        // Nothing to apply at the drop: the row is already in the order the
+        // pointer left it in.
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(null)
+        }}
+      >
         {panes.map((id, i) => (
           <div
             key={id}
-            className="advanced-pane"
-            // The whole pane is the target, not just its header: aiming at a
-            // 2rem bar to say "here" is harder than aiming at the column it
-            // belongs to, and the column is what is being placed.
-            onDragOver={(e) => {
-              if (!dragging) return
-              e.preventDefault()
-              e.dataTransfer.dropEffect = 'move'
-              dragOver(id)
+            ref={(node) => {
+              if (node) paneNodes.current.set(id, node)
+              else paneNodes.current.delete(id)
             }}
-            // Nothing to apply at the drop: the row is already in the order
-            // the pointer left it in. Settling it once more against whatever
-            // is under the cursor was tried and is wrong — the pane the last
-            // `dragover` named has by then been pushed along by that very
-            // swap, so re-reading it moves the dragged pane one place too far.
-            onDrop={(e) => {
-              e.preventDefault()
-              setDragging(null)
-            }}
+            className={cn('advanced-pane', dragging === id && 'opacity-40')}
           >
             <ColumnHeader
               title={paneTitle(id)}
@@ -205,7 +259,7 @@ export function AdvancedLayout() {
               reorder={
                 panes.length > 1
                   ? {
-                      dragging: dragging === id,
+                      column: () => paneNodes.current.get(id) ?? null,
                       onDragStart: () => {
                         before.current = panes
                         setDragging(id)

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 
 import { cn } from '@/lib/utils.ts'
 
@@ -14,7 +14,8 @@ export type ColumnReorder = {
   onDragEnd: (at: { x: number; y: number }) => void
   /** Move this column one place left (-1) or right (1). */
   onMove: (by: -1 | 1) => void
-  dragging: boolean
+  /** The column this bar heads, which is what is drawn under the cursor. */
+  column: () => HTMLElement | null
 }
 
 /**
@@ -47,17 +48,47 @@ export function ColumnHeader({
   /** Present where the column can be moved; absent where it cannot. */
   reorder?: ColumnReorder
 }) {
+  const controls = useRef<HTMLDivElement>(null)
+
   return (
     <header
       draggable={reorder ? true : undefined}
       onDragStart={
         reorder &&
         ((e) => {
+          // A press on the column's own controls is not a grip on the column.
+          // `draggable={false}` on them does not say so — the browser looks
+          // for the nearest draggable *ancestor* of what was pressed, and
+          // finds this bar either way — so the press is placed by hand.
+          const box = controls.current?.getBoundingClientRect()
+          if (
+            box &&
+            e.clientX >= box.left &&
+            e.clientX <= box.right &&
+            e.clientY >= box.top &&
+            e.clientY <= box.bottom
+          ) {
+            e.preventDefault()
+            return
+          }
           // Firefox starts no drag at all without something on the transfer,
           // even where — as here — nothing reads it back: the order is moved
           // as the pointer passes, not decided from a payload at the drop.
           e.dataTransfer.effectAllowed = 'move'
           e.dataTransfer.setData('text/plain', title)
+          // Drag the column, not the bar. Left to itself the browser draws
+          // the element the drag started on, and a 3rem strip of translucent
+          // header under the cursor reads as though the title alone had come
+          // away from the column it belongs to.
+          const column = reorder.column()
+          if (column) {
+            const rect = column.getBoundingClientRect()
+            e.dataTransfer.setDragImage(
+              column,
+              e.clientX - rect.left,
+              e.clientY - rect.top,
+            )
+          }
           reorder.onDragStart()
         })
       }
@@ -82,7 +113,6 @@ export function ColumnHeader({
       className={cn(
         'bg-card/85 sticky top-0 z-30 flex items-center gap-2 rounded-t-lg border-b px-3 py-2 backdrop-blur',
         reorder && 'cursor-grab active:cursor-grabbing',
-        reorder?.dragging && 'opacity-50',
         className,
       )}
     >
@@ -94,7 +124,13 @@ export function ColumnHeader({
       >
         {title}
       </button>
-      {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}
+      {children && (
+        // Not a place to pick the column up from: these are the things a
+        // column can do, and closing one is not a way to start moving it.
+        <div ref={controls} className="flex shrink-0 items-center gap-1">
+          {children}
+        </div>
+      )}
     </header>
   )
 }

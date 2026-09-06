@@ -179,8 +179,13 @@
     }
   }
 
+  /* The transition is the one half of the slide between orders that belongs
+     in a stylesheet: the layout puts a moved pane back where it was with the
+     transition off, then lets go of both, and this is what it animates with.
+     Nothing else transforms a pane, so it costs nothing when nothing moves. */
   .advanced-pane {
     @apply bg-card flex w-[24rem] shrink-0 flex-col overflow-hidden rounded-lg border;
+    @apply transition-transform duration-200 ease-out motion-reduce:transition-none;
   }
 
   .sidebar-frame {
