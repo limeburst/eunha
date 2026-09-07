@@ -42,7 +42,10 @@ export function ColumnHeader({
       // Following" — every control in the bar, run together.
       aria-label={gripRef ? `${title} column` : undefined}
       className={cn(
-        'bg-card/85 sticky top-0 z-30 flex items-center gap-2 rounded-t-lg border-b px-3 py-2 backdrop-blur',
+        // `md:rounded-t-lg` because the corners are the card's, and below `md`
+        // there is no card — a radius there would round this bar away from
+        // edges it is meant to reach.
+        'bg-card/85 sticky top-0 z-30 flex items-center gap-2 border-b px-3 py-2 backdrop-blur md:rounded-t-lg',
         // Always a definite cursor, because the title inherits it: left to
         // `auto` the title's own text would put an I-beam in the middle of a
         // bar you cannot select anything in.

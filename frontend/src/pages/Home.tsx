@@ -1,5 +1,6 @@
 import { getToken } from '../auth.ts'
 import { isAdvancedLayout } from '../lib/panes.ts'
+import { useIsMobile } from '@/hooks/use-mobile.ts'
 import { TopBar } from '@/components/top-bar.tsx'
 import { StatusFeed } from '@/components/status-feed.tsx'
 import { ColumnHeader } from '@/components/column-header.tsx'
@@ -15,9 +16,19 @@ import PublicTimeline from './PublicTimeline.tsx'
 // A dispatcher rather than a branch inside the timeline: signing in or out
 // reloads the page, so the two never swap under a mounted component, and each
 // keeps its own hooks. The advanced layout joins it on the same terms.
+//
+// A narrow screen overrides the preference rather than consulting it. The
+// advanced layout is a row of 24rem panes that scrolls sideways, which on a
+// phone is one column you cannot see the edges of and a second you have to
+// swipe the first away to reach — so it is not a worse way to read a phone,
+// it is not a way to read a phone. The setting is per browser, so a phone can
+// already be left on the single column; this covers the two cases that are
+// not a choice anyone made — a desktop browser dragged narrow, and the same
+// browser profile syncing its localStorage to a phone.
 export default function Home() {
+  const isMobile = useIsMobile()
   if (!getToken()) return <PublicTimeline local />
-  return isAdvancedLayout() ? <AdvancedLayout /> : <HomeTimeline />
+  return isAdvancedLayout() && !isMobile ? <AdvancedLayout /> : <HomeTimeline />
 }
 
 function HomeTimeline() {

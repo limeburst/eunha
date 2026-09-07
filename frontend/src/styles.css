@@ -172,22 +172,29 @@
 }
 
 @layer components {
+  /* Both frames are written phone first, and both become cards at `md`.
+     Below it there is no margin for a card to sit in: its border lands on the
+     bezel, where a hairline reads as an artefact of the screen rather than an
+     edge around anything, and the radius clips content for nothing. So the
+     frame simply *is* the screen, and the card — border, radius, the margins
+     that let it float — arrives with the room to show it.
+
+     `md` and not a width of its own: it is where `.sidebar-frame` swaps the
+     drawer for the rail and where `MobileHeader` hides, and one crossover for
+     the whole layout is worth more than a nicety in the band below it. */
   .page-frame {
-    @apply mx-auto min-h-screen max-w-2xl border-x px-3 py-3;
+    @apply mx-auto min-h-screen max-w-2xl px-3 py-3;
+
+    /* What `.mobile-header` has to escape to reach this frame's edges. Unset
+       everywhere else, and it reads the fallback as zero. */
+    --frame-gutter: 0.75rem;
   }
 
-  /* A column that carries a `ColumnHeader` is a card: the header caps it and
-     the border wraps the whole, so it needs no padding of its own. */
+  /* A column that carries a `ColumnHeader` needs no padding of its own: the
+     header caps it, and at `md` the border wraps the whole. */
   .column-frame {
-    @apply bg-card mx-auto my-3 max-w-2xl rounded-lg border;
-    min-height: calc(100vh - 1.5rem);
-  }
-
-  @media (min-width: 768px) {
-    .column-frame {
-      margin-left: max(50% - 21rem, 15.75rem);
-      margin-right: auto;
-    }
+    @apply bg-card;
+    min-height: 100vh;
   }
 
   /* At `md` and up the fixed `.sidebar-frame` (14rem) floats in the left
@@ -197,9 +204,38 @@
      crossover mirrors `.sidebar-frame`'s `left`, keeping the gap constant. */
   @media (min-width: 768px) {
     .page-frame {
+      @apply border-x;
       margin-left: max(50% - 21rem, 15.75rem);
       margin-right: auto;
     }
+
+    .column-frame {
+      @apply my-3 max-w-2xl rounded-lg border;
+      min-height: calc(100vh - 1.5rem);
+      margin-left: max(50% - 21rem, 15.75rem);
+      margin-right: auto;
+    }
+  }
+
+  /* The small-screen header spans its container edge to edge and supplies its
+     own padding, so the menu button sits at the same margin as the posts
+     below it wherever the header is mounted. It has to, because that differs:
+     a column page puts `TopBar` outside the frame, where there is no padding
+     to sit in — the button was landing at -4px, half of it off the screen —
+     while a `.page-frame` page puts it inside, where the frame's own 0.75rem
+     would indent the header and its rule along with it. Reading the gutter
+     from the parent settles both without moving `TopBar` on seventeen pages.
+
+     The same number does the vertical: negative at the top so the bar starts
+     at the screen's edge in both, and positive at the bottom, which is the
+     one place the two layouts genuinely want different things. A column page
+     has a `ColumnHeader` directly below and the two rules should meet; a
+     `.page-frame` page has body text, which should not begin against a rule.
+     Both fall out of the gutter being 0 in the first case. */
+  .mobile-header {
+    margin-inline: calc(var(--frame-gutter, 0px) * -1);
+    margin-block: calc(var(--frame-gutter, 0px) * -1) var(--frame-gutter, 0px);
+    padding-inline: 0.75rem;
   }
 
   /* The advanced layout: a row of panes, each scrolling on its own, that

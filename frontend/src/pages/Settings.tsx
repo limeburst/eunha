@@ -163,8 +163,9 @@ export default function Settings() {
           <section className="space-y-2 rounded-lg border p-4">
             <h2 className="font-semibold">Layout</h2>
             <p className="text-muted-foreground text-sm">
-              Show several timelines side by side instead of one column. Stored in
-              this browser, so a phone can stay on the single column.
+              Show several timelines side by side instead of one column. Stored
+              in this browser, and only used on a wide one — a narrow screen
+              stays on the single column whatever this says.
             </p>
             <Label className="text-sm font-normal">
               <Switch

@@ -439,12 +439,17 @@ function MobileHeader({
   const navigate = useNavigate()
 
   return (
-    <header className="mb-3 flex items-center gap-2 border-b pb-2 md:hidden">
-      <SidebarTrigger className="-ml-1" aria-label="Open menu" />
-      <Link to="/" className="text-lg font-semibold no-underline">
+    // Even padding rather than the old `pb-2` with none above: the bar's rule
+    // sits directly on the column header's below it, and a row taller on one
+    // side than the other reads as a mistake once there is nothing between
+    // them. `.mobile-header` supplies the horizontal half — see styles.css,
+    // which explains why it cannot simply be `px-3` here.
+    <header className="mobile-header flex items-center gap-2 border-b py-2 md:hidden">
+      <SidebarTrigger aria-label="Open menu" />
+      <Link to="/" className="min-w-0 truncate text-lg font-semibold no-underline">
         {title}
       </Link>
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {token ? (
           <Button size="sm" onClick={() => openCompose()}>
             <PenLine /> New post
