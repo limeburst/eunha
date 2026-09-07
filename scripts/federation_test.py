@@ -94,6 +94,17 @@ class Server:
             return None, {"transport_error": str(e)}
 
 
+# A follow that crosses to Mastodon is the slowest wait here: the Follow goes
+# out, Sidekiq picks it up, and the Accept has to come back before either side
+# will say so. The default budget was tuned against the local waits, which are
+# one queue hop, and on a cold CI runner it is the round trip that runs out of
+# room — `mastodon→eunha: receiver follows the sender` failed on fa9b0e2 with no
+# server code changed in the range, and passed on the next commit. Waiting
+# longer is free on a passing run, since `until` returns the moment its
+# predicate holds; the budget is only spent on a run that would otherwise fail.
+FOLLOW_ROUND_TRIP = 60
+
+
 def until(predicate, seconds=25, interval=1.0):
     """Poll, because delivery is a queue on both sides, not a function call."""
     deadline = time.time() + seconds
@@ -209,7 +220,7 @@ def run_direction(sender, receiver, sender_acct, receiver_acct, report):
         )
         return st == 200 and bool(rels) and rels[0].get("following") is True
 
-    if not until(follows_back):
+    if not until(follows_back, seconds=FOLLOW_ROUND_TRIP):
         report.check(direction, "receiver follows the sender", False,
                      "without this a status has nowhere to be delivered")
         return
@@ -313,7 +324,7 @@ def check_shared_inbox(eunha, mastodon, second, mastodon_acct, report):
         local = [a for a in (followers or []) if "@" in (a.get("acct") or "")]
         return len(local) >= 2
 
-    if not until(both_follow, seconds=30):
+    if not until(both_follow, seconds=FOLLOW_ROUND_TRIP):
         report.check(direction, "shared inbox: a second local account follows",
                      False, "Mastodon still sees one follower, so it would not "
                             "use the shared inbox")
