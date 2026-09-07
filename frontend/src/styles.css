@@ -4,6 +4,15 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* Windows and Linux paint a scrollbar from the UA's own palette rather than
+     the page's, so every scroller keeps a light bar over a dark page until the
+     page says which it is — the window's own, the panes of the advanced
+     layout, a scrolling menu, a textarea. macOS hides that behind overlay
+     scrollbars, which is why it goes unseen here. `color-scheme` inherits, so
+     declaring it on the root and on `.dark` settles all of them at once, along
+     with the form controls the UA draws the same way. */
+  color-scheme: light;
+
   /* Straight from the logo, by way of the eunha.social landing page: navy,
      cream, mint, lilac. The accent is mint darkened until it clears 4.5:1 on
      cream — the same adjustment the landing page makes, for the same reason. */
@@ -47,6 +56,8 @@
 }
 
 .dark {
+  color-scheme: dark;
+
   /* Navy ground, cream ink, and mint bright enough to carry links and buttons
      without darkening — the inversion the landing page makes. */
   --background: var(--brand-navy);
