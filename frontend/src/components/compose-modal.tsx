@@ -162,7 +162,15 @@ export function ComposeModalProvider({ children }: { children: ReactNode }) {
                 </div>
                 {/* Kept mounted while minimised so a draft survives being set
                     aside — that is the whole point of minimising. */}
-                <div className={cn('flex-1 overflow-y-auto', minimized && 'hidden')}>
+                <div
+                  className={cn(
+                    // A column, so the composer inside can hand its spare
+                    // height to the writing area instead of leaving it under
+                    // the buttons.
+                    'flex flex-1 flex-col overflow-y-auto',
+                    minimized && 'hidden',
+                  )}
+                >
                   <Compose
                     token={token}
                     replyTo={replyTo}

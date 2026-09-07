@@ -261,7 +261,9 @@ export function Compose({
     (text.trim().length > 0 || attachments.length > 0 || !!quoteOf) && !uploading
 
   const content = (
-    <CardContent className="space-y-2 px-4">
+    // A column that fills whatever it is given, so the textarea below can take
+    // the slack. Everything else here is its natural height.
+    <CardContent className="flex flex-1 flex-col space-y-2 px-4">
         {replyTo && (
           <div className="text-muted-foreground flex items-center justify-between text-xs">
             <span>Replying to @{replyTo.account.acct}</span>
@@ -306,7 +308,13 @@ export function Compose({
           </p>
         )}
 
-        <div className="relative">
+        {/* The one child that grows. The panel reserves 520px on a wide
+            screen and the whole screen on a phone, and all of that used to
+            pile up below the Post button — 205px of nothing on a desktop and
+            497px on a phone — while the writing itself happened in a 160px
+            box. `min-h-40` stays as the floor for when there is no slack to
+            take. */}
+        <div className="relative flex flex-1 flex-col">
           <Textarea
             ref={textareaRef}
             // Borderless, like 5.0's: the panel is the frame, so the field
@@ -316,7 +324,19 @@ export function Compose({
             // there is a cursor to see. `dark:bg-transparent` is needed too:
             // the shadcn base tints textareas in dark mode.
             className={cn(
-              'min-h-40 resize-none border-0 bg-transparent px-1 shadow-none dark:bg-transparent',
+              // Two things are needed to make the field *be* the space.
+              //
+              // `flex-1`, not `h-full`: the wrapper's height comes from the
+              // flex algorithm, and a percentage against that resolves to
+              // `auto` — which left the field at its 160px floor inside a box
+              // that had grown to fill the panel, moving the gap from under
+              // the buttons to above them rather than closing it.
+              //
+              // `field-sizing-fixed` to undo the shadcn base's
+              // `field-sizing-content`, which sizes a textarea to its text and
+              // wins over the height flex hands it. Without it the field is
+              // back to 160px, which the composer's geometry test checks.
+              'min-h-40 flex-1 field-sizing-fixed resize-none border-0 bg-transparent px-1 shadow-none dark:bg-transparent',
               'focus-visible:border-0 focus-visible:ring-0',
               // `focus`, not `focus-visible`: upstream draws this on click as
               // well as on tab, and for a writing surface knowing it is live
@@ -342,8 +362,14 @@ export function Compose({
             onKeyDown={onKeyDown}
           />
           {mentions.open && (
+            // Pinned to the foot of the writing area rather than hung below
+            // it. `top-full` only ever fitted because of the dead space this
+            // commit removes: against a field that now reaches the buttons,
+            // an open list would run past the panel and be clipped. Inside
+            // the field it is always whole, and it sits below a short post's
+            // caret rather than over it.
             <ul
-              className="bg-popover absolute top-full right-0 left-0 z-50 mt-1 max-h-56 overflow-auto rounded-md border py-1 shadow-md"
+              className="bg-popover absolute right-0 bottom-0 left-0 z-50 max-h-56 overflow-auto rounded-md border py-1 shadow-md"
               role="listbox"
             >
               {mentions.suggestions.map((a, i) => (
@@ -461,7 +487,9 @@ export function Compose({
     </CardContent>
   )
 
-  if (!framed) return <div className="py-4">{content}</div>
+  // In the modal the composer is handed a column to fill, and it passes that
+  // down to the textarea. Unframed is the only way it is used today.
+  if (!framed) return <div className="flex flex-1 flex-col py-4">{content}</div>
 
   return (
     <Card>

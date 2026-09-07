@@ -207,3 +207,54 @@ test('the placeholder tells a message writer where the recipients go', async ({
     'Add your recipients and your message.',
   )
 })
+
+// The panel reserves 520px on a wide screen and the whole screen on a phone.
+// All of it used to pile up below the Publish button — 205px of nothing on a
+// desktop, 497px on a phone — while the writing happened in a 160px box. The
+// space belongs to the writing area.
+test('the writing area takes the height the panel reserves', async ({ page }) => {
+  await signedIn(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'New post', exact: true }).click()
+
+  // The panel zooms in on open, so a measurement taken during that reads a
+  // scaled box. Wait for the transform to go before believing any number.
+  const settled = () =>
+    page.waitForFunction(() => {
+      const panel = document.querySelector('h2')?.closest('.fixed')
+      return !!panel && getComputedStyle(panel).transform === 'none'
+    })
+
+  const geometry = async () => {
+    await settled()
+    return page.evaluate(() => {
+      const panel = document.querySelector('h2')!.closest('.fixed')!
+      const scroller = panel.querySelector('.overflow-y-auto')!
+      const content = scroller.firstElementChild!
+      const textarea = panel.querySelector('textarea')!
+      return {
+        panel: panel.getBoundingClientRect().height,
+        textarea: textarea.getBoundingClientRect().height,
+        // What is left over below everything the composer draws.
+        slack:
+          scroller.getBoundingClientRect().bottom -
+          content.getBoundingClientRect().bottom,
+        textareaScrolls: textarea.scrollHeight > textarea.clientHeight,
+      }
+    })
+  }
+
+  const empty = await geometry()
+  expect(empty.slack).toBeLessThanOrEqual(1)
+  // Comfortably past the 160px floor it used to be stuck at — the exact figure
+  // depends on the rows above it, so the assertion is that it took the slack.
+  expect(empty.textarea).toBeGreaterThan(250)
+
+  // A long post scrolls inside that area rather than growing the panel, so the
+  // Publish button stays where it was.
+  await page.getByRole('textbox').fill('a line\n'.repeat(60))
+  const full = await geometry()
+  expect(full.panel).toBeCloseTo(empty.panel, 0)
+  expect(full.textarea).toBeCloseTo(empty.textarea, 0)
+  expect(full.textareaScrolls).toBe(true)
+})
