@@ -53,10 +53,36 @@
   --sidebar-accent-foreground: var(--brand-navy);
   --sidebar-border: oklch(0.887 0.023 87.2);
   --sidebar-ring: oklch(0.521 0.090 176.7);
+
+  /* The scrollbar thumb: the cream family the borders are drawn from, taken
+     down until it clears 3:1 on every surface a bar can run over — the page,
+     a card, the rail. It gets a token of its own rather than borrowing
+     `--input`, the nearest existing tone, which lands at 1.6:1 — fainter than
+     the grey the browser would have drawn by itself. A scrollbar should be
+     quiet, but it is the one edge here that has to be *found* rather than
+     merely bind a field. */
+  --scrollbar-thumb: oklch(0.625 0.029 86.7);
+
+  /* `color-scheme` above only chooses which of the UA's two grey palettes to
+     draw the bar in; this paints it ours instead. One declaration serves both
+     themes: `var()` resolves against the element the rule matches — `<html>`,
+     the same element `.dark` redefines the token on — and `scrollbar-color`
+     then inherits the resolved colour down to every scroller. The track is
+     left transparent so the groove takes whichever surface it runs down,
+     `--background` for the window and `--card` for a pane, rather than pinning
+     one background over all of them.
+
+     `color-scheme` still earns its place: it dresses the form controls, which
+     this does not touch, and it is what a browser too old for
+     `scrollbar-color` falls back to. */
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .dark {
   color-scheme: dark;
+
+  /* The same job in the navy family, lightened to the same 3:1. */
+  --scrollbar-thumb: oklch(0.510 0.048 257.1);
 
   /* Navy ground, cream ink, and mint bright enough to carry links and buttons
      without darkening — the inversion the landing page makes. */

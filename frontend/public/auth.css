@@ -21,10 +21,19 @@
   --ring: oklch(0.708 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --radius: 0.625rem;
+
+  /* The scrollbar, in the page's colours rather than the UA's greys: a thumb
+     dark enough to clear 3:1 on this page's background, and a transparent
+     track so the groove keeps whatever it runs down. These pages are neutral
+     where the SPA is warm, so the tone is neutral too. */
+  --scrollbar-thumb: oklch(0.62 0 0);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .dark {
   color-scheme: dark;
+
+  --scrollbar-thumb: oklch(0.52 0 0);
 
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
