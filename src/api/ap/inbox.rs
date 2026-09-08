@@ -76,8 +76,8 @@ pub(super) async fn delete_later(state: &AppState, actor: &str, uri: &str) {
     if actor.is_empty() || uri.is_empty() {
         return;
     }
-    let mut redis = state.redis.clone();
-    let key = delete_upon_arrival_key(actor, uri);
+    let mut redis = state.redis_coordination.clone();
+    let key = state.redis_keys.key(delete_upon_arrival_key(actor, uri));
     let _: redis::RedisResult<()> = redis::cmd("SETEX")
         .arg(&key)
         .arg(DELETE_UPON_ARRIVAL_TTL)
@@ -92,8 +92,8 @@ pub(super) async fn delete_arrived_first(state: &AppState, actor: &str, uri: &st
     if actor.is_empty() || uri.is_empty() {
         return false;
     }
-    let mut redis = state.redis.clone();
-    let key = delete_upon_arrival_key(actor, uri);
+    let mut redis = state.redis_coordination.clone();
+    let key = state.redis_keys.key(delete_upon_arrival_key(actor, uri));
     let exists: i64 = redis::cmd("EXISTS")
         .arg(&key)
         .query_async(&mut redis)
@@ -112,6 +112,7 @@ pub(super) struct RedisLock {
     redis: redis::aio::ConnectionManager,
     key: String,
     token: String,
+    use_pooled_function: bool,
 }
 
 impl Drop for RedisLock {
@@ -119,9 +120,24 @@ impl Drop for RedisLock {
         let mut redis = self.redis.clone();
         let key = std::mem::take(&mut self.key);
         let token = std::mem::take(&mut self.token);
+        let use_pooled_function = self.use_pooled_function;
         tokio::spawn(async move {
-            // Release only if we still hold the lock (compare-and-delete).
-            let _: redis::RedisResult<()> = redis::cmd("EVAL")
+            // A pooled Redis installs this named function so tenant users need
+            // no permission to submit arbitrary Lua. Dedicated deployments
+            // retain the EVAL fallback and require no provisioning change.
+            if use_pooled_function {
+                let released: redis::RedisResult<i64> = redis::cmd("FCALL")
+                    .arg("eunha_compare_delete")
+                    .arg(1)
+                    .arg(&key)
+                    .arg(&token)
+                    .query_async(&mut redis)
+                    .await;
+                if released.is_ok() {
+                    return;
+                }
+            }
+            let _: redis::RedisResult<i64> = redis::cmd("EVAL")
                 .arg("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end")
                 .arg(1)
                 .arg(&key)
@@ -141,9 +157,9 @@ pub(super) async fn acquire_create_lock(state: &AppState, uri: &str) -> Option<R
     if uri.is_empty() {
         return None;
     }
-    let key = format!("create:{uri}");
+    let key = state.redis_keys.key(format!("create:{uri}"));
     let token = crate::snowflake::next_id().to_string();
-    let mut redis = state.redis.clone();
+    let mut redis = state.redis_coordination.clone();
     for attempt in 0..40 {
         let acquired: redis::RedisResult<Option<String>> = redis::cmd("SET")
             .arg(&key)
@@ -155,9 +171,10 @@ pub(super) async fn acquire_create_lock(state: &AppState, uri: &str) -> Option<R
             .await;
         if matches!(acquired, Ok(Some(_))) {
             return Some(RedisLock {
-                redis: state.redis.clone(),
+                redis: state.redis_coordination.clone(),
                 key,
                 token,
+                use_pooled_function: state.redis_keys.is_shared(),
             });
         }
         if attempt < 39 {

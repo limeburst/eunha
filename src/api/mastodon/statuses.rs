@@ -609,15 +609,16 @@ pub async fn delete_status(
     // Remove from follower feeds and list feeds in background
     {
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let author_id = account.id;
         if feed::sync_fanout() {
-            feed::fanout_remove_status(&mut redis, &db, author_id, id).await;
-            feed::fanout_remove_from_lists(&mut redis, &db, author_id, id).await;
+            feed::fanout_remove_status(&mut redis, &redis_keys, &db, author_id, id).await;
+            feed::fanout_remove_from_lists(&mut redis, &redis_keys, &db, author_id, id).await;
         } else {
             tokio::spawn(async move {
-                feed::fanout_remove_status(&mut redis, &db, author_id, id).await;
-                feed::fanout_remove_from_lists(&mut redis, &db, author_id, id).await;
+                feed::fanout_remove_status(&mut redis, &redis_keys, &db, author_id, id).await;
+                feed::fanout_remove_from_lists(&mut redis, &redis_keys, &db, author_id, id).await;
             });
         }
     }
@@ -1015,14 +1016,15 @@ pub async fn reblog_status(
     // appears immediately, not only after a feed repopulate.
     {
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let booster_id = boost_account.id;
         let bid = boost.id;
         if feed::sync_fanout() {
-            feed::fanout_new_status(&mut redis, &db, booster_id, bid, &[]).await;
+            feed::fanout_new_status(&mut redis, &redis_keys, &db, booster_id, bid, &[]).await;
         } else {
             tokio::spawn(async move {
-                feed::fanout_new_status(&mut redis, &db, booster_id, bid, &[]).await;
+                feed::fanout_new_status(&mut redis, &redis_keys, &db, booster_id, bid, &[]).await;
             });
         }
     }

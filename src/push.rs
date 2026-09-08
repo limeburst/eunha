@@ -245,6 +245,7 @@ async fn send_with_reqwest(
 /// same expiry, so the window slides rather than being a fixed clock division.
 async fn notification_group_key(
     redis: &mut redis::aio::ConnectionManager,
+    redis_keys: &crate::redis_keys::RedisKeyspace,
     recipient_id: i64,
     notification_type: &str,
     status_id: Option<i64>,
@@ -252,7 +253,7 @@ async fn notification_group_key(
     use crate::api::mastodon::notifications::{group_type_prefix, MAXIMUM_GROUP_SPAN_HOURS};
 
     let prefix = group_type_prefix(notification_type, status_id)?;
-    let redis_key = format!("notif-group/{recipient_id}/{prefix}");
+    let redis_key = redis_keys.key(format!("notif-group/{recipient_id}/{prefix}"));
     let hour = 3600;
     let mut bucket = chrono::Utc::now().timestamp() / hour;
 
@@ -570,7 +571,8 @@ pub async fn create_and_push(
     // Mastodon decides a notification's group when it is created, not when it is
     // read, because the decision depends on when the previous one arrived.
     let group_key = notification_group_key(
-        &mut state.redis.clone(),
+        &mut state.redis_coordination.clone(),
+        &state.redis_keys,
         recipient_id,
         notification_type,
         status_id,

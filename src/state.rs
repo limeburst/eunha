@@ -9,6 +9,10 @@ use std::sync::Arc;
 pub struct AppState {
     pub db: PgPool,
     pub redis: redis::aio::ConnectionManager,
+    /// Non-evicting coordination state. This is the same manager as `redis`
+    /// unless an operator configures a separate endpoint.
+    pub redis_coordination: redis::aio::ConnectionManager,
+    pub redis_keys: crate::redis_keys::RedisKeyspace,
     pub config: Arc<Config>,
     pub instance: Arc<InstanceConfig>,
     pub http: reqwest::Client,
@@ -67,8 +71,15 @@ impl AppState {
             config.resend.from.clone(),
         );
 
+        let redis_keys = crate::redis_keys::RedisKeyspace::new(&config.redis_key_prefix)?;
         let redis_client = redis::Client::open(config.redis_url.as_str())?;
         let redis = redis::aio::ConnectionManager::new(redis_client).await?;
+        let redis_coordination = if let Some(url) = config.redis_coordination_url.as_deref() {
+            let client = redis::Client::open(url)?;
+            redis::aio::ConnectionManager::new(client).await?
+        } else {
+            redis.clone()
+        };
 
         let encryptor = config.active_record_encryption.as_ref().map(|keys| {
             crate::rails_encryption::Encryptor::new(&keys.primary_key, &keys.key_derivation_salt)
@@ -78,6 +89,8 @@ impl AppState {
         Ok(Self {
             db,
             redis,
+            redis_coordination,
+            redis_keys,
             config: Arc::new(config),
             instance,
             http,

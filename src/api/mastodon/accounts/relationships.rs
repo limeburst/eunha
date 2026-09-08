@@ -324,13 +324,14 @@ pub async fn follow_account(
     .await;
 
     let mut redis = state.redis.clone();
+    let redis_keys = state.redis_keys.clone();
     let db = state.db.clone();
     let follower_id = auth.account_id;
     if feed::sync_fanout() {
-        feed::backfill_follow(&mut redis, &db, follower_id, target_id).await;
+        feed::backfill_follow(&mut redis, &redis_keys, &db, follower_id, target_id).await;
     } else {
         tokio::spawn(async move {
-            feed::backfill_follow(&mut redis, &db, follower_id, target_id).await;
+            feed::backfill_follow(&mut redis, &redis_keys, &db, follower_id, target_id).await;
         });
     }
 
@@ -388,13 +389,14 @@ pub async fn unfollow_account(
     // a cancelled request never fanned anything out.
     if deleted.is_some() {
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let follower_id = auth.account_id;
         if feed::sync_fanout() {
-            feed::unmerge_from_home(&mut redis, &db, target_id, follower_id).await;
+            feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, follower_id).await;
         } else {
             tokio::spawn(async move {
-                feed::unmerge_from_home(&mut redis, &db, target_id, follower_id).await;
+                feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, follower_id).await;
             });
         }
     }

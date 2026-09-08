@@ -1,3 +1,4 @@
+use crate::redis_keys::RedisKeyspace;
 use redis::{aio::ConnectionManager, AsyncCommands};
 use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,23 +18,32 @@ pub fn sync_fanout() -> bool {
     SYNC_FANOUT.load(Ordering::Relaxed)
 }
 
-fn feed_key(account_id: i64) -> String {
-    format!("feed:home:{}", account_id)
+fn feed_key(keys: &RedisKeyspace, account_id: i64) -> String {
+    keys.key(format!("feed:home:{}", account_id))
 }
 
-fn populated_key(account_id: i64) -> String {
-    format!("feed:home:{}:populated", account_id)
+fn populated_key(keys: &RedisKeyspace, account_id: i64) -> String {
+    keys.key(format!("feed:home:{}:populated", account_id))
 }
 
-pub async fn is_feed_populated(redis: &mut ConnectionManager, account_id: i64) -> bool {
+pub async fn is_feed_populated(
+    redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
+    account_id: i64,
+) -> bool {
     redis
-        .exists::<_, bool>(populated_key(account_id))
+        .exists::<_, bool>(populated_key(keys, account_id))
         .await
         .unwrap_or(false)
 }
 
-pub async fn feed_push(redis: &mut ConnectionManager, account_id: i64, status_id: i64) {
-    let key = feed_key(account_id);
+pub async fn feed_push(
+    redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
+    account_id: i64,
+    status_id: i64,
+) {
+    let key = feed_key(keys, account_id);
     let result: redis::RedisResult<()> = redis::pipe()
         .zadd(&key, status_id, status_id as f64)
         .zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1))
@@ -45,8 +55,13 @@ pub async fn feed_push(redis: &mut ConnectionManager, account_id: i64, status_id
     }
 }
 
-pub async fn feed_remove(redis: &mut ConnectionManager, account_id: i64, status_id: i64) {
-    let result: redis::RedisResult<()> = redis.zrem(feed_key(account_id), status_id).await;
+pub async fn feed_remove(
+    redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
+    account_id: i64,
+    status_id: i64,
+) {
+    let result: redis::RedisResult<()> = redis.zrem(feed_key(keys, account_id), status_id).await;
     if let Err(e) = result {
         tracing::warn!("feed_remove error for account {}: {}", account_id, e);
     }
@@ -56,17 +71,18 @@ pub async fn feed_remove(redis: &mut ConnectionManager, account_id: i64, status_
 /// Returns None if the feed has never been populated (cold start signal).
 pub async fn feed_get(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     account_id: i64,
     max_id: Option<i64>,
     since_id: Option<i64>,
     min_id: Option<i64>,
     limit: isize,
 ) -> Option<Vec<i64>> {
-    if !is_feed_populated(redis, account_id).await {
+    if !is_feed_populated(redis, keys, account_id).await {
         return None;
     }
 
-    let key = feed_key(account_id);
+    let key = feed_key(keys, account_id);
 
     let ids: Vec<i64> = if let Some(min_id) = min_id {
         let min_score = format!("({min_id}");
@@ -103,9 +119,14 @@ pub async fn feed_get(
 }
 
 /// Populate the Redis feed from DB (called on first timeline load).
-pub async fn feed_populate(redis: &mut ConnectionManager, account_id: i64, db: &PgPool) {
+pub async fn feed_populate(
+    redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
+    account_id: i64,
+    db: &PgPool,
+) {
     let _: redis::RedisResult<()> = redis
-        .set_ex(populated_key(account_id), 1i64, FEED_TTL_SECS)
+        .set_ex(populated_key(keys, account_id), 1i64, FEED_TTL_SECS)
         .await;
 
     // The reply clause mirrors Mastodon's FeedManager#filter_from_home: a reply
@@ -172,7 +193,7 @@ pub async fn feed_populate(redis: &mut ConnectionManager, account_id: i64, db: &
     .collect();
 
     if !status_ids.is_empty() {
-        let key = feed_key(account_id);
+        let key = feed_key(keys, account_id);
         let mut pipe = redis::pipe();
         for &id in &status_ids {
             pipe.zadd(&key, id, id as f64);
@@ -186,6 +207,7 @@ pub async fn feed_populate(redis: &mut ConnectionManager, account_id: i64, db: &
 /// plus accounts following any of the status's hashtags.
 pub async fn fanout_new_status(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     author_id: i64,
     status_id: i64,
@@ -292,7 +314,10 @@ pub async fn fanout_new_status(
         return;
     }
 
-    let pop_keys: Vec<String> = recipients.iter().map(|&id| populated_key(id)).collect();
+    let pop_keys: Vec<String> = recipients
+        .iter()
+        .map(|&id| populated_key(keys, id))
+        .collect();
     let initialized: Vec<Option<i64>> = match redis.mget(&pop_keys).await {
         Ok(v) => v,
         Err(e) => {
@@ -306,7 +331,7 @@ pub async fn fanout_new_status(
     let mut any = false;
     for (&id, init) in recipients.iter().zip(initialized.iter()) {
         if init.is_some() {
-            let key = feed_key(id);
+            let key = feed_key(keys, id);
             pipe.zadd(&key, status_id, score);
             pipe.zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1));
             any = true;
@@ -320,6 +345,7 @@ pub async fn fanout_new_status(
 /// Remove a deleted status from all followers' initialized feeds.
 pub async fn fanout_remove_status(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     author_id: i64,
     status_id: i64,
@@ -333,7 +359,10 @@ pub async fn fanout_remove_status(
     .unwrap_or_default();
 
     let recipients: Vec<i64> = std::iter::once(author_id).chain(follower_ids).collect();
-    let pop_keys: Vec<String> = recipients.iter().map(|&id| populated_key(id)).collect();
+    let pop_keys: Vec<String> = recipients
+        .iter()
+        .map(|&id| populated_key(keys, id))
+        .collect();
     let initialized: Vec<Option<i64>> = match redis.mget(&pop_keys).await {
         Ok(v) => v,
         Err(e) => {
@@ -346,7 +375,7 @@ pub async fn fanout_remove_status(
     let mut any = false;
     for (&id, init) in recipients.iter().zip(initialized.iter()) {
         if init.is_some() {
-            pipe.zrem(feed_key(id), status_id);
+            pipe.zrem(feed_key(keys, id), status_id);
             any = true;
         }
     }
@@ -357,17 +386,21 @@ pub async fn fanout_remove_status(
 
 // ── List feed ─────────────────────────────────────────────────────────────
 
-fn list_feed_key(list_id: i64) -> String {
-    format!("feed:list:{}", list_id)
+fn list_feed_key(keys: &RedisKeyspace, list_id: i64) -> String {
+    keys.key(format!("feed:list:{}", list_id))
 }
 
-fn list_populated_key(list_id: i64) -> String {
-    format!("feed:list:{}:populated", list_id)
+fn list_populated_key(keys: &RedisKeyspace, list_id: i64) -> String {
+    keys.key(format!("feed:list:{}:populated", list_id))
 }
 
-pub async fn is_list_feed_populated(redis: &mut ConnectionManager, list_id: i64) -> bool {
+pub async fn is_list_feed_populated(
+    redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
+    list_id: i64,
+) -> bool {
     redis
-        .exists::<_, bool>(list_populated_key(list_id))
+        .exists::<_, bool>(list_populated_key(keys, list_id))
         .await
         .unwrap_or(false)
 }
@@ -375,16 +408,17 @@ pub async fn is_list_feed_populated(redis: &mut ConnectionManager, list_id: i64)
 /// Fetch status IDs from a list's Redis feed.
 pub async fn list_feed_get(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     list_id: i64,
     max_id: Option<i64>,
     since_id: Option<i64>,
     min_id: Option<i64>,
     limit: isize,
 ) -> Option<Vec<i64>> {
-    if !is_list_feed_populated(redis, list_id).await {
+    if !is_list_feed_populated(redis, keys, list_id).await {
         return None;
     }
-    let key = list_feed_key(list_id);
+    let key = list_feed_key(keys, list_id);
     let ids: Vec<i64> = if let Some(min_id) = min_id {
         let min_score = format!("({min_id}");
         redis::cmd("ZRANGEBYSCORE")
@@ -421,13 +455,14 @@ pub async fn list_feed_get(
 /// Populate a list's Redis feed from DB (called on first list timeline access).
 pub async fn list_feed_populate(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     list_id: i64,
     owner_id: i64,
     replies_policy: &str,
     db: &PgPool,
 ) {
     let _: redis::RedisResult<()> = redis
-        .set_ex(list_populated_key(list_id), 1i64, FEED_TTL_SECS)
+        .set_ex(list_populated_key(keys, list_id), 1i64, FEED_TTL_SECS)
         .await;
 
     let status_ids: Vec<i64> = match replies_policy {
@@ -494,7 +529,7 @@ pub async fn list_feed_populate(
     };
 
     if !status_ids.is_empty() {
-        let key = list_feed_key(list_id);
+        let key = list_feed_key(keys, list_id);
         let mut pipe = redis::pipe();
         for &id in &status_ids {
             pipe.zadd(&key, id, id as f64);
@@ -507,6 +542,7 @@ pub async fn list_feed_populate(
 /// Fan out a newly posted status to all initialized list feeds that contain the author.
 pub async fn fanout_to_lists(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     author_id: i64,
     status_id: i64,
@@ -533,7 +569,10 @@ pub async fn fanout_to_lists(
         return;
     }
 
-    let pop_keys: Vec<String> = lists.iter().map(|l| list_populated_key(l.id)).collect();
+    let pop_keys: Vec<String> = lists
+        .iter()
+        .map(|l| list_populated_key(keys, l.id))
+        .collect();
     let initialized: Vec<Option<i64>> = match redis.mget(&pop_keys).await {
         Ok(v) => v,
         Err(e) => {
@@ -582,7 +621,7 @@ pub async fn fanout_to_lists(
         };
 
         if passes {
-            let key = list_feed_key(list.id);
+            let key = list_feed_key(keys, list.id);
             pipe.zadd(&key, status_id, score);
             pipe.zremrangebyrank(&key, 0, -(FEED_MAX_ITEMS + 1));
             any = true;
@@ -597,6 +636,7 @@ pub async fn fanout_to_lists(
 /// Remove a deleted status from all initialized list feeds that contain the author.
 pub async fn fanout_remove_from_lists(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     author_id: i64,
     status_id: i64,
@@ -613,7 +653,10 @@ pub async fn fanout_remove_from_lists(
         return;
     }
 
-    let pop_keys: Vec<String> = list_ids.iter().map(|&id| list_populated_key(id)).collect();
+    let pop_keys: Vec<String> = list_ids
+        .iter()
+        .map(|&id| list_populated_key(keys, id))
+        .collect();
     let initialized: Vec<Option<i64>> = match redis.mget(&pop_keys).await {
         Ok(v) => v,
         Err(e) => {
@@ -626,7 +669,7 @@ pub async fn fanout_remove_from_lists(
     let mut any = false;
     for (&list_id, init) in list_ids.iter().zip(initialized.iter()) {
         if init.is_some() {
-            pipe.zrem(list_feed_key(list_id), status_id);
+            pipe.zrem(list_feed_key(keys, list_id), status_id);
             any = true;
         }
     }
@@ -638,13 +681,14 @@ pub async fn fanout_remove_from_lists(
 /// Backfill a list feed with recent statuses from a newly-added member.
 pub async fn backfill_list_member(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     list_id: i64,
     member_id: i64,
     owner_id: i64,
     replies_policy: &str,
 ) {
-    if !is_list_feed_populated(redis, list_id).await {
+    if !is_list_feed_populated(redis, keys, list_id).await {
         return;
     }
 
@@ -704,7 +748,7 @@ pub async fn backfill_list_member(
         return;
     }
 
-    let key = list_feed_key(list_id);
+    let key = list_feed_key(keys, list_id);
     let mut pipe = redis::pipe();
     for &id in &recent {
         pipe.zadd(&key, id, id as f64);
@@ -715,19 +759,23 @@ pub async fn backfill_list_member(
 
 /// Delete an account's home feed keys (Mastodon's `FeedManager#clean_feeds!`,
 /// called when the account is deleted).
-pub async fn delete_home_feed(redis: &mut ConnectionManager, account_id: i64) {
+pub async fn delete_home_feed(
+    redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
+    account_id: i64,
+) {
     let _: redis::RedisResult<()> = redis::pipe()
-        .del(feed_key(account_id))
-        .del(populated_key(account_id))
+        .del(feed_key(keys, account_id))
+        .del(populated_key(keys, account_id))
         .query_async(redis)
         .await;
 }
 
 /// Delete a list's Redis feed keys (called when the list itself is deleted).
-pub async fn delete_list_feed(redis: &mut ConnectionManager, list_id: i64) {
+pub async fn delete_list_feed(redis: &mut ConnectionManager, keys: &RedisKeyspace, list_id: i64) {
     let _: redis::RedisResult<()> = redis::pipe()
-        .del(list_feed_key(list_id))
-        .del(list_populated_key(list_id))
+        .del(list_feed_key(keys, list_id))
+        .del(list_populated_key(keys, list_id))
         .query_async(redis)
         .await;
 }
@@ -735,11 +783,12 @@ pub async fn delete_list_feed(redis: &mut ConnectionManager, list_id: i64) {
 /// Backfill the follower's feed with recent statuses from the newly-followed account.
 pub async fn backfill_follow(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     follower_id: i64,
     followed_id: i64,
 ) {
-    if !is_feed_populated(redis, follower_id).await {
+    if !is_feed_populated(redis, keys, follower_id).await {
         return;
     }
 
@@ -755,7 +804,7 @@ pub async fn backfill_follow(
         return;
     }
 
-    let key = feed_key(follower_id);
+    let key = feed_key(keys, follower_id);
     let mut pipe = redis::pipe();
     for &id in &recent {
         pipe.zadd(&key, id, id as f64);
@@ -770,15 +819,16 @@ pub async fn backfill_follow(
 /// the cached timeline until the next full repopulate.
 pub async fn unmerge_from_home(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     from_account_id: i64,
     into_account_id: i64,
 ) {
-    if !is_feed_populated(redis, into_account_id).await {
+    if !is_feed_populated(redis, keys, into_account_id).await {
         return;
     }
 
-    let key = feed_key(into_account_id);
+    let key = feed_key(keys, into_account_id);
     // The feed's *members* are exact status ids (only the ZSET scores are lossy
     // f64s), so read the members and keep the ones authored by the ex-followee.
     // This both bounds the DB scan (the feed holds at most FEED_MAX_ITEMS) and
@@ -816,14 +866,15 @@ pub async fn unmerge_from_home(
 /// blocker's timelines of that domain's content).
 pub async fn unmerge_domain_from_home(
     redis: &mut ConnectionManager,
+    keys: &RedisKeyspace,
     db: &PgPool,
     domain: &str,
     into_account_id: i64,
 ) {
-    if !is_feed_populated(redis, into_account_id).await {
+    if !is_feed_populated(redis, keys, into_account_id).await {
         return;
     }
-    let key = feed_key(into_account_id);
+    let key = feed_key(keys, into_account_id);
     let members: Vec<i64> = redis
         .zrange::<_, Vec<i64>>(&key, 0, -1)
         .await

@@ -126,13 +126,14 @@ pub async fn block_account(
     // (Mastodon BlockWorker → FeedManager#clear_from_home).
     {
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let blocker_id = auth.account_id;
         if feed::sync_fanout() {
-            feed::unmerge_from_home(&mut redis, &db, target_id, blocker_id).await;
+            feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, blocker_id).await;
         } else {
             tokio::spawn(async move {
-                feed::unmerge_from_home(&mut redis, &db, target_id, blocker_id).await;
+                feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, blocker_id).await;
             });
         }
     }

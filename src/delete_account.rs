@@ -165,7 +165,14 @@ pub async fn suspend_side_effects(state: &AppState, account_id: i64) -> Result<(
     .await?;
     let mut redis = state.redis.clone();
     for follower in followers {
-        crate::feed::unmerge_from_home(&mut redis, &state.db, account_id, follower).await;
+        crate::feed::unmerge_from_home(
+            &mut redis,
+            &state.redis_keys,
+            &state.db,
+            account_id,
+            follower,
+        )
+        .await;
     }
 
     // `unmerge_from_list_timelines!`. Dropping the cached feed is enough: it is
@@ -178,7 +185,7 @@ pub async fn suspend_side_effects(state: &AppState, account_id: i64) -> Result<(
     .fetch_all(&state.db)
     .await?;
     for list_id in lists {
-        crate::feed::delete_list_feed(&mut redis, list_id).await;
+        crate::feed::delete_list_feed(&mut redis, &state.redis_keys, list_id).await;
     }
 
     // `remove_from_trends!`
@@ -707,8 +714,22 @@ async fn remove_status_side_effects(state: &AppState, author_id: i64, status_id:
         .streaming
         .publish(crate::streaming::Event::DeleteStatus { status_id });
     let mut redis = state.redis.clone();
-    crate::feed::fanout_remove_status(&mut redis, &state.db, author_id, status_id).await;
-    crate::feed::fanout_remove_from_lists(&mut redis, &state.db, author_id, status_id).await;
+    crate::feed::fanout_remove_status(
+        &mut redis,
+        &state.redis_keys,
+        &state.db,
+        author_id,
+        status_id,
+    )
+    .await;
+    crate::feed::fanout_remove_from_lists(
+        &mut redis,
+        &state.redis_keys,
+        &state.db,
+        author_id,
+        status_id,
+    )
+    .await;
 }
 
 /// Give back the replies / reblogs / quotes these statuses took from other
@@ -875,9 +896,9 @@ async fn purge_feeds(state: &AppState, account: &Account, options: &Options) -> 
             .await?;
 
     let mut redis = state.redis.clone();
-    crate::feed::delete_home_feed(&mut redis, account.id).await;
+    crate::feed::delete_home_feed(&mut redis, &state.redis_keys, account.id).await;
     for list_id in list_ids {
-        crate::feed::delete_list_feed(&mut redis, list_id).await;
+        crate::feed::delete_list_feed(&mut redis, &state.redis_keys, list_id).await;
     }
     Ok(())
 }
@@ -921,7 +942,14 @@ async fn purge_associations(state: &AppState, account_id: i64, options: &Options
         .await?;
         let mut redis = state.redis.clone();
         for follower in followers {
-            crate::feed::unmerge_from_home(&mut redis, &state.db, account_id, follower).await;
+            crate::feed::unmerge_from_home(
+                &mut redis,
+                &state.redis_keys,
+                &state.db,
+                account_id,
+                follower,
+            )
+            .await;
         }
     }
 

@@ -18,6 +18,7 @@ pub mod migrate;
 pub mod preview_card;
 pub mod push;
 pub mod rails_encryption;
+pub mod redis_keys;
 pub mod schema_check;
 pub mod snowflake;
 pub mod software_updates;

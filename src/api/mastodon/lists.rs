@@ -171,7 +171,7 @@ pub async fn delete_list(
     .await?;
     {
         let mut redis = state.redis.clone();
-        feed::delete_list_feed(&mut redis, id).await;
+        feed::delete_list_feed(&mut redis, &state.redis_keys, id).await;
     }
     Ok(Json(serde_json::json!({})))
 }
@@ -278,16 +278,31 @@ pub async fn add_list_accounts(
             .await?;
             {
                 let mut redis = state.redis.clone();
+                let redis_keys = state.redis_keys.clone();
                 let db = state.db.clone();
                 let owner_id = auth.account_id;
                 let policy = models::replies::to_str(list.replies_policy).to_owned();
                 if feed::sync_fanout() {
-                    feed::backfill_list_member(&mut redis, &db, id, account_id, owner_id, &policy)
-                        .await;
+                    feed::backfill_list_member(
+                        &mut redis,
+                        &redis_keys,
+                        &db,
+                        id,
+                        account_id,
+                        owner_id,
+                        &policy,
+                    )
+                    .await;
                 } else {
                     tokio::spawn(async move {
                         feed::backfill_list_member(
-                            &mut redis, &db, id, account_id, owner_id, &policy,
+                            &mut redis,
+                            &redis_keys,
+                            &db,
+                            id,
+                            account_id,
+                            owner_id,
+                            &policy,
                         )
                         .await;
                     });

@@ -131,10 +131,24 @@ pub async fn block_domain(
         let account_id = auth.account_id;
         let domain = domain.clone();
         if crate::feed::sync_fanout() {
-            crate::feed::unmerge_domain_from_home(&mut redis, &db, &domain, account_id).await;
+            crate::feed::unmerge_domain_from_home(
+                &mut redis,
+                &state.redis_keys,
+                &db,
+                &domain,
+                account_id,
+            )
+            .await;
         } else {
             tokio::spawn(async move {
-                crate::feed::unmerge_domain_from_home(&mut redis, &db, &domain, account_id).await;
+                crate::feed::unmerge_domain_from_home(
+                    &mut redis,
+                    &state.redis_keys,
+                    &db,
+                    &domain,
+                    account_id,
+                )
+                .await;
             });
         }
     }

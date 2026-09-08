@@ -42,7 +42,14 @@ async fn main() -> anyhow::Result<()> {
     // would make a deploy script's migrate step fail for want of an S3 bucket,
     // which has no bearing on whether the schema can be brought up to date.
     if let Some(Command::Migrate { check }) = args.command {
-        let db = connect(&migration_database_url()?).await?;
+        let db = connect(
+            &migration_database_url()?,
+            &config::DatabasePoolConfig {
+                max_connections: 1,
+                ..Default::default()
+            },
+        )
+        .await?;
         return match (check, migrate::pending(&db).await?) {
             (true, None) => {
                 println!("Database is up to date.");
@@ -65,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
     // Resolve unqualified names against the eunha schema first, then public.
     // All app queries are schema-qualified, so this only affects where sqlx
     // creates its unqualified `_sqlx_migrations` bookkeeping table.
-    let db = connect(&config.database_url).await?;
+    let db = connect(&config.database_url, &config.database_pool).await?;
 
     // Serving refuses to start against a schema this binary does not know,
     // rather than running queries against a shape that has moved underneath
@@ -95,9 +102,18 @@ async fn main() -> anyhow::Result<()> {
 /// schema first, then public. Every app query is schema-qualified, so this only
 /// decides where sqlx keeps its own `_sqlx_migrations` ledger — out of `public`,
 /// which stays a pure mirror of Mastodon's schema.
-async fn connect(database_url: &str) -> anyhow::Result<sqlx::PgPool> {
+async fn connect(
+    database_url: &str,
+    budget: &config::DatabasePoolConfig,
+) -> anyhow::Result<sqlx::PgPool> {
+    budget.validate()?;
     Ok(PgPoolOptions::new()
-        .max_connections(20)
+        .max_connections(budget.max_connections)
+        .min_connections(budget.min_connections)
+        .acquire_timeout(std::time::Duration::from_secs(
+            budget.acquire_timeout_seconds,
+        ))
+        .idle_timeout(std::time::Duration::from_secs(budget.idle_timeout_seconds))
         .after_connect(|conn, _meta| {
             Box::pin(async move {
                 conn.execute("SET search_path TO eunha, public").await?;

@@ -722,8 +722,15 @@ pub(super) async fn handle_create(
                 if updated.map(|r| r.rows_affected() > 0).unwrap_or(false) {
                     let mut redis = state.redis.clone();
                     let db = state.db.clone();
-                    crate::feed::fanout_new_status(&mut redis, &db, child_author, child_id, &[])
-                        .await;
+                    crate::feed::fanout_new_status(
+                        &mut redis,
+                        &state.redis_keys,
+                        &db,
+                        child_author,
+                        child_id,
+                        &[],
+                    )
+                    .await;
                 }
             }
         });
@@ -732,11 +739,21 @@ pub(super) async fn handle_create(
     // Fanout to home and list feeds
     let vis_str = crate::db::models::vis::to_str(visibility);
     let mut redis = state.redis.clone();
+    let redis_keys = state.redis_keys.clone();
     let db = state.db.clone();
     if crate::feed::sync_fanout() {
-        crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &tag_ids).await;
+        crate::feed::fanout_new_status(
+            &mut redis,
+            &redis_keys,
+            &db,
+            account_id,
+            inserted_id,
+            &tag_ids,
+        )
+        .await;
         crate::feed::fanout_to_lists(
             &mut redis,
+            &redis_keys,
             &db,
             account_id,
             inserted_id,
@@ -746,10 +763,18 @@ pub(super) async fn handle_create(
         .await;
     } else {
         tokio::spawn(async move {
-            crate::feed::fanout_new_status(&mut redis, &db, account_id, inserted_id, &tag_ids)
-                .await;
+            crate::feed::fanout_new_status(
+                &mut redis,
+                &redis_keys,
+                &db,
+                account_id,
+                inserted_id,
+                &tag_ids,
+            )
+            .await;
             crate::feed::fanout_to_lists(
                 &mut redis,
+                &redis_keys,
                 &db,
                 account_id,
                 inserted_id,

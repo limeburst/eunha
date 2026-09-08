@@ -200,6 +200,7 @@ pub async fn home_timeline(
     let mut redis = state.redis.clone();
     let redis_ids = feed::feed_get(
         &mut redis,
+        &state.redis_keys,
         auth.account_id,
         max_id,
         since_id,
@@ -216,13 +217,14 @@ pub async fn home_timeline(
         // Cold start: populate feed in background, use DB for this request
         {
             let mut redis2 = state.redis.clone();
+            let redis_keys = state.redis_keys.clone();
             let db = state.db.clone();
             let account_id = auth.account_id;
             if feed::sync_fanout() {
-                feed::feed_populate(&mut redis2, account_id, &db).await;
+                feed::feed_populate(&mut redis2, &redis_keys, account_id, &db).await;
             } else {
                 tokio::spawn(async move {
-                    feed::feed_populate(&mut redis2, account_id, &db).await;
+                    feed::feed_populate(&mut redis2, &redis_keys, account_id, &db).await;
                 });
             }
         }
@@ -653,6 +655,7 @@ pub async fn list_timeline(
     let mut redis = state.redis.clone();
     let redis_ids = feed::list_feed_get(
         &mut redis,
+        &state.redis_keys,
         list_id,
         max_id,
         since_id,
@@ -667,14 +670,24 @@ pub async fn list_timeline(
         // Cold start: populate feed in background, use DB for this request.
         {
             let mut redis2 = state.redis.clone();
+            let redis_keys = state.redis_keys.clone();
             let db = state.db.clone();
             let owner_id = auth.account_id;
             let policy = replies_policy.to_string();
             if feed::sync_fanout() {
-                feed::list_feed_populate(&mut redis2, list_id, owner_id, &policy, &db).await;
+                feed::list_feed_populate(&mut redis2, &redis_keys, list_id, owner_id, &policy, &db)
+                    .await;
             } else {
                 tokio::spawn(async move {
-                    feed::list_feed_populate(&mut redis2, list_id, owner_id, &policy, &db).await;
+                    feed::list_feed_populate(
+                        &mut redis2,
+                        &redis_keys,
+                        list_id,
+                        owner_id,
+                        &policy,
+                        &db,
+                    )
+                    .await;
                 });
             }
         }

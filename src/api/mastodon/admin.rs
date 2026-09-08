@@ -1339,15 +1339,21 @@ pub async fn get_dimensions(
                         .await?
                         .unwrap_or(0);
 
-                let mut redis = state.redis.clone();
-                let redis_mem_info: String = redis::cmd("INFO")
-                    .arg("memory")
-                    .query_async(&mut redis)
-                    .await
-                    .unwrap_or_default();
-                let redis_size: i64 = parse_redis_info_field(&redis_mem_info, "used_memory")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
+                let redis_size = if state.config.redis_process_metrics
+                    && !state.redis_keys.is_shared()
+                    && state.config.redis_coordination_url.is_none()
+                {
+                    let mut redis = state.redis.clone();
+                    let redis_mem_info: String = redis::cmd("INFO")
+                        .arg("memory")
+                        .query_async(&mut redis)
+                        .await
+                        .unwrap_or_default();
+                    parse_redis_info_field(&redis_mem_info, "used_memory")
+                        .and_then(|v| v.parse::<i64>().ok())
+                } else {
+                    None
+                };
 
                 let media_size: i64 = sqlx::query_scalar!(
                     r#"SELECT
@@ -1365,11 +1371,15 @@ pub async fn get_dimensions(
                             "value": pg_size.to_string(), "unit": "bytes",
                             "human_value": human_size(pg_size),
                         },
-                        {
+                        redis_size.map(|bytes| serde_json::json!({
                             "key": "redis", "human_key": "Redis",
-                            "value": redis_size.to_string(), "unit": "bytes",
-                            "human_value": human_size(redis_size),
-                        },
+                            "value": bytes.to_string(), "unit": "bytes",
+                            "human_value": human_size(bytes),
+                        })).unwrap_or_else(|| serde_json::json!({
+                            "key": "redis", "human_key": "Redis",
+                            "value": null, "unit": "bytes",
+                            "human_value": "Unavailable for shared Redis",
+                        })),
                         {
                             "key": "media", "human_key": "Media storage",
                             "value": media_size.to_string(), "unit": "bytes",

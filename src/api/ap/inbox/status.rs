@@ -281,17 +281,43 @@ pub(super) async fn handle_announce(
         chrono::Utc::now().naive_utc() - published < chrono::Duration::hours(6);
     if let (Some(boost_id), true) = (inserted, within_realtime_window) {
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let vis_str = crate::db::models::vis::to_str(visibility);
         if crate::feed::sync_fanout() {
-            crate::feed::fanout_new_status(&mut redis, &db, booster_id, boost_id, &[]).await;
-            crate::feed::fanout_to_lists(&mut redis, &db, booster_id, boost_id, None, vis_str)
+            crate::feed::fanout_new_status(&mut redis, &redis_keys, &db, booster_id, boost_id, &[])
                 .await;
+            crate::feed::fanout_to_lists(
+                &mut redis,
+                &redis_keys,
+                &db,
+                booster_id,
+                boost_id,
+                None,
+                vis_str,
+            )
+            .await;
         } else {
             tokio::spawn(async move {
-                crate::feed::fanout_new_status(&mut redis, &db, booster_id, boost_id, &[]).await;
-                crate::feed::fanout_to_lists(&mut redis, &db, booster_id, boost_id, None, vis_str)
-                    .await;
+                crate::feed::fanout_new_status(
+                    &mut redis,
+                    &redis_keys,
+                    &db,
+                    booster_id,
+                    boost_id,
+                    &[],
+                )
+                .await;
+                crate::feed::fanout_to_lists(
+                    &mut redis,
+                    &redis_keys,
+                    &db,
+                    booster_id,
+                    boost_id,
+                    None,
+                    vis_str,
+                )
+                .await;
             });
         }
     }

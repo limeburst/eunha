@@ -393,9 +393,11 @@ async fn publish_one(
     let author_id = account.id;
     let sid = status.id;
     let vis = visibility.clone();
-    crate::feed::fanout_new_status(&mut redis, &db, author_id, sid, &tag_ids).await;
+    crate::feed::fanout_new_status(&mut redis, &state.redis_keys, &db, author_id, sid, &tag_ids)
+        .await;
     crate::feed::fanout_to_lists(
         &mut redis,
+        &state.redis_keys,
         &db,
         author_id,
         sid,

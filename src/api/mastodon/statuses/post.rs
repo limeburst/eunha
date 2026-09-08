@@ -27,8 +27,10 @@ pub async fn post_status(
     // If we've already processed a request with this key, replay the stored status.
     if let Some(ref ik) = idempotency_key {
         use redis::AsyncCommands;
-        let redis_key = format!("idempotency:{}:{}", auth.account_id, ik);
-        let mut redis = state.redis.clone();
+        let redis_key = state
+            .redis_keys
+            .key(format!("idempotency:{}:{}", auth.account_id, ik));
+        let mut redis = state.redis_coordination.clone();
         if let Ok(Some(existing_id)) = redis.get::<_, Option<i64>>(&redis_key).await {
             if let Some(status) = sqlx::query_as!(
                 DbStatus,
@@ -786,15 +788,18 @@ pub async fn post_status(
         .unwrap_or_default();
 
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let author_id = account.id;
         let status_id = status.id;
         let reply_to_account = in_reply_to_account_id;
         let vis = visibility.clone();
         if feed::sync_fanout() {
-            feed::fanout_new_status(&mut redis, &db, author_id, status_id, &tag_ids).await;
+            feed::fanout_new_status(&mut redis, &redis_keys, &db, author_id, status_id, &tag_ids)
+                .await;
             feed::fanout_to_lists(
                 &mut redis,
+                &redis_keys,
                 &db,
                 author_id,
                 status_id,
@@ -804,9 +809,18 @@ pub async fn post_status(
             .await;
         } else {
             tokio::spawn(async move {
-                feed::fanout_new_status(&mut redis, &db, author_id, status_id, &tag_ids).await;
+                feed::fanout_new_status(
+                    &mut redis,
+                    &redis_keys,
+                    &db,
+                    author_id,
+                    status_id,
+                    &tag_ids,
+                )
+                .await;
                 feed::fanout_to_lists(
                     &mut redis,
+                    &redis_keys,
                     &db,
                     author_id,
                     status_id,
@@ -931,8 +945,10 @@ pub async fn post_status(
     // Record the idempotency mapping so a retried request replays this status.
     if let Some(ref ik) = idempotency_key {
         use redis::AsyncCommands;
-        let redis_key = format!("idempotency:{}:{}", auth.account_id, ik);
-        let mut redis = state.redis.clone();
+        let redis_key = state
+            .redis_keys
+            .key(format!("idempotency:{}:{}", auth.account_id, ik));
+        let mut redis = state.redis_coordination.clone();
         let _: redis::RedisResult<()> = redis.set_ex(redis_key, status.id, 21600).await;
     }
 

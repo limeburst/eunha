@@ -3,7 +3,25 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub database_url: String,
+    #[serde(default)]
+    pub database_pool: DatabasePoolConfig,
     pub redis_url: String,
+    /// Optional non-evicting Redis endpoint for locks, tombstones,
+    /// idempotency and notification grouping. When absent, these use
+    /// `redis_url`, preserving the single-Redis standalone deployment.
+    #[serde(default)]
+    pub redis_coordination_url: Option<String>,
+    /// Prefix applied to every Redis key owned by this Eunha instance.
+    ///
+    /// Leave empty for a dedicated Redis deployment. Pooled deployments set a
+    /// unique value and restrict the Redis user to `<prefix>:*` with ACLs.
+    #[serde(default)]
+    pub redis_key_prefix: String,
+    /// Whether tenant-facing admin endpoints may report process-wide Redis
+    /// memory. This is safe for a dedicated Redis process, but leaks aggregate
+    /// pool usage when Redis is shared by several instances.
+    #[serde(default = "default_redis_process_metrics")]
+    pub redis_process_metrics: bool,
     pub bind_address: String,
     pub media_storage: MediaStorageConfig,
     pub smtp: Option<SmtpConfig>,
@@ -51,6 +69,79 @@ pub struct ActiveRecordEncryptionConfig {
     pub key_derivation_salt: String,
 }
 
+/// Per-process connection budget. Idle instances need not retain connections.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DatabasePoolConfig {
+    pub max_connections: u32,
+    pub min_connections: u32,
+    pub acquire_timeout_seconds: u64,
+    pub idle_timeout_seconds: u64,
+}
+
+impl Default for DatabasePoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 20,
+            min_connections: 0,
+            acquire_timeout_seconds: 30,
+            idle_timeout_seconds: 600,
+        }
+    }
+}
+
+impl DatabasePoolConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.max_connections > 0,
+            "database_pool.max_connections must be positive"
+        );
+        anyhow::ensure!(
+            self.min_connections <= self.max_connections,
+            "database_pool.min_connections must not exceed max_connections"
+        );
+        anyhow::ensure!(
+            self.acquire_timeout_seconds > 0,
+            "database_pool.acquire_timeout_seconds must be positive"
+        );
+        anyhow::ensure!(
+            self.idle_timeout_seconds > 0,
+            "database_pool.idle_timeout_seconds must be positive"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::DatabasePoolConfig;
+
+    #[test]
+    fn partial_pool_config_preserves_defaults() {
+        let pool: DatabasePoolConfig = toml::from_str("max_connections = 5").unwrap();
+        pool.validate().unwrap();
+        assert_eq!(pool.max_connections, 5);
+        assert_eq!(pool.min_connections, 0);
+        assert_eq!(pool.acquire_timeout_seconds, 30);
+        assert_eq!(pool.idle_timeout_seconds, 600);
+        let legacy: DatabasePoolConfig = toml::from_str("").unwrap();
+        assert_eq!(legacy.max_connections, 20);
+    }
+
+    #[test]
+    fn invalid_pool_budgets_are_rejected() {
+        for input in [
+            "max_connections = 0",
+            "max_connections = 2\nmin_connections = 3",
+            "acquire_timeout_seconds = 0",
+            "idle_timeout_seconds = 0",
+        ] {
+            let pool: DatabasePoolConfig = toml::from_str(input).unwrap();
+            assert!(pool.validate().is_err(), "accepted {input}");
+        }
+    }
+}
+
 /// Sizing for the durable background queues. Every field has a default, so an
 /// existing `config.toml` needs no `[workers]` section; tune these when one
 /// process can no longer keep up with the queue depth.
@@ -88,6 +179,31 @@ pub fn default_sign_integrity_proofs() -> bool {
 
 fn default_software_update_url() -> Option<String> {
     Some("https://api.joinmastodon.org/update-check".to_string())
+}
+
+fn default_redis_process_metrics() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod redis_tests {
+    #[derive(serde::Deserialize)]
+    struct RedisDefaults {
+        #[serde(default)]
+        redis_key_prefix: String,
+        #[serde(default = "super::default_redis_process_metrics")]
+        redis_process_metrics: bool,
+        #[serde(default)]
+        redis_coordination_url: Option<String>,
+    }
+
+    #[test]
+    fn dedicated_redis_defaults_preserve_existing_behavior() {
+        let config: RedisDefaults = toml::from_str("").unwrap();
+        assert_eq!(config.redis_key_prefix, "");
+        assert!(config.redis_process_metrics);
+        assert!(config.redis_coordination_url.is_none());
+    }
 }
 
 fn default_delivery_workers() -> usize {

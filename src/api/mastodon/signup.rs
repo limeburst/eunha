@@ -208,7 +208,14 @@ async fn autofollow_inviter(state: &AppState, follower_account_id: i64, invite_i
     )
     .await;
     let mut redis = state.redis.clone();
-    crate::feed::backfill_follow(&mut redis, &state.db, follower_account_id, target_id).await;
+    crate::feed::backfill_follow(
+        &mut redis,
+        &state.redis_keys,
+        &state.db,
+        follower_account_id,
+        target_id,
+    )
+    .await;
 }
 
 // ── POST /api/v1/accounts ──────────────────────────────────────────────────

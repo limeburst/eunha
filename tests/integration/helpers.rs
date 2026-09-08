@@ -515,6 +515,10 @@ impl TestContext {
         let config = eunha::config::Config {
             database_url: db_url,
             redis_url,
+            redis_coordination_url: None,
+            redis_key_prefix: String::new(),
+            redis_process_metrics: true,
+            database_pool: Default::default(),
             // Nothing declared: the tests exercise the default, which refuses
             // every private address.
             allowed_private_networks: Vec::new(),

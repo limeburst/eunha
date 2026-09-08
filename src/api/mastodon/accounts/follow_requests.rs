@@ -169,13 +169,15 @@ pub async fn authorize_follow_request(
         }
 
         let mut redis = state.redis.clone();
+        let redis_keys = state.redis_keys.clone();
         let db = state.db.clone();
         let followed_id = auth.account_id;
         if feed::sync_fanout() {
-            feed::backfill_follow(&mut redis, &db, requester_id, followed_id).await;
+            feed::backfill_follow(&mut redis, &redis_keys, &db, requester_id, followed_id).await;
         } else {
             tokio::spawn(async move {
-                feed::backfill_follow(&mut redis, &db, requester_id, followed_id).await;
+                feed::backfill_follow(&mut redis, &redis_keys, &db, requester_id, followed_id)
+                    .await;
             });
         }
     }
