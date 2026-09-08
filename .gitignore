@@ -7,3 +7,4 @@ seoulearth_*
 /frontend/dist
 .DS_Store
 *.rdb
+benchmark-results/
