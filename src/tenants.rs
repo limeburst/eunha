@@ -8,10 +8,15 @@
 //! one configuration file per instance from a directory.
 //!
 //! What is per tenant is everything a request or a background task touches.
-//! What is per process is what the listener and the SSRF-guarded resolver
-//! impose: the address to listen on, and the private networks federation may
-//! reach. Tenants in one directory must agree on those, and the process refuses
-//! to start when they do not.
+//! What is per process is what the listener, the SSRF-guarded resolver and the
+//! shared budget of outbound deliveries impose: the address to listen on, the
+//! private networks federation may reach, and how many deliveries may be in
+//! flight. Tenants in one directory must agree on those, and the process
+//! refuses to start when they do not.
+//!
+//! Sharing a process also means sharing its capacity. Among several tenants
+//! each has a limit on requests in flight, past which its requests are shed
+//! with 503 rather than queued, so one being flooded cannot slow the others.
 
 use crate::{config, migrate, state::AppState};
 use anyhow::{Context as _, Result};
@@ -24,6 +29,7 @@ use axum::{
 use futures::StreamExt as _;
 use sqlx::{postgres::PgPoolOptions, Executor as _};
 use std::{collections::HashMap, path::Path, sync::Arc};
+use tokio::sync::Semaphore;
 use tower::ServiceExt as _;
 
 /// How many tenants are brought up at once.
@@ -95,11 +101,21 @@ fn normalize_host(host: &str) -> String {
     host.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
+/// What the tenants of one process agreed on.
+struct ProcessSettings {
+    bind_address: String,
+    delivery_concurrency: usize,
+}
+
 /// What belongs to the process rather than to any one tenant, which every
 /// tenant therefore has to agree on — and no two tenants may serve one host.
-/// Returns the address to listen on.
-fn process_settings(configs: &[TenantConfig]) -> Result<String> {
+fn process_settings(configs: &[TenantConfig]) -> Result<ProcessSettings> {
     let first = configs.first().context("no tenants to serve")?;
+    let delivery_concurrency = first
+        .config
+        .workers
+        .sanitized()
+        .process_delivery_concurrency;
     let mut hosts: HashMap<String, &str> = HashMap::new();
     for tenant in configs {
         anyhow::ensure!(
@@ -118,17 +134,54 @@ fn process_settings(configs: &[TenantConfig]) -> Result<String> {
             first.source,
             tenant.source,
         );
+        let theirs = tenant
+            .config
+            .workers
+            .sanitized()
+            .process_delivery_concurrency;
+        anyhow::ensure!(
+            theirs == delivery_concurrency,
+            "{} allows {delivery_concurrency} deliveries in flight but {} allows {theirs}: the \
+             budget is shared by the whole process, so every tenant must name the same \
+             process_delivery_concurrency",
+            first.source,
+            tenant.source,
+        );
         let host = normalize_host(&tenant.config.instance.domain);
         if let Some(other) = hosts.insert(host.clone(), &tenant.source) {
             anyhow::bail!("{other} and {} both serve {host}", tenant.source);
         }
     }
-    Ok(first.config.bind_address.clone())
+    Ok(ProcessSettings {
+        bind_address: first.config.bind_address.clone(),
+        delivery_concurrency,
+    })
+}
+
+/// A tenant that is serving: its router, and the limit on requests it may have
+/// in flight, when it has one.
+#[derive(Clone)]
+struct Tenant {
+    router: Router,
+    in_flight: Option<Arc<Semaphore>>,
+}
+
+impl Tenant {
+    fn new(state: &AppState, shared: bool) -> Self {
+        Self {
+            router: crate::build_app(state.clone()),
+            in_flight: state
+                .config
+                .limits
+                .request_limit(shared)
+                .map(|limit| Arc::new(Semaphore::new(limit))),
+        }
+    }
 }
 
 /// One tenant's place in the registry.
 enum Slot {
-    Serving(Router),
+    Serving(Tenant),
     /// It did not start: its database is behind this binary, or it failed.
     Unavailable,
 }
@@ -137,13 +190,13 @@ enum Slot {
 pub struct Tenants {
     by_host: HashMap<String, Slot>,
     /// The only tenant, which answers every host, as a lone instance always has.
-    only: Option<Router>,
+    only: Option<Tenant>,
     bind_address: String,
     states: Vec<AppState>,
 }
 
 enum Lookup<'a> {
-    Serving(&'a Router),
+    Serving(&'a Tenant),
     Unavailable,
     Unknown,
 }
@@ -156,7 +209,8 @@ enum Lookup<'a> {
 /// out — its host answers 503 — and the others serve: one tenant's pending
 /// migration should not take its neighbours down with it.
 pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
-    let bind_address = process_settings(&configs)?;
+    let settings = process_settings(&configs)?;
+    crate::federation::delivery::set_process_delivery_concurrency(settings.delivery_concurrency);
     let lone = configs.len() == 1;
     let mut by_host = HashMap::new();
     let mut states = Vec::new();
@@ -166,16 +220,16 @@ pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
         .map(|tenant| async move {
             let host = normalize_host(&tenant.config.instance.domain);
             let source = tenant.source.clone();
-            (host, source, start_one(tenant).await)
+            (host, source, start_one(tenant, !lone).await)
         })
         .buffered(STARTUP_CONCURRENCY);
     while let Some((host, source, result)) = started.next().await {
         match result {
-            Ok((state, router)) => {
+            Ok((state, tenant)) => {
                 if lone {
-                    only = Some(router.clone());
+                    only = Some(tenant.clone());
                 }
-                by_host.insert(host, Slot::Serving(router));
+                by_host.insert(host, Slot::Serving(tenant));
                 states.push(state);
             }
             Err(e) if lone => return Err(e),
@@ -194,12 +248,12 @@ pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
     Ok(Tenants {
         by_host,
         only,
-        bind_address,
+        bind_address: settings.bind_address,
         states,
     })
 }
 
-async fn start_one(tenant: TenantConfig) -> Result<(AppState, Router)> {
+async fn start_one(tenant: TenantConfig, shared: bool) -> Result<(AppState, Tenant)> {
     let TenantConfig { source, config } = tenant;
     let db = connect(&config.database_url, &config.database_pool)
         .await
@@ -226,8 +280,8 @@ async fn start_one(tenant: TenantConfig) -> Result<(AppState, Router)> {
         );
     }
     crate::background::spawn(state.clone());
-    let router = crate::build_app(state.clone());
-    Ok((state, router))
+    let tenant = Tenant::new(&state, shared);
+    Ok((state, tenant))
 }
 
 impl Tenants {
@@ -236,19 +290,19 @@ impl Tenants {
     /// databases up. Nothing is connected, checked or spawned here.
     pub fn from_states(bind_address: &str, states: Vec<AppState>) -> Result<Self> {
         anyhow::ensure!(!states.is_empty(), "no tenants to serve");
+        let shared = states.len() > 1;
         let mut by_host = HashMap::new();
         for state in &states {
             let host = normalize_host(&state.instance.domain);
-            let router = crate::build_app(state.clone());
             anyhow::ensure!(
                 by_host
-                    .insert(host.clone(), Slot::Serving(router))
+                    .insert(host.clone(), Slot::Serving(Tenant::new(state, shared)))
                     .is_none(),
                 "two tenants both serve {host}"
             );
         }
-        let only = match (states.len(), by_host.values().next()) {
-            (1, Some(Slot::Serving(router))) => Some(router.clone()),
+        let only = match (shared, by_host.values().next()) {
+            (false, Some(Slot::Serving(tenant))) => Some(tenant.clone()),
             _ => None,
         };
         Ok(Self {
@@ -270,8 +324,8 @@ impl Tenants {
     }
 
     fn lookup(&self, host: &str) -> Lookup<'_> {
-        if let Some(router) = &self.only {
-            return Lookup::Serving(router);
+        if let Some(tenant) = &self.only {
+            return Lookup::Serving(tenant);
         }
         let host = normalize_host(host);
         let slot = self.by_host.get(&host).or_else(|| {
@@ -284,7 +338,7 @@ impl Tenants {
                 .flatten()
         });
         match slot {
-            Some(Slot::Serving(router)) => Lookup::Serving(router),
+            Some(Slot::Serving(tenant)) => Lookup::Serving(tenant),
             Some(Slot::Unavailable) => Lookup::Unavailable,
             None => Lookup::Unknown,
         }
@@ -308,10 +362,22 @@ impl Tenants {
             .or_else(|| req.uri().authority().map(|authority| authority.as_str()))
             .unwrap_or_default();
         match self.lookup(host) {
-            Lookup::Serving(router) => match router.clone().oneshot(req).await {
-                Ok(response) => response,
-                Err(never) => match never {},
-            },
+            Lookup::Serving(tenant) => {
+                // Held until the tenant's router has produced a response. A
+                // streamed or upgraded response lets go of it as soon as it
+                // starts, so a long-lived connection does not use up the limit.
+                let _permit = match &tenant.in_flight {
+                    Some(limit) => match limit.clone().try_acquire_owned() {
+                        Ok(permit) => Some(permit),
+                        Err(_) => return busy(),
+                    },
+                    None => None,
+                };
+                match tenant.router.clone().oneshot(req).await {
+                    Ok(response) => response,
+                    Err(never) => match never {},
+                }
+            }
             Lookup::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "This instance is unavailable.",
@@ -326,11 +392,28 @@ impl Tenants {
     }
 }
 
+/// A tenant at its limit of requests in flight: shed, not queued, so that the
+/// requests piling up against one tenant cannot hold on to the process.
+fn busy() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "1")],
+        "This instance is busy; try again shortly.",
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn tenant(source: &str, domain: &str, bind: &str, allowed: &[&str]) -> TenantConfig {
+    fn tenant(
+        source: &str,
+        domain: &str,
+        bind: &str,
+        allowed: &[&str],
+        extra: &str,
+    ) -> TenantConfig {
         let allowed = allowed
             .iter()
             .map(|net| format!("\"{net}\""))
@@ -361,6 +444,8 @@ title = "t"
 contact_email = "admin@example.test"
 vapid_private_key = ""
 vapid_public_key = ""
+
+{extra}
 "#
         ))
         .expect("test configuration parses");
@@ -370,15 +455,21 @@ vapid_public_key = ""
         }
     }
 
-    fn tenants(hosts: &[(&str, bool)]) -> Tenants {
+    fn serving(router: Router, limit: Option<usize>) -> Tenant {
+        Tenant {
+            router,
+            in_flight: limit.map(|limit| Arc::new(Semaphore::new(limit))),
+        }
+    }
+
+    fn tenants(hosts: Vec<(&str, Option<Tenant>)>) -> Tenants {
         Tenants {
             by_host: hosts
-                .iter()
-                .map(|(host, serving)| {
-                    let slot = if *serving {
-                        Slot::Serving(Router::new())
-                    } else {
-                        Slot::Unavailable
+                .into_iter()
+                .map(|(host, tenant)| {
+                    let slot = match tenant {
+                        Some(tenant) => Slot::Serving(tenant),
+                        None => Slot::Unavailable,
                     };
                     (host.to_string(), slot)
                 })
@@ -389,9 +480,17 @@ vapid_public_key = ""
         }
     }
 
+    fn request(host: &str) -> Request {
+        Request::builder()
+            .uri("/")
+            .header(header::HOST, host)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
     #[test]
     fn hosts_are_matched_without_case_a_trailing_dot_or_a_port() {
-        let t = tenants(&[("seoul.earth", true)]);
+        let t = tenants(vec![("seoul.earth", Some(serving(Router::new(), None)))]);
         for host in [
             "seoul.earth",
             "Seoul.Earth",
@@ -409,14 +508,17 @@ vapid_public_key = ""
 
     #[test]
     fn a_tenant_that_did_not_start_is_unavailable_not_unknown() {
-        let t = tenants(&[("seoul.earth", true), ("example.social", false)]);
+        let t = tenants(vec![
+            ("seoul.earth", Some(serving(Router::new(), None))),
+            ("example.social", None),
+        ]);
         assert!(matches!(t.lookup("example.social"), Lookup::Unavailable));
     }
 
     #[test]
     fn a_lone_tenant_answers_every_host() {
-        let mut t = tenants(&[("seoul.earth", true)]);
-        t.only = Some(Router::new());
+        let mut t = tenants(vec![("seoul.earth", Some(serving(Router::new(), None)))]);
+        t.only = Some(serving(Router::new(), None));
         assert!(matches!(t.lookup("localhost:3000"), Lookup::Serving(_)));
         assert!(matches!(t.lookup(""), Lookup::Serving(_)));
     }
@@ -424,35 +526,143 @@ vapid_public_key = ""
     #[test]
     fn tenants_must_agree_on_what_the_process_owns() {
         let agreeing = [
-            tenant("a.toml", "a.example", "127.0.0.1:3000", &[]),
-            tenant("b.toml", "b.example", "127.0.0.1:3000", &[]),
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], ""),
+            tenant("b.toml", "b.example", "127.0.0.1:3000", &[], ""),
         ];
-        assert_eq!(process_settings(&agreeing).unwrap(), "127.0.0.1:3000");
+        let settings = process_settings(&agreeing).unwrap();
+        assert_eq!(settings.bind_address, "127.0.0.1:3000");
+        assert_eq!(settings.delivery_concurrency, 256);
 
         let listeners = [
-            tenant("a.toml", "a.example", "127.0.0.1:3000", &[]),
-            tenant("b.toml", "b.example", "127.0.0.1:3001", &[]),
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], ""),
+            tenant("b.toml", "b.example", "127.0.0.1:3001", &[], ""),
         ];
-        assert!(format!("{:#}", process_settings(&listeners).unwrap_err()).contains("bind_address"));
+        assert!(process_settings(&listeners)
+            .err()
+            .is_some_and(|e| format!("{e:#}").contains("bind_address")));
 
         let networks = [
-            tenant("a.toml", "a.example", "127.0.0.1:3000", &[]),
-            tenant("b.toml", "b.example", "127.0.0.1:3000", &["10.0.0.0/8"]),
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], ""),
+            tenant("b.toml", "b.example", "127.0.0.1:3000", &["10.0.0.0/8"], ""),
         ];
-        assert!(format!("{:#}", process_settings(&networks).unwrap_err())
-            .contains("allowed_private_networks"));
+        assert!(process_settings(&networks)
+            .err()
+            .is_some_and(|e| format!("{e:#}").contains("allowed_private_networks")));
+
+        let deliveries = [
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], ""),
+            tenant(
+                "b.toml",
+                "b.example",
+                "127.0.0.1:3000",
+                &[],
+                "[workers]\nprocess_delivery_concurrency = 32",
+            ),
+        ];
+        assert!(process_settings(&deliveries)
+            .err()
+            .is_some_and(|e| format!("{e:#}").contains("process_delivery_concurrency")));
     }
 
     #[test]
     fn no_two_tenants_may_serve_one_host() {
         let clash = [
-            tenant("a.toml", "seoul.earth", "127.0.0.1:3000", &[]),
-            tenant("b.toml", "Seoul.Earth.", "127.0.0.1:3000", &[]),
+            tenant("a.toml", "seoul.earth", "127.0.0.1:3000", &[], ""),
+            tenant("b.toml", "Seoul.Earth.", "127.0.0.1:3000", &[], ""),
         ];
-        let error = format!("{:#}", process_settings(&clash).unwrap_err());
+        let error = process_settings(&clash)
+            .err()
+            .map(|e| format!("{e:#}"))
+            .unwrap_or_default();
         assert!(
             error.contains("a.toml") && error.contains("b.toml"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn a_lone_instance_has_no_request_limit_unless_it_names_one() {
+        let lone = tenant("a.toml", "a.example", "127.0.0.1:3000", &[], "");
+        assert_eq!(lone.config.limits.request_limit(false), None);
+        assert_eq!(
+            lone.config.limits.request_limit(true),
+            Some(config::DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS)
+        );
+        let named = tenant(
+            "b.toml",
+            "b.example",
+            "127.0.0.1:3000",
+            &[],
+            "[limits]\nmax_concurrent_requests = 8",
+        );
+        assert_eq!(named.config.limits.request_limit(false), Some(8));
+        assert_eq!(named.config.limits.request_limit(true), Some(8));
+    }
+
+    /// A tenant with every request slot taken sheds the next request with 503
+    /// and `Retry-After`, while a neighbour answers as usual — and the slot is
+    /// free again once the held request finishes.
+    #[tokio::test]
+    async fn a_tenant_at_its_limit_sheds_load_and_its_neighbour_does_not() {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let held = {
+            let gate = gate.clone();
+            Router::new().route(
+                "/",
+                axum::routing::get(move || {
+                    let gate = gate.clone();
+                    async move {
+                        gate.notified().await;
+                        "released"
+                    }
+                }),
+            )
+        };
+        let calm = Router::new().route("/", axum::routing::get(|| async { "calm" }));
+        let busy_tenant = serving(held, Some(1));
+        let busy_limit = busy_tenant.in_flight.clone().unwrap();
+        let t = Arc::new(tenants(vec![
+            ("busy.example", Some(busy_tenant)),
+            ("calm.example", Some(serving(calm, Some(1)))),
+        ]));
+
+        let first = {
+            let t = t.clone();
+            tokio::spawn(async move { t.dispatch(request("busy.example")).await })
+        };
+        for _ in 0..200 {
+            if busy_limit.available_permits() == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            busy_limit.available_permits(),
+            0,
+            "the first request holds the slot"
+        );
+
+        let shed = t.dispatch(request("busy.example")).await;
+        assert_eq!(shed.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(shed.headers()[header::RETRY_AFTER], "1");
+
+        let neighbour = t.dispatch(request("calm.example")).await;
+        assert_eq!(
+            neighbour.status(),
+            StatusCode::OK,
+            "the neighbour is not held up"
+        );
+
+        gate.notify_one();
+        assert_eq!(first.await.unwrap().status(), StatusCode::OK);
+        assert_eq!(busy_limit.available_permits(), 1, "the slot is released");
+
+        gate.notify_one();
+        let again = t.dispatch(request("busy.example")).await;
+        assert_eq!(
+            again.status(),
+            StatusCode::OK,
+            "and the tenant serves again"
         );
     }
 }

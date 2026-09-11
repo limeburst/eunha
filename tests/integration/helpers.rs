@@ -560,6 +560,7 @@ impl TestContext {
             software_update_url: None,
             sign_integrity_proofs,
             workers: Default::default(),
+            limits: Default::default(),
         };
         let state = eunha::state::AppState::new(db, config)
             .await

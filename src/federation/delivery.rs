@@ -6,6 +6,25 @@ use std::time::Duration;
 
 use crate::state::AppState;
 
+/// Deliveries in flight across the whole process, whichever instance they
+/// belong to. Sized once, before any instance starts, from the value every
+/// instance agreed on; a process that never sizes it, such as a test, gets the
+/// default.
+static DELIVERY_PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+
+/// Size the process-wide delivery limit. Only the first call has an effect.
+pub fn set_process_delivery_concurrency(permits: usize) {
+    let _ = DELIVERY_PERMITS.set(tokio::sync::Semaphore::new(permits.max(1)));
+}
+
+fn delivery_permits() -> &'static tokio::sync::Semaphore {
+    DELIVERY_PERMITS.get_or_init(|| {
+        tokio::sync::Semaphore::new(
+            crate::config::WorkersConfig::default().process_delivery_concurrency,
+        )
+    })
+}
+
 const DELIVERY_QUEUE_IDLE: Duration = Duration::from_secs(2);
 const DELIVERY_QUEUE_ERROR_IDLE: Duration = Duration::from_secs(10);
 /// How often to prune finished delivery jobs.
@@ -623,7 +642,14 @@ async fn process_delivery_job(
         }
     };
 
-    let result = deliver(&state.http, activity, inbox_url, key_id, &private_key).await;
+    // Every instance in the process shares one budget of deliveries in flight,
+    // so one with a large fan-out queues behind the others instead of opening
+    // thousands of connections at once. Tokio's semaphore is first come, first
+    // served, which keeps that queue fair between them.
+    let result = match delivery_permits().acquire().await {
+        Ok(_permit) => deliver(&state.http, activity, inbox_url, key_id, &private_key).await,
+        Err(e) => Err(anyhow::anyhow!("the delivery limit was closed: {e}")),
+    };
     if let Err(e) = record_job_outcome(state, id, inbox_url, attempts, max_attempts, result).await {
         tracing::error!(id, error = %e, "failed to record delivery job outcome");
         force_terminal(state, id).await;

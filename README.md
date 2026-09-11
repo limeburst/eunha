@@ -122,10 +122,24 @@ signing keys; what they share is the process. Three things follow from that:
 `eunha --tenants <dir> migrate` migrates every tenant's database, and
 `--check` exits non-zero if any of them is behind.
 
+Sharing a process also means sharing its capacity, and two limits keep one
+instance from taking more than its share:
+
+ -  **Requests in flight, per instance.** Past `max_concurrent_requests` in
+    `[limits]`, an instance's requests are answered at once with 503 and
+    `Retry-After` rather than queued, and its neighbours carry on. Unset, a
+    lone instance has no limit and one among several has 64. A streaming
+    connection counts only while it is being opened.
+ -  **Deliveries in flight, per process.** `process_delivery_concurrency` in
+    `[workers]`, 256 by default, caps outbound ActivityPub deliveries across
+    every instance, first come first served, so one with a large fan-out
+    waits its turn instead of opening thousands of connections. Every
+    instance in a directory must name the same value.
+
 This is the start of the shared-process work planned in
-[MULTITENANCY.md](./MULTITENANCY.md). Per-tenant fairness limits, per-tenant
-tracing, and adding a tenant without a restart are not built yet; what sharing
-a process saves is measured in [BENCHMARKING.md](./BENCHMARKING.md).
+[MULTITENANCY.md](./MULTITENANCY.md). Per-tenant tracing and adding a tenant
+without a restart are not built yet; what sharing a process saves is measured
+in [BENCHMARKING.md](./BENCHMARKING.md).
 
 
 Tracking Mastodon

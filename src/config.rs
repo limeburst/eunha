@@ -58,6 +58,8 @@ pub struct Config {
     pub sign_integrity_proofs: bool,
     #[serde(default)]
     pub workers: WorkersConfig,
+    #[serde(default)]
+    pub limits: LimitsConfig,
 }
 
 /// Mastodon's `ACTIVE_RECORD_ENCRYPTION_*` secrets. Both are required together;
@@ -180,6 +182,14 @@ pub struct WorkersConfig {
     /// this long or a minute, whichever is longer.
     #[serde(default = "default_queue_idle_poll_seconds")]
     pub queue_idle_poll_seconds: u64,
+    /// Inbox POSTs in flight across every instance this process serves. Each
+    /// delivery loop still claims up to `delivery_concurrency` jobs, but only
+    /// this many of all of them are sending at once, first come first served,
+    /// so an instance with a large fan-out waits its turn rather than opening
+    /// thousands of connections. Instances sharing a process must all name the
+    /// same value.
+    #[serde(default = "default_process_delivery_concurrency")]
+    pub process_delivery_concurrency: usize,
 }
 
 /// Whether integrity proofs are signed when a config says nothing about it.
@@ -246,6 +256,10 @@ fn default_queue_idle_poll_seconds() -> u64 {
     30
 }
 
+fn default_process_delivery_concurrency() -> usize {
+    256
+}
+
 impl Default for WorkersConfig {
     fn default() -> Self {
         Self {
@@ -256,6 +270,7 @@ impl Default for WorkersConfig {
             inbox_batch: default_inbox_batch(),
             inbox_concurrency: default_inbox_concurrency(),
             queue_idle_poll_seconds: default_queue_idle_poll_seconds(),
+            process_delivery_concurrency: default_process_delivery_concurrency(),
         }
     }
 }
@@ -272,6 +287,7 @@ impl WorkersConfig {
             inbox_batch: self.inbox_batch.max(1),
             inbox_concurrency: self.inbox_concurrency.max(1),
             queue_idle_poll_seconds: self.queue_idle_poll_seconds.max(1),
+            process_delivery_concurrency: self.process_delivery_concurrency.max(1),
         }
     }
 
@@ -286,6 +302,34 @@ impl WorkersConfig {
     pub fn timed_task_idle_poll(&self) -> std::time::Duration {
         self.queue_idle_poll()
             .max(std::time::Duration::from_secs(60))
+    }
+}
+
+/// How many requests an instance sharing a process with others may have in
+/// flight when its configuration does not say.
+pub const DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS: usize = 64;
+
+/// Limits an instance is held to so that it cannot take more than its share
+/// of a process it shares with other instances. Every field has a default, so
+/// an existing `config.toml` needs no `[limits]` section.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LimitsConfig {
+    /// Requests this instance may have in flight at once. Past it, a request
+    /// is answered at once with 503 and `Retry-After` rather than queued, so an
+    /// instance being flooded cannot slow the others down. Unset, a lone
+    /// instance has no limit and one among several has
+    /// [`DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS`].
+    #[serde(default)]
+    pub max_concurrent_requests: Option<usize>,
+}
+
+impl LimitsConfig {
+    /// The in-flight request limit, given whether this instance shares its
+    /// process with others.
+    pub fn request_limit(&self, shared: bool) -> Option<usize> {
+        self.max_concurrent_requests
+            .or(shared.then_some(DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS))
+            .map(|limit| limit.max(1))
     }
 }
 
