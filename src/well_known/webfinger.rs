@@ -51,7 +51,19 @@ pub async fn webfinger(
         }
         user.to_string()
     } else if let Ok(url) = url::Url::parse(resource) {
-        // URL like https://domain/users/username
+        // A URL like https://domain/users/username, which has to be one of this
+        // instance's own, as Mastodon's `TagManager#local_url?` requires.
+        // Reading only the path answered for any domain's `alice` with this
+        // instance's, which in a process serving several instances hands out
+        // one tenant's account in answer to a question about another's.
+        let authority = match (url.host_str(), url.port()) {
+            (Some(host), Some(port)) => format!("{host}:{port}"),
+            (Some(host), None) => host.to_string(),
+            (None, _) => return Err(AppError::NotFound),
+        };
+        if !authority.eq_ignore_ascii_case(&instance.domain) {
+            return Err(AppError::NotFound);
+        }
         url.path_segments()
             .and_then(|mut s| {
                 if s.next()? == "users" {
