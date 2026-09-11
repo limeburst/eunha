@@ -309,9 +309,13 @@ impl WorkersConfig {
 /// flight when its configuration does not say.
 pub const DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS: usize = 64;
 
+/// How many instances one process serves when its configuration does not say.
+pub const DEFAULT_PROCESS_MAX_TENANTS: usize = 50;
+
 /// Limits an instance is held to so that it cannot take more than its share
-/// of a process it shares with other instances. Every field has a default, so
-/// an existing `config.toml` needs no `[limits]` section.
+/// of a process it shares with other instances, and limits on what the process
+/// takes on at all. Every field has a default, so an existing `config.toml`
+/// needs no `[limits]` section.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct LimitsConfig {
     /// Requests this instance may have in flight at once. Past it, a request
@@ -321,6 +325,21 @@ pub struct LimitsConfig {
     /// [`DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS`].
     #[serde(default)]
     pub max_concurrent_requests: Option<usize>,
+    /// Instances one process may serve. A panic, a leak or a saturated runtime
+    /// takes down every instance in the process, so this is how many one
+    /// failure may reach. A directory with more refuses to start. Unset, it is
+    /// [`DEFAULT_PROCESS_MAX_TENANTS`]. Instances sharing a process must all
+    /// name the same value.
+    #[serde(default)]
+    pub process_max_tenants: Option<usize>,
+    /// Database connections every instance's pool in this process may open
+    /// between them, for when several processes share one PostgreSQL server
+    /// and each is given a part of it. A directory whose
+    /// `database_pool.max_connections` add up to more refuses to start. Unset,
+    /// the only budget is what the server itself accepts. Instances sharing a
+    /// process must all name the same value.
+    #[serde(default)]
+    pub process_database_connections: Option<u64>,
 }
 
 impl LimitsConfig {
@@ -330,6 +349,13 @@ impl LimitsConfig {
         self.max_concurrent_requests
             .or(shared.then_some(DEFAULT_SHARED_MAX_CONCURRENT_REQUESTS))
             .map(|limit| limit.max(1))
+    }
+
+    /// How many instances the process may serve.
+    pub fn max_tenants(&self) -> usize {
+        self.process_max_tenants
+            .unwrap_or(DEFAULT_PROCESS_MAX_TENANTS)
+            .max(1)
     }
 }
 

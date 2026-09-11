@@ -321,3 +321,28 @@ async fn test_tenants_share_no_in_process_state() {
     assert_eq!(a.state.urls.local_domain, a.domain);
     assert_eq!(b.state.urls.local_domain, b.domain);
 }
+
+/// A process asks the real PostgreSQL server how many connections it accepts,
+/// and refuses to start with a pool that could open more, rather than failing
+/// some request later on. Were the server not asked, this pool would start.
+#[tokio::test]
+async fn test_a_process_refuses_pools_its_database_server_cannot_hold() {
+    let a = TestContext::new("tenant-pools").await;
+    let mut config = (*a.state.config).clone();
+    config.database_pool.max_connections = 100_000;
+    let started = eunha::tenants::start(vec![eunha::tenants::TenantConfig {
+        source: "pools.toml".into(),
+        config,
+    }])
+    .await;
+    let error = match started {
+        Ok(_) => panic!("a pool of 100,000 connections was admitted"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(
+        error.contains("pools.toml")
+            && error.contains("100000 database connections")
+            && error.contains("database_pool.max_connections"),
+        "{error}"
+    );
+}

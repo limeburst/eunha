@@ -136,6 +136,23 @@ instance from taking more than its share:
     waits its turn instead of opening thousands of connections. Every
     instance in a directory must name the same value.
 
+And a process refuses to start with more than it can hold, before any instance
+is started:
+
+ -  **At most 50 instances**, or `process_max_tenants` in `[limits]`. Every
+    instance in a process goes down with it, so this is how many one crash
+    may take — a decision about the failure domain, not merely about density.
+ -  **Pools that fit their database server.** Eunha asks each PostgreSQL
+    server its instances use how many connections it accepts —
+    `max_connections` less the reserved ones — and refuses when their
+    `database_pool.max_connections` add up to more. Overrun, that budget
+    would fail whichever instance happened to ask last. It sees only its own
+    process, so processes sharing a server divide it between them with
+    `process_database_connections` in `[limits]`.
+
+Every instance in a directory must name the same value for both, and a lone
+instance is held to them too.
+
 This is the start of the shared-process work planned in
 [MULTITENANCY.md](./MULTITENANCY.md). Per-tenant tracing and adding a tenant
 without a restart are not built yet; what sharing a process saves is measured

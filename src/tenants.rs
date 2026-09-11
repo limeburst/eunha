@@ -17,6 +17,12 @@
 //! Sharing a process also means sharing its capacity. Among several tenants
 //! each has a limit on requests in flight, past which its requests are shed
 //! with 503 rather than queued, so one being flooded cannot slow the others.
+//!
+//! And a process takes on only what it can hold. It refuses to start with more
+//! tenants than its ceiling, which is how many one crash may take down, or with
+//! database pools that could open more connections than their PostgreSQL
+//! server accepts — a budget that, overrun, fails whichever tenant happens to
+//! ask last rather than failing the configuration at startup.
 
 use crate::{config, migrate, state::AppState};
 use anyhow::{Context as _, Result};
@@ -27,13 +33,21 @@ use axum::{
     Router,
 };
 use futures::StreamExt as _;
-use sqlx::{postgres::PgPoolOptions, Executor as _};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use sqlx::{
+    postgres::{PgConnectOptions, PgPoolOptions},
+    Connection as _, Executor as _, PgConnection,
+};
+use std::{collections::HashMap, path::Path, str::FromStr as _, sync::Arc};
 use tokio::sync::Semaphore;
 use tower::ServiceExt as _;
 
 /// How many tenants are brought up at once.
 const STARTUP_CONCURRENCY: usize = 8;
+
+/// How many of a database server's tenants are tried when asking it how many
+/// connections it accepts, and how long each attempt may take.
+const SERVER_PROBE_ATTEMPTS: usize = 3;
+const SERVER_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A tenant's configuration, and where it was read from for error messages.
 pub struct TenantConfig {
@@ -105,6 +119,8 @@ fn normalize_host(host: &str) -> String {
 struct ProcessSettings {
     bind_address: String,
     delivery_concurrency: usize,
+    max_tenants: usize,
+    database_connections: Option<u64>,
 }
 
 /// What belongs to the process rather than to any one tenant, which every
@@ -147,6 +163,23 @@ fn process_settings(configs: &[TenantConfig]) -> Result<ProcessSettings> {
             first.source,
             tenant.source,
         );
+        anyhow::ensure!(
+            tenant.config.limits.max_tenants() == first.config.limits.max_tenants(),
+            "{} allows {} tenants in its process but {} allows {}: every tenant must name the \
+             same process_max_tenants",
+            first.source,
+            first.config.limits.max_tenants(),
+            tenant.source,
+            tenant.config.limits.max_tenants(),
+        );
+        anyhow::ensure!(
+            tenant.config.limits.process_database_connections
+                == first.config.limits.process_database_connections,
+            "{} and {} give the process different database connection budgets: every tenant \
+             must name the same process_database_connections",
+            first.source,
+            tenant.source,
+        );
         let host = normalize_host(&tenant.config.instance.domain);
         if let Some(other) = hosts.insert(host.clone(), &tenant.source) {
             anyhow::bail!("{other} and {} both serve {host}", tenant.source);
@@ -155,7 +188,137 @@ fn process_settings(configs: &[TenantConfig]) -> Result<ProcessSettings> {
     Ok(ProcessSettings {
         bind_address: first.config.bind_address.clone(),
         delivery_concurrency,
+        max_tenants: first.config.limits.max_tenants(),
+        database_connections: first.config.limits.process_database_connections,
     })
+}
+
+/// Whether the process can take these tenants on at all: no more than its
+/// ceiling, and pools that fit the connection budget it was given, if any.
+fn admit(configs: &[TenantConfig], settings: &ProcessSettings) -> Result<()> {
+    anyhow::ensure!(
+        configs.len() <= settings.max_tenants,
+        "{} tenants are configured but a process serves at most {}: every tenant in it goes \
+         down with it, so serve the rest from another process or raise \
+         process_max_tenants in [limits]",
+        configs.len(),
+        settings.max_tenants,
+    );
+    if let Some(budget) = settings.database_connections {
+        let wanted = configs
+            .iter()
+            .map(|tenant| u64::from(tenant.config.database_pool.max_connections))
+            .sum::<u64>();
+        anyhow::ensure!(
+            wanted <= budget,
+            "the tenants' database pools may open {wanted} connections between them but the \
+             process is given {budget}: lower their database_pool.max_connections, serve fewer \
+             tenants here, or raise process_database_connections in [limits]",
+        );
+    }
+    Ok(())
+}
+
+/// The connections the tenants' pools may open on one PostgreSQL server.
+struct ServerDemand<'a> {
+    server: String,
+    connections: u64,
+    sources: Vec<&'a str>,
+    urls: Vec<&'a str>,
+}
+
+/// The tenants' pools grouped by the server they connect to. A tenant whose
+/// database URL does not parse is left out: it cannot connect, so it will not
+/// start, and saying why is `start_one`'s job.
+fn demand_by_server(configs: &[TenantConfig]) -> Vec<ServerDemand<'_>> {
+    let mut servers: Vec<ServerDemand<'_>> = Vec::new();
+    for tenant in configs {
+        let Ok(options) = PgConnectOptions::from_str(&tenant.config.database_url) else {
+            continue;
+        };
+        let server = match options.get_socket() {
+            Some(socket) => format!("{}:{}", socket.display(), options.get_port()),
+            None => format!("{}:{}", options.get_host(), options.get_port()),
+        };
+        let index = match servers.iter().position(|s| s.server == server) {
+            Some(index) => index,
+            None => {
+                servers.push(ServerDemand {
+                    server,
+                    connections: 0,
+                    sources: Vec::new(),
+                    urls: Vec::new(),
+                });
+                servers.len() - 1
+            }
+        };
+        let entry = &mut servers[index];
+        entry.connections += u64::from(tenant.config.database_pool.max_connections);
+        entry.sources.push(&tenant.source);
+        entry.urls.push(&tenant.config.database_url);
+    }
+    servers
+}
+
+/// Whether one server's slots hold what the tenants' pools may ask of it.
+fn fits(demand: &ServerDemand<'_>, slots: u64) -> Result<()> {
+    anyhow::ensure!(
+        demand.connections <= slots,
+        "{} may open {} database connections between them on {}, which accepts {slots} \
+         (max_connections less the reserved ones): lower their database_pool.max_connections \
+         or serve fewer tenants from this server",
+        demand.sources.join(", "),
+        demand.connections,
+        demand.server,
+    );
+    Ok(())
+}
+
+/// Ask every PostgreSQL server the tenants use how many connections it accepts,
+/// and refuse pools that add up to more.
+///
+/// This sees only this process. Several sharing a server have to divide it
+/// between them, which is what `process_database_connections` is for. A server
+/// that none of its first few tenants can reach is not checked; those tenants
+/// will not start either, and trying all of them would hold up the rest.
+async fn check_database_servers(configs: &[TenantConfig]) -> Result<()> {
+    for demand in demand_by_server(configs) {
+        let mut slots = None;
+        for url in demand.urls.iter().take(SERVER_PROBE_ATTEMPTS) {
+            let asked = tokio::time::timeout(SERVER_PROBE_TIMEOUT, server_slots(url)).await;
+            match asked.unwrap_or_else(|_| Err(anyhow::anyhow!("no answer in time"))) {
+                Ok(n) => {
+                    slots = Some(n);
+                    break;
+                }
+                Err(e) => tracing::warn!(
+                    server = %demand.server,
+                    error = %format!("{e:#}"),
+                    "could not ask a database server how many connections it accepts"
+                ),
+            }
+        }
+        if let Some(slots) = slots {
+            fits(&demand, slots)?;
+        }
+    }
+    Ok(())
+}
+
+/// Connections a server accepts from roles that are not superusers.
+async fn server_slots(database_url: &str) -> Result<u64> {
+    let mut conn = PgConnection::connect(database_url).await?;
+    // `reserved_connections` arrived in PostgreSQL 16; `true` makes an older
+    // server answer NULL rather than fail.
+    let slots: i64 = sqlx::query_scalar(
+        "SELECT current_setting('max_connections')::int8 \
+              - current_setting('superuser_reserved_connections')::int8 \
+              - COALESCE(current_setting('reserved_connections', true), '0')::int8",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    conn.close().await.ok();
+    Ok(u64::try_from(slots).unwrap_or(0))
 }
 
 /// A tenant that is serving: its router, and the limit on requests it may have
@@ -204,12 +367,16 @@ enum Lookup<'a> {
 /// Bring every tenant up: its pool, the migration check, its state, the move of
 /// its signing keys, its background tasks and its router.
 ///
-/// A lone tenant whose database is behind this binary, or that cannot start,
-/// stops the process, as a single instance always has. Among several it is left
-/// out — its host answers 503 — and the others serve: one tenant's pending
-/// migration should not take its neighbours down with it.
+/// Nothing starts unless the process can hold all of them — see [`admit`] and
+/// [`check_database_servers`]. Past that, a lone tenant whose database is
+/// behind this binary, or that cannot start, stops the process, as a single
+/// instance always has. Among several it is left out — its host answers 503 —
+/// and the others serve: one tenant's pending migration should not take its
+/// neighbours down with it.
 pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
     let settings = process_settings(&configs)?;
+    admit(&configs, &settings)?;
+    check_database_servers(&configs).await?;
     crate::federation::delivery::set_process_delivery_concurrency(settings.delivery_concurrency);
     let lone = configs.len() == 1;
     let mut by_host = HashMap::new();
@@ -562,6 +729,133 @@ vapid_public_key = ""
         assert!(process_settings(&deliveries)
             .err()
             .is_some_and(|e| format!("{e:#}").contains("process_delivery_concurrency")));
+
+        let ceilings = [
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], ""),
+            tenant(
+                "b.toml",
+                "b.example",
+                "127.0.0.1:3000",
+                &[],
+                "[limits]\nprocess_max_tenants = 10",
+            ),
+        ];
+        assert!(process_settings(&ceilings)
+            .err()
+            .is_some_and(|e| format!("{e:#}").contains("process_max_tenants")));
+
+        let budgets = [
+            tenant(
+                "a.toml",
+                "a.example",
+                "127.0.0.1:3000",
+                &[],
+                "[limits]\nprocess_database_connections = 100",
+            ),
+            tenant("b.toml", "b.example", "127.0.0.1:3000", &[], ""),
+        ];
+        assert!(process_settings(&budgets)
+            .err()
+            .is_some_and(|e| format!("{e:#}").contains("process_database_connections")));
+    }
+
+    #[test]
+    fn a_process_refuses_more_tenants_than_its_ceiling() {
+        let lone = [tenant("a.toml", "a.example", "127.0.0.1:3000", &[], "")];
+        let settings = process_settings(&lone).unwrap();
+        assert_eq!(settings.max_tenants, config::DEFAULT_PROCESS_MAX_TENANTS);
+        admit(&lone, &settings).unwrap();
+
+        let ceiling = "[limits]\nprocess_max_tenants = 2";
+        let three = [
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], ceiling),
+            tenant("b.toml", "b.example", "127.0.0.1:3000", &[], ceiling),
+            tenant("c.toml", "c.example", "127.0.0.1:3000", &[], ceiling),
+        ];
+        let settings = process_settings(&three).unwrap();
+        let error = admit(&three, &settings)
+            .err()
+            .map(|e| format!("{e:#}"))
+            .unwrap_or_default();
+        assert!(
+            error.contains("3 tenants") && error.contains("process_max_tenants"),
+            "{error}"
+        );
+        admit(&three[..2], &settings).unwrap();
+    }
+
+    #[test]
+    fn a_process_refuses_pools_past_the_budget_it_was_given() {
+        let limits = |budget: u64| {
+            format!(
+                "[limits]\nprocess_database_connections = {budget}\n\
+                 [database_pool]\nmax_connections = 20"
+            )
+        };
+        let pair = |budget| {
+            [
+                tenant(
+                    "a.toml",
+                    "a.example",
+                    "127.0.0.1:3000",
+                    &[],
+                    &limits(budget),
+                ),
+                tenant(
+                    "b.toml",
+                    "b.example",
+                    "127.0.0.1:3000",
+                    &[],
+                    &limits(budget),
+                ),
+            ]
+        };
+
+        let over = pair(30);
+        let error = admit(&over, &process_settings(&over).unwrap())
+            .err()
+            .map(|e| format!("{e:#}"))
+            .unwrap_or_default();
+        assert!(
+            error.contains("40 connections") && error.contains("given 30"),
+            "{error}"
+        );
+
+        let exact = pair(40);
+        admit(&exact, &process_settings(&exact).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn pools_are_counted_against_the_server_they_connect_to() {
+        let pool = "[database_pool]\nmax_connections = 20";
+        let mut configs = [
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], pool),
+            tenant("b.toml", "b.example", "127.0.0.1:3000", &[], pool),
+            tenant("c.toml", "c.example", "127.0.0.1:3000", &[], pool),
+            tenant("d.toml", "d.example", "127.0.0.1:3000", &[], pool),
+        ];
+        configs[0].config.database_url = "postgres://eunha@db1.internal/a".into();
+        configs[1].config.database_url = "postgres://eunha@db2.internal/b".into();
+        configs[2].config.database_url = "postgres://other@db1.internal:5432/c".into();
+        configs[3].config.database_url = "not a database url".into();
+
+        let servers = demand_by_server(&configs);
+        assert_eq!(servers.len(), 2, "d.toml cannot connect, so is not counted");
+        let db1 = &servers[0];
+        assert_eq!(db1.server, "db1.internal:5432");
+        assert_eq!(db1.connections, 40, "a role does not make another server");
+        assert_eq!(db1.sources, ["a.toml", "c.toml"]);
+        assert_eq!(servers[1].connections, 20);
+
+        let error = fits(db1, 39)
+            .err()
+            .map(|e| format!("{e:#}"))
+            .unwrap_or_default();
+        assert!(
+            error.contains("a.toml, c.toml") && error.contains("db1.internal:5432"),
+            "{error}"
+        );
+        fits(db1, 40).unwrap();
     }
 
     #[test]
