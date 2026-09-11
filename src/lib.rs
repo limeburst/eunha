@@ -25,6 +25,7 @@ pub mod software_updates;
 pub mod state;
 pub mod streaming;
 pub mod templates;
+pub mod tenants;
 pub mod upstream;
 pub mod version;
 pub mod web;

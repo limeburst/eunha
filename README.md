@@ -91,6 +91,43 @@ Process-wide memory is omitted from tenant-facing admin responses whenever a
 prefix or separate coordination endpoint is configured.
 
 
+Several instances in one process
+--------------------------------
+
+Every eunha process serves a registry of instances and hands each request to
+one of them by its `Host` header. Run without arguments, it serves the single
+instance in `config.toml` and the environment, as it always has, and answers
+whatever host it is asked by. Given a directory, it serves one instance per
+`*.toml` in it, each answering to its `instance.domain`:
+
+~~~~
+eunha --tenants /srv/eunha/tenants migrate
+eunha --tenants /srv/eunha/tenants
+~~~~
+
+Each instance keeps its own database, Redis prefix, background tasks and
+signing keys; what they share is the process. Three things follow from that:
+
+ -  **Tenant files are read on their own.** Environment variables belong to the
+    process, so none of them overrides a tenant's file.
+ -  **Every tenant must agree on what the process owns:** `bind_address`,
+    because there is one listener, and `allowed_private_networks`, because the
+    SSRF-guarded resolver is shared. Eunha refuses to start otherwise, and when
+    two files claim one domain.
+ -  **A tenant that cannot start does not stop the rest.** One whose database is
+    behind this binary, or that fails to start, is left out and its host
+    answers 503; a host no tenant serves answers 421. A lone instance still
+    refuses to start, as it always has.
+
+`eunha --tenants <dir> migrate` migrates every tenant's database, and
+`--check` exits non-zero if any of them is behind.
+
+This is the start of the shared-process work planned in
+[MULTITENANCY.md](./MULTITENANCY.md). Per-tenant fairness limits, per-tenant
+tracing, and adding a tenant without a restart are not built yet; what sharing
+a process saves is measured in [BENCHMARKING.md](./BENCHMARKING.md).
+
+
 Tracking Mastodon
 -----------------
 

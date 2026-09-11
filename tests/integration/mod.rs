@@ -20,9 +20,11 @@
 //!   c2s/        — Mastodon Client-to-Server REST API compatibility.
 //!   federation/ — Server-to-Server ActivityPub (federation) behaviour.
 //!   surfaces/   — other public API surfaces (oEmbed, streaming).
+//!   tenants     — several instances served by one process.
 
 mod helpers;
 
 mod c2s;
 mod federation;
 mod surfaces;
+mod tenants;
