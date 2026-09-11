@@ -428,6 +428,12 @@ enough. A repeat follow produces no notification at all, so on a second run only
 the server with a fresh database reports a follow group — which reads exactly
 like eunha inventing one. The fans unfollow before they follow.
 
+The groups are also read only once every act has become a notification.
+Mastodon writes them from `LocalNotificationWorker`, after the favourite or
+follow has already answered, while eunha writes them in the request — so reading
+at once caught Mastodon with the third fan's follow still queued, a group of two
+against eunha's three, recorded as eunha's difference.
+
 ### Federating with a live Mastodon
 
 The differential harness asks whether the two servers answer a client the same

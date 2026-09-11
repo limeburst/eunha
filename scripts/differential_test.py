@@ -27,6 +27,7 @@ Usage:
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -494,6 +495,20 @@ def compare_notification_grouping(args, findings):
             on(base, f"/api/v1/statuses/{posted['id']}/favourite", fan_token, "POST")
         for _, fan_token in fans:
             on(base, f"/api/v1/accounts/{me['id']}/follow", fan_token, "POST")
+
+        # Mastodon writes these notifications from `LocalNotificationWorker`,
+        # after the favourite or follow has answered; eunha writes them in the
+        # request. Reading the groups straight away once caught Mastodon with
+        # fan3's follow still queued, a group of two against eunha's three.
+        # Wait for one notification per act — a count of what was done, not of
+        # how it should group — and compare whatever is there if it never comes.
+        acts = 2 * len(fans)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            status, rows, _ = on(base, "/api/v1/notifications?limit=40", token)
+            if status == 200 and isinstance(rows, list) and len(rows) >= acts:
+                break
+            time.sleep(0.5)
 
         status, body, _ = on(base, "/api/v2/notifications", token)
         if status != 200:
