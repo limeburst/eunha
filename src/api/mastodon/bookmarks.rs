@@ -177,6 +177,7 @@ pub async fn get_bookmarks(
             });
         ctx.bookmarked = true;
         let mut api = status_from_db(
+            &state.urls,
             s,
             account,
             media,

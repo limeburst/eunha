@@ -344,7 +344,16 @@ async fn build_response(
                 .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
                 .cloned()
                 .unwrap_or_default();
-            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            let mut api = status_from_db(
+                &state.urls,
+                s,
+                account,
+                media,
+                reblog,
+                ctx,
+                &mentions,
+                &rb_mentions,
+            );
             api.account.emojis = account_emojis_map
                 .get(&account.id)
                 .cloned()
@@ -378,7 +387,7 @@ async fn build_response(
 
     let account_emojis = batch_account_emojis(state, std::slice::from_ref(account)).await;
     let account_roles = batch_account_roles(state, std::slice::from_ref(account)).await;
-    let mut api_account = account_from_db(account);
+    let mut api_account = account_from_db(&state.urls, account);
     api_account.emojis = account_emojis.get(&account.id).cloned().unwrap_or_default();
     api_account.roles = account_roles.get(&account.id).cloned().unwrap_or_default();
     apply_account_stats(state, &mut api_account, account.id).await;

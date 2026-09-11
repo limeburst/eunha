@@ -281,8 +281,8 @@ pub async fn actor_json(
         .as_ref()
         .is_some_and(|s| !s.is_empty())
         || !account.header_remote_url.is_empty();
-    let avatar_url = crate::api::mastodon::convert::account_avatar_url_for(account);
-    let header_url = crate::api::mastodon::convert::account_header_url_for(account);
+    let avatar_url = crate::api::mastodon::convert::account_avatar_url_for(&state.urls, account);
+    let header_url = crate::api::mastodon::convert::account_header_url_for(&state.urls, account);
 
     // Profile metadata fields, serialized as `PropertyValue` attachments so
     // remote servers show the account's fields (Mastodon's `virtual_attachments`).

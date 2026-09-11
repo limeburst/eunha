@@ -267,7 +267,7 @@ async fn build_admin_account(
         created_by_application_id: None,
         invited_by_account_id,
         account: {
-            let mut api = account_from_db(account);
+            let mut api = account_from_db(&state.urls, account);
             api.emojis = fetch_account_emojis(state, account).await;
             api.roles = {
                 let m = batch_account_roles(state, std::slice::from_ref(account)).await;
@@ -643,14 +643,14 @@ async fn build_admin_report(state: &AppState, report: &AdminReportRow) -> AppRes
     .fetch_one(&state.db)
     .await?;
 
-    let mut account_api = account_from_db(&account);
+    let mut account_api = account_from_db(&state.urls, &account);
     account_api.emojis = fetch_account_emojis(state, &account).await;
     account_api.roles = {
         let m = batch_account_roles(state, std::slice::from_ref(&account)).await;
         m.get(&account.id).cloned().unwrap_or_default()
     };
     super::accounts::apply_account_stats(state, &mut account_api, account.id).await;
-    let mut target_api = account_from_db(&target);
+    let mut target_api = account_from_db(&state.urls, &target);
     target_api.emojis = fetch_account_emojis(state, &target).await;
     target_api.roles = {
         let m = batch_account_roles(state, std::slice::from_ref(&target)).await;

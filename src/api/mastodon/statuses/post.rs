@@ -721,7 +721,7 @@ pub async fn post_status(
                 Some(status.id),
                 format!("{} mentioned you", account.display_name),
                 account.acct().clone(),
-                crate::api::mastodon::convert::account_avatar_url_for(&account),
+                crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
             )
             .await;
             notified.insert(parent.account_id);
@@ -741,7 +741,7 @@ pub async fn post_status(
             Some(status.id),
             format!("{} mentioned you", account.display_name),
             account.acct().clone(),
-            crate::api::mastodon::convert::account_avatar_url_for(&account),
+            crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
         )
         .await;
         notified.insert(mentioned.id);
@@ -772,7 +772,7 @@ pub async fn post_status(
                     Some(status.id),
                     format!("{} posted a new status", account.display_name),
                     account.acct().clone(),
-                    crate::api::mastodon::convert::account_avatar_url_for(&account),
+                    crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
                 )
                 .await;
             }

@@ -207,7 +207,16 @@ pub async fn get_conversations(
                 .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
                 .cloned()
                 .unwrap_or_default();
-            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            let mut api = status_from_db(
+                &state.urls,
+                s,
+                account,
+                media,
+                reblog,
+                ctx,
+                &mentions,
+                &rb_mentions,
+            );
             api.account.emojis = status_account_emojis_map
                 .get(&account.id)
                 .cloned()
@@ -263,7 +272,7 @@ pub async fn get_conversations(
                 .iter()
                 .filter_map(|id| participant_acct_map.get(id))
                 .map(|a| {
-                    let mut api_acct = account_from_db(a);
+                    let mut api_acct = account_from_db(&state.urls, a);
                     api_acct.emojis = participant_emojis_map
                         .get(&a.id)
                         .cloned()
@@ -460,7 +469,7 @@ async fn build_conversation_response(
         accounts: participants
             .iter()
             .map(|a| {
-                let mut api = account_from_db(a);
+                let mut api = account_from_db(&state.urls, a);
                 api.emojis = participant_emojis_map
                     .get(&a.id)
                     .cloned()

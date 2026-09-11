@@ -276,7 +276,10 @@ pub async fn build_note(
     )
     .fetch_all(&state.db)
     .await?;
-    let mut attachment: Vec<Value> = media.iter().filter_map(media_attachment_ap).collect();
+    let mut attachment: Vec<Value> = media
+        .iter()
+        .filter_map(|m| media_attachment_ap(&state.urls, m))
+        .collect();
 
     // FEP-8967: the status's preview card travels as a `Link` attachment, so
     // receivers do not have to scrape the content for a URL and guess. Mastodon
@@ -429,8 +432,8 @@ fn quote_interaction_policy(policy: i32, visibility: i32, followers_url: &str) -
 
 /// Build an AP `attachment` entry for one media attachment, or `None` if it has
 /// no resolvable URL.
-fn media_attachment_ap(m: &models::MediaAttachment) -> Option<Value> {
-    let url = convert::media_url(m)?;
+fn media_attachment_ap(urls: &convert::InstanceUrls, m: &models::MediaAttachment) -> Option<Value> {
+    let url = convert::media_url(urls, m)?;
     // Mastodon serializes every attachment as a generic `Document`; the concrete
     // kind is conveyed by `mediaType`.
     let mut obj = json!({

@@ -13,7 +13,7 @@ pub async fn verify_credentials(
 ) -> AppResult<Json<ApiAccount>> {
     auth.require_scope("read:accounts")?;
     let account = fetch_account(&state, auth.account_id).await?;
-    let mut api_account = account_from_db(&account);
+    let mut api_account = account_from_db(&state.urls, &account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
     apply_account_stats(&state, &mut api_account, account.id).await;
 
@@ -617,10 +617,22 @@ pub async fn patch_profile(
             &std::collections::HashMap::new(),
         ),
         formatted_fields,
-        avatar: Some(crate::api::mastodon::convert::account_avatar_url_for(a)),
-        avatar_static: Some(crate::api::mastodon::convert::account_avatar_url_for(a)),
-        header: Some(crate::api::mastodon::convert::account_header_url_for(a)),
-        header_static: Some(crate::api::mastodon::convert::account_header_url_for(a)),
+        avatar: Some(crate::api::mastodon::convert::account_avatar_url_for(
+            &state.urls,
+            a,
+        )),
+        avatar_static: Some(crate::api::mastodon::convert::account_avatar_url_for(
+            &state.urls,
+            a,
+        )),
+        header: Some(crate::api::mastodon::convert::account_header_url_for(
+            &state.urls,
+            a,
+        )),
+        header_static: Some(crate::api::mastodon::convert::account_header_url_for(
+            &state.urls,
+            a,
+        )),
         locked: a.locked,
         bot: a.actor_type.as_deref() == Some("Service"),
         hide_collections: a.hide_collections,
@@ -639,7 +651,7 @@ async fn build_credential_account_response(
     let fields = crate::api::mastodon::convert::fields_from_db(
         account.fields.as_ref().unwrap_or(&serde_json::json!([])),
     );
-    let mut api_account = account_from_db(&account);
+    let mut api_account = account_from_db(&state.urls, &account);
     api_account.emojis = fetch_account_emojis(state, &account).await;
     apply_account_stats(state, &mut api_account, account.id).await;
     let follow_requests_count: i64 = sqlx::query_scalar!(
@@ -782,10 +794,22 @@ async fn build_profile(
             &std::collections::HashMap::new(),
         ),
         formatted_fields,
-        avatar: Some(crate::api::mastodon::convert::account_avatar_url_for(a)),
-        avatar_static: Some(crate::api::mastodon::convert::account_avatar_url_for(a)),
-        header: Some(crate::api::mastodon::convert::account_header_url_for(a)),
-        header_static: Some(crate::api::mastodon::convert::account_header_url_for(a)),
+        avatar: Some(crate::api::mastodon::convert::account_avatar_url_for(
+            &state.urls,
+            a,
+        )),
+        avatar_static: Some(crate::api::mastodon::convert::account_avatar_url_for(
+            &state.urls,
+            a,
+        )),
+        header: Some(crate::api::mastodon::convert::account_header_url_for(
+            &state.urls,
+            a,
+        )),
+        header_static: Some(crate::api::mastodon::convert::account_header_url_for(
+            &state.urls,
+            a,
+        )),
         locked: a.locked,
         bot: a.actor_type.as_deref() == Some("Service"),
         hide_collections: a.hide_collections,
@@ -819,7 +843,7 @@ pub async fn delete_profile_avatar(
     .fetch_one(&state.db)
     .await?;
     distribute_account_update(&state, &instance.domain, &account).await;
-    let mut api = account_from_db(&account);
+    let mut api = account_from_db(&state.urls, &account);
     api.emojis = fetch_account_emojis(&state, &account).await;
     api.roles = fetch_account_roles(&state, account.id).await;
     Ok(Json(api))
@@ -847,7 +871,7 @@ pub async fn delete_profile_header(
     .fetch_one(&state.db)
     .await?;
     distribute_account_update(&state, &instance.domain, &account).await;
-    let mut api = account_from_db(&account);
+    let mut api = account_from_db(&state.urls, &account);
     api.emojis = fetch_account_emojis(&state, &account).await;
     api.roles = fetch_account_roles(&state, account.id).await;
     Ok(Json(api))

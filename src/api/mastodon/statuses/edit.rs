@@ -291,7 +291,7 @@ pub async fn edit_status(
             Some(id),
             notify_title.clone(),
             "".into(),
-            crate::api::mastodon::convert::account_avatar_url_for(&account),
+            crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
         )
         .await;
     }
@@ -315,7 +315,7 @@ pub async fn edit_status(
                 Some(q.status_id),
                 quote_title.clone(),
                 "".into(),
-                crate::api::mastodon::convert::account_avatar_url_for(&account),
+                crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
             )
             .await;
         }
@@ -425,7 +425,7 @@ pub async fn get_status_history(
 
     let account_emojis = batch_account_emojis(&state, std::slice::from_ref(&account)).await;
     let account_roles = batch_account_roles(&state, std::slice::from_ref(&account)).await;
-    let mut api_account = account_from_db(&account);
+    let mut api_account = account_from_db(&state.urls, &account);
     api_account.emojis = account_emojis.get(&account.id).cloned().unwrap_or_default();
     api_account.roles = account_roles.get(&account.id).cloned().unwrap_or_default();
     crate::api::mastodon::accounts::apply_account_stats(&state, &mut api_account, account.id).await;
@@ -464,7 +464,7 @@ pub async fn get_status_history(
             ids.map(|list| {
                 list.iter()
                     .filter_map(|id| media_map.get(id))
-                    .map(|m| crate::api::mastodon::convert::media_from_db(m))
+                    .map(|m| crate::api::mastodon::convert::media_from_db(&state.urls, m))
                     .filter(|m| {
                         m.url.is_some() || m.remote_url.as_deref().is_some_and(|u| !u.is_empty())
                     })

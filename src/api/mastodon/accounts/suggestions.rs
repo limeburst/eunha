@@ -112,7 +112,7 @@ pub async fn get_suggestions_v2(
     let suggestions = accounts
         .iter()
         .map(|a| {
-            let mut api = account_from_db(a);
+            let mut api = account_from_db(&state.urls, a);
             api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
             api.roles = roles_map.get(&a.id).cloned().unwrap_or_default();
             SuggestionV2 {

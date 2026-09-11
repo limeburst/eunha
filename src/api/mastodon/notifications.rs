@@ -79,7 +79,7 @@ async fn fetch_reports_map(
         let Some(ta) = target_accounts.get(&r.target_account_id) else {
             continue;
         };
-        let mut ta_api = account_from_db(ta);
+        let mut ta_api = account_from_db(&state.urls, ta);
         ta_api.emojis = ta_emojis_map.get(&ta.id).cloned().unwrap_or_default();
         if let Some(&(statuses_c, following, followers)) = ta_stats_map.get(&ta.id) {
             ta_api.statuses_count = statuses_c;
@@ -341,7 +341,16 @@ pub async fn get_notifications(
                 .cloned()
                 .unwrap_or_default();
             let ctx = viewer_ctxs.get(&s.id).cloned();
-            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            let mut api = status_from_db(
+                &state.urls,
+                s,
+                account,
+                media,
+                reblog,
+                ctx,
+                &mentions,
+                &rb_mentions,
+            );
             api.account.emojis = stat_account_emojis_map
                 .get(&account.id)
                 .cloned()
@@ -428,7 +437,7 @@ pub async fn get_notifications(
             None
         };
         let report = report_id.and_then(|rid| report_map.get(&rid)).cloned();
-        let mut notif_account = account_from_db(account);
+        let mut notif_account = account_from_db(&state.urls, account);
         notif_account.emojis = from_account_emojis_map
             .get(&account.id)
             .cloned()
@@ -748,140 +757,148 @@ pub async fn get_notifications_v2(
         .into_iter()
         .collect();
 
-    let status_api_map: std::collections::HashMap<i64, super::types::Status> = if !notif_status_ids
-        .is_empty()
-    {
-        let statuses: Vec<crate::db::models::Status> = sqlx::query_as!(
-            crate::db::models::Status,
-            "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
-            &notif_status_ids,
-        )
-        .fetch_all(&state.db)
-        .await?;
+    let status_api_map: std::collections::HashMap<i64, super::types::Status> =
+        if !notif_status_ids.is_empty() {
+            let statuses: Vec<crate::db::models::Status> = sqlx::query_as!(
+                crate::db::models::Status,
+                "SELECT * FROM statuses WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL",
+                &notif_status_ids,
+            )
+            .fetch_all(&state.db)
+            .await?;
 
-        let stat_account_ids: Vec<i64> = statuses
-            .iter()
-            .map(|s| s.account_id)
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        let stat_accounts: Vec<Account> = sqlx::query_as!(
-            Account,
-            "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
-            &stat_account_ids,
-        )
-        .fetch_all(&state.db)
-        .await?;
-        let stat_account_map: std::collections::HashMap<i64, Account> =
-            stat_accounts.into_iter().map(|a| (a.id, a)).collect();
+            let stat_account_ids: Vec<i64> = statuses
+                .iter()
+                .map(|s| s.account_id)
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            let stat_accounts: Vec<Account> = sqlx::query_as!(
+                Account,
+                "SELECT * FROM accounts WHERE id = ANY($1::bigint[])",
+                &stat_account_ids,
+            )
+            .fetch_all(&state.db)
+            .await?;
+            let stat_account_map: std::collections::HashMap<i64, Account> =
+                stat_accounts.into_iter().map(|a| (a.id, a)).collect();
 
-        let all_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
-        let media_map = batch_status_media(&state, &all_ids).await?;
-        let reblog_map = batch_reblog_data(&state, &statuses).await?;
-        let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
-        let mut enrich_ids = all_ids.clone();
-        enrich_ids.extend_from_slice(&reblog_ids);
-        let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
-        let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
-        let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses
-            .iter()
-            .cloned()
-            .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
-            .collect();
-        let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
-        let polls_map = batch_status_polls(&state, &enrich_ids, Some(auth.account_id)).await?;
-        let cards_map = batch_status_cards(&state, &enrich_ids).await?;
-        let viewer_ctxs =
-            super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
-        let notif_filter_map = super::timelines::compute_filter_results(
-            &state,
-            auth.account_id,
-            &statuses,
-            "notifications",
-        )
-        .await;
-        let all_accounts_for_emoji_v2: Vec<Account> = {
-            let mut seen = std::collections::HashSet::new();
-            stat_account_map
-                .values()
-                .chain(reblog_map.values().map(|(_, ra, _)| ra))
-                .filter(|a| seen.insert(a.id))
+            let all_ids: Vec<i64> = statuses.iter().map(|s| s.id).collect();
+            let media_map = batch_status_media(&state, &all_ids).await?;
+            let reblog_map = batch_reblog_data(&state, &statuses).await?;
+            let reblog_ids: Vec<i64> = reblog_map.values().map(|(rs, _, _)| rs.id).collect();
+            let mut enrich_ids = all_ids.clone();
+            enrich_ids.extend_from_slice(&reblog_ids);
+            let tags_map = batch_statuses_tags(&state, &enrich_ids).await?;
+            let mentions_map = batch_status_mentions(&state, &enrich_ids).await?;
+            let all_statuses_for_emoji: Vec<crate::db::models::Status> = statuses
+                .iter()
                 .cloned()
-                .collect()
-        };
-        let stat_account_emojis_map_v2 =
-            batch_account_emojis(&state, &all_accounts_for_emoji_v2).await;
-        let stat_account_roles_map_v2 =
-            batch_account_roles(&state, &all_accounts_for_emoji_v2).await;
-
-        let mut map = std::collections::HashMap::new();
-        for s in &statuses {
-            if notif_filter_map.get(&s.id).is_some_and(|(hide, _)| *hide) {
-                continue;
-            }
-            let Some(account) = stat_account_map.get(&s.account_id) else {
-                continue;
+                .chain(reblog_map.values().map(|(rs, _, _)| rs.clone()))
+                .collect();
+            let emojis_map = batch_status_emojis(&state, &all_statuses_for_emoji).await?;
+            let polls_map = batch_status_polls(&state, &enrich_ids, Some(auth.account_id)).await?;
+            let cards_map = batch_status_cards(&state, &enrich_ids).await?;
+            let viewer_ctxs =
+                super::statuses::batch_viewer_contexts(&state, auth.account_id, &all_ids).await?;
+            let notif_filter_map = super::timelines::compute_filter_results(
+                &state,
+                auth.account_id,
+                &statuses,
+                "notifications",
+            )
+            .await;
+            let all_accounts_for_emoji_v2: Vec<Account> = {
+                let mut seen = std::collections::HashSet::new();
+                stat_account_map
+                    .values()
+                    .chain(reblog_map.values().map(|(_, ra, _)| ra))
+                    .filter(|a| seen.insert(a.id))
+                    .cloned()
+                    .collect()
             };
-            let media = media_map.get(&s.id).cloned().unwrap_or_default();
-            let reblog = reblog_map.get(&s.id).cloned();
-            let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
-            let rb_mentions = reblog
-                .as_ref()
-                .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
-                .cloned()
-                .unwrap_or_default();
-            let ctx = viewer_ctxs.get(&s.id).cloned();
-            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
-            api.account.emojis = stat_account_emojis_map_v2
-                .get(&account.id)
-                .cloned()
-                .unwrap_or_default();
-            api.account.roles = stat_account_roles_map_v2
-                .get(&account.id)
-                .cloned()
-                .unwrap_or_default();
-            api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
-            api.mentions = mentions;
-            api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
-            api.poll = polls_map.get(&s.id).cloned();
-            api.card = cards_map.get(&s.id).cloned();
-            if let Some(ref mut rb) = api.reblog {
-                let rid: i64 = rb.id.parse().unwrap_or(0);
-                let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
-                rb.account.emojis = stat_account_emojis_map_v2
-                    .get(&rb_id)
+            let stat_account_emojis_map_v2 =
+                batch_account_emojis(&state, &all_accounts_for_emoji_v2).await;
+            let stat_account_roles_map_v2 =
+                batch_account_roles(&state, &all_accounts_for_emoji_v2).await;
+
+            let mut map = std::collections::HashMap::new();
+            for s in &statuses {
+                if notif_filter_map.get(&s.id).is_some_and(|(hide, _)| *hide) {
+                    continue;
+                }
+                let Some(account) = stat_account_map.get(&s.account_id) else {
+                    continue;
+                };
+                let media = media_map.get(&s.id).cloned().unwrap_or_default();
+                let reblog = reblog_map.get(&s.id).cloned();
+                let mentions = mentions_map.get(&s.id).cloned().unwrap_or_default();
+                let rb_mentions = reblog
+                    .as_ref()
+                    .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
                     .cloned()
                     .unwrap_or_default();
-                rb.account.roles = stat_account_roles_map_v2
-                    .get(&rb_id)
+                let ctx = viewer_ctxs.get(&s.id).cloned();
+                let mut api = status_from_db(
+                    &state.urls,
+                    s,
+                    account,
+                    media,
+                    reblog,
+                    ctx,
+                    &mentions,
+                    &rb_mentions,
+                );
+                api.account.emojis = stat_account_emojis_map_v2
+                    .get(&account.id)
                     .cloned()
                     .unwrap_or_default();
-                rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
-                rb.mentions = rb_mentions;
-                rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
-                rb.poll = polls_map.get(&rid).cloned();
-                rb.card = cards_map.get(&rid).cloned();
-            }
-            if let Some((_, ref filter_json)) = notif_filter_map.get(&s.id) {
-                if let Some(arr) = filter_json.as_array() {
-                    if !arr.is_empty() {
-                        api.filtered = Some(arr.clone());
+                api.account.roles = stat_account_roles_map_v2
+                    .get(&account.id)
+                    .cloned()
+                    .unwrap_or_default();
+                api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
+                api.mentions = mentions;
+                api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
+                api.poll = polls_map.get(&s.id).cloned();
+                api.card = cards_map.get(&s.id).cloned();
+                if let Some(ref mut rb) = api.reblog {
+                    let rid: i64 = rb.id.parse().unwrap_or(0);
+                    let rb_id: i64 = rb.account.id.parse().unwrap_or(0);
+                    rb.account.emojis = stat_account_emojis_map_v2
+                        .get(&rb_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    rb.account.roles = stat_account_roles_map_v2
+                        .get(&rb_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    rb.tags = tags_map.get(&rid).cloned().unwrap_or_default();
+                    rb.mentions = rb_mentions;
+                    rb.emojis = emojis_map.get(&rid).cloned().unwrap_or_default();
+                    rb.poll = polls_map.get(&rid).cloned();
+                    rb.card = cards_map.get(&rid).cloned();
+                }
+                if let Some((_, ref filter_json)) = notif_filter_map.get(&s.id) {
+                    if let Some(arr) = filter_json.as_array() {
+                        if !arr.is_empty() {
+                            api.filtered = Some(arr.clone());
+                        }
                     }
                 }
+                map.insert(s.id, api);
             }
-            map.insert(s.id, api);
-        }
-        hydrate_status_stats(&state, map.values_mut()).await;
-        map
-    } else {
-        std::collections::HashMap::new()
-    };
+            hydrate_status_stats(&state, map.values_mut()).await;
+            map
+        } else {
+            std::collections::HashMap::new()
+        };
 
     // Build accounts and statuses deduplicated maps for the response
     let mut accounts_map: std::collections::HashMap<String, super::types::Account> =
         std::collections::HashMap::new();
     for a in from_account_map.values() {
-        let mut api_account = account_from_db(a);
+        let mut api_account = account_from_db(&state.urls, a);
         api_account.emojis = from_account_emojis_map_v2
             .get(&a.id)
             .cloned()
@@ -1573,7 +1590,16 @@ pub async fn get_notification_requests(
                 .and_then(|(rs, _, _)| ls_mentions_map.get(&rs.id))
                 .cloned()
                 .unwrap_or_default();
-            let mut api = status_from_db(s, account, media, reblog, None, &mentions, &rb_mentions);
+            let mut api = status_from_db(
+                &state.urls,
+                s,
+                account,
+                media,
+                reblog,
+                None,
+                &mentions,
+                &rb_mentions,
+            );
             api.account.emojis = ls_account_emojis_map
                 .get(&account.id)
                 .cloned()
@@ -1639,7 +1665,7 @@ pub async fn get_notification_requests(
             continue;
         };
         let last_status = r.last_status_id.and_then(|id| last_status_map.remove(&id));
-        let mut api_account = super::convert::account_from_db(acc);
+        let mut api_account = super::convert::account_from_db(&state.urls, acc);
         api_account.emojis = req_acc_emojis_map.get(&acc.id).cloned().unwrap_or_default();
         api_account.roles = req_acc_roles_map.get(&acc.id).cloned().unwrap_or_default();
         if let Some(&(statuses_c, following, followers)) = req_acc_stats_map.get(&acc.id) {
@@ -1773,7 +1799,7 @@ pub async fn get_notification_request(
     .await?;
 
     let last_status = fetch_last_status(&state, r.last_status_id).await;
-    let mut api_account = super::convert::account_from_db(&acc);
+    let mut api_account = super::convert::account_from_db(&state.urls, &acc);
     api_account.emojis = fetch_account_emojis(&state, &acc).await;
     api_account.roles = {
         let m = batch_account_roles(&state, std::slice::from_ref(&acc)).await;
@@ -1935,7 +1961,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
             .ok()
             .flatten();
         if let Some(ta) = ta {
-            let mut ta_api = account_from_db(&ta);
+            let mut ta_api = account_from_db(&state.urls, &ta);
             ta_api.emojis = fetch_account_emojis(state, &ta).await;
             ta_api.roles = {
                 let m = batch_account_roles(state, std::slice::from_ref(&ta)).await;
@@ -1962,7 +1988,7 @@ async fn build_notification(state: &AppState, n: &DbNotification) -> AppResult<N
         None
     };
 
-    let mut notif_account = account_from_db(&from_account);
+    let mut notif_account = account_from_db(&state.urls, &from_account);
     notif_account.emojis = fetch_account_emojis(state, &from_account).await;
     notif_account.roles = {
         let m = batch_account_roles(state, std::slice::from_ref(&from_account)).await;

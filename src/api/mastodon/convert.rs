@@ -2,61 +2,58 @@ use super::formatting::{format_field_value, mention_map_from_api, render_content
 use super::types;
 use crate::db::models;
 /// Conversions from DB models → Mastodon API types.
-use std::sync::OnceLock;
-
-static DEFAULT_AVATAR: OnceLock<String> = OnceLock::new();
-static DEFAULT_HEADER: OnceLock<String> = OnceLock::new();
-static MEDIA_BASE_URL: OnceLock<String> = OnceLock::new();
-static LOCAL_DOMAIN: OnceLock<String> = OnceLock::new();
-
-/// Call once at startup to record this instance's domain, used to build the
-/// human-facing `/@username` URLs for local accounts and statuses.
-pub fn init_local_domain(domain: String) {
-    LOCAL_DOMAIN.set(domain).ok();
+/// What an instance's URLs are built from: its domain, and where its media is
+/// served. Every [`AppState`](crate::state::AppState) carries its own.
+///
+/// These were process-wide `OnceLock`s, set by whichever `AppState` was built
+/// first, so a second instance in the same process silently served the first
+/// one's domain and media URLs.
+#[derive(Debug, Clone)]
+pub struct InstanceUrls {
+    /// The domain local accounts' and statuses' URLs are built on.
+    pub local_domain: String,
+    /// The public URL media paths hang off, without a trailing slash.
+    media_base: String,
+    missing_avatar: String,
+    missing_header: String,
 }
 
-pub fn local_domain() -> &'static str {
-    LOCAL_DOMAIN.get().map(|s| s.as_str()).unwrap_or("")
-}
-
-/// Call once at startup (before serving requests) to set the default avatar/header
-/// URLs from the configured media storage base URL.
-pub fn init_media_defaults(avatar: String, header: String) {
-    if let Some(base) = avatar.strip_suffix("/avatars/original/missing.png") {
-        MEDIA_BASE_URL.set(base.to_string()).ok();
+impl InstanceUrls {
+    /// `missing_avatar` and `missing_header` are the storage's public URLs for
+    /// the default images; the media base is read off the avatar's.
+    pub fn new(local_domain: String, missing_avatar: String, missing_header: String) -> Self {
+        let media_base = missing_avatar
+            .strip_suffix("/avatars/original/missing.png")
+            .unwrap_or_default()
+            .to_string();
+        Self {
+            local_domain,
+            media_base,
+            missing_avatar,
+            missing_header,
+        }
     }
-    DEFAULT_AVATAR.set(avatar).ok();
-    DEFAULT_HEADER.set(header).ok();
+
+    fn missing_avatar(&self) -> &str {
+        &self.missing_avatar
+    }
+
+    fn missing_header(&self) -> &str {
+        &self.missing_header
+    }
 }
 
-pub(super) fn missing_avatar() -> &'static str {
-    DEFAULT_AVATAR
-        .get()
-        .map(|s| s.as_str())
-        .unwrap_or("avatars/original/missing.png")
+pub fn account_avatar_url_for(urls: &InstanceUrls, a: &models::Account) -> String {
+    account_avatar_url(urls, a)
 }
 
-pub(super) fn missing_header() -> &'static str {
-    DEFAULT_HEADER
-        .get()
-        .map(|s| s.as_str())
-        .unwrap_or("headers/original/missing.png")
+pub fn account_header_url_for(urls: &InstanceUrls, a: &models::Account) -> String {
+    account_header_url(urls, a)
 }
 
-fn media_base_url() -> &'static str {
-    MEDIA_BASE_URL.get().map(|s| s.as_str()).unwrap_or("")
-}
-
-pub fn account_avatar_url_for(a: &models::Account) -> String {
-    account_avatar_url(a)
-}
-
-pub fn account_header_url_for(a: &models::Account) -> String {
-    account_header_url(a)
-}
-
-fn account_avatar_url(a: &models::Account) -> String {
+fn account_avatar_url(urls: &InstanceUrls, a: &models::Account) -> String {
     account_avatar_url_parts(
+        urls,
         a.id,
         a.avatar_file_name.as_deref(),
         a.avatar_remote_url.as_deref(),
@@ -66,6 +63,7 @@ fn account_avatar_url(a: &models::Account) -> String {
 /// Avatar URL from the minimal columns, for bulk queries that don't hydrate a
 /// full [`models::Account`] (e.g. the invite tree).
 pub fn account_avatar_url_parts(
+    urls: &InstanceUrls,
     id: i64,
     avatar_file_name: Option<&str>,
     avatar_remote_url: Option<&str>,
@@ -79,16 +77,16 @@ pub fn account_avatar_url_parts(
         if !filename.is_empty() {
             return format!(
                 "{}/accounts/avatars/{}/original/{}",
-                media_base_url(),
+                urls.media_base,
                 crate::media::int_to_path(id),
                 filename
             );
         }
     }
-    missing_avatar().to_string()
+    urls.missing_avatar().to_string()
 }
 
-fn account_header_url(a: &models::Account) -> String {
+fn account_header_url(urls: &InstanceUrls, a: &models::Account) -> String {
     if !a.header_remote_url.is_empty() {
         return a.header_remote_url.clone();
     }
@@ -96,21 +94,21 @@ fn account_header_url(a: &models::Account) -> String {
         if !filename.is_empty() {
             return format!(
                 "{}/accounts/headers/{}/original/{}",
-                media_base_url(),
+                urls.media_base,
                 crate::media::int_to_path(a.id),
                 filename
             );
         }
     }
-    missing_header().to_string()
+    urls.missing_header().to_string()
 }
 
-pub fn media_url(m: &models::MediaAttachment) -> Option<String> {
+pub fn media_url(urls: &InstanceUrls, m: &models::MediaAttachment) -> Option<String> {
     if let Some(filename) = &m.file_file_name {
         if !filename.is_empty() {
             return Some(format!(
                 "{}/media_attachments/files/{}/original/{}",
-                media_base_url(),
+                urls.media_base,
                 crate::media::int_to_path(m.id),
                 filename
             ));
@@ -122,12 +120,12 @@ pub fn media_url(m: &models::MediaAttachment) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn media_preview_url(m: &models::MediaAttachment) -> Option<String> {
+pub fn media_preview_url(urls: &InstanceUrls, m: &models::MediaAttachment) -> Option<String> {
     if let Some(filename) = &m.thumbnail_file_name {
         if !filename.is_empty() {
             return Some(format!(
                 "{}/media_attachments/files/{}/small/{}",
-                media_base_url(),
+                urls.media_base,
                 crate::media::int_to_path(m.id),
                 filename
             ));
@@ -137,7 +135,7 @@ pub fn media_preview_url(m: &models::MediaAttachment) -> Option<String> {
         if !filename.is_empty() {
             return Some(format!(
                 "{}/media_attachments/files/{}/small/{}",
-                media_base_url(),
+                urls.media_base,
                 crate::media::int_to_path(m.id),
                 filename
             ));
@@ -182,12 +180,16 @@ fn status_url_from_uri(uri: &str) -> Option<String> {
 /// Local bios are stored as plain text, so we linkify and wrap them on the fly;
 /// the raw source stays available through `source.note`. Remote bios already
 /// arrive as HTML from federation and are served as-is.
-fn render_account_note(a: &models::Account) -> String {
+fn render_account_note(urls: &InstanceUrls, a: &models::Account) -> String {
     if a.note.is_empty() {
         return String::new();
     }
     if a.domain.is_none() {
-        render_content(&a.note, local_domain(), &std::collections::HashMap::new())
+        render_content(
+            &a.note,
+            &urls.local_domain,
+            &std::collections::HashMap::new(),
+        )
     } else {
         a.note.clone()
     }
@@ -291,12 +293,13 @@ fn build_feature_approval(
     }
 }
 
-pub fn account_from_db(a: &models::Account) -> types::Account {
-    account_from_db_for_viewer(a, None)
+pub fn account_from_db(urls: &InstanceUrls, a: &models::Account) -> types::Account {
+    account_from_db_for_viewer(urls, a, None)
 }
 
 /// As [`account_from_db`], for a request whose viewer is known.
 pub fn account_from_db_for_viewer(
+    urls: &InstanceUrls,
     a: &models::Account,
     viewer: Option<&AccountViewerContext>,
 ) -> types::Account {
@@ -304,8 +307,8 @@ pub fn account_from_db_for_viewer(
         // Local accounts: the human url is /@username; the AP uri follows the
         // account's id_scheme (/users/{username} or /ap/users/{id}).
         (
-            format!("https://{}/@{}", local_domain(), a.username),
-            crate::federation::tag::account_uri(local_domain(), a.id, a.id_scheme, &a.username),
+            format!("https://{}/@{}", &urls.local_domain, a.username),
+            crate::federation::tag::account_uri(&urls.local_domain, a.id, a.id_scheme, &a.username),
         )
     } else {
         (
@@ -341,29 +344,29 @@ pub fn account_from_db_for_viewer(
         note: if suspended {
             String::new()
         } else {
-            render_account_note(a)
+            render_account_note(urls, a)
         },
         url,
         uri,
         avatar: if suspended {
-            missing_avatar().to_string()
+            urls.missing_avatar().to_string()
         } else {
-            account_avatar_url(a)
+            account_avatar_url(urls, a)
         },
         avatar_static: if suspended {
-            missing_avatar().to_string()
+            urls.missing_avatar().to_string()
         } else {
-            account_avatar_url(a)
+            account_avatar_url(urls, a)
         },
         header: if suspended {
-            missing_header().to_string()
+            urls.missing_header().to_string()
         } else {
-            account_header_url(a)
+            account_header_url(urls, a)
         },
         header_static: if suspended {
-            missing_header().to_string()
+            urls.missing_header().to_string()
         } else {
-            account_header_url(a)
+            account_header_url(urls, a)
         },
         // Mastodon blanks the alt text along with the image it describes.
         avatar_description: if suspended {
@@ -540,12 +543,12 @@ fn ensure_media_dims(file_meta: Option<serde_json::Value>, media_type: &str) -> 
     meta
 }
 
-pub fn media_from_db(m: &models::MediaAttachment) -> types::MediaAttachment {
+pub fn media_from_db(urls: &InstanceUrls, m: &models::MediaAttachment) -> types::MediaAttachment {
     types::MediaAttachment {
         id: m.id.to_string(),
         media_type: super::media::media_type_str(m.r#type).to_string(),
-        url: media_url(m),
-        preview_url: media_preview_url(m),
+        url: media_url(urls, m),
+        preview_url: media_preview_url(urls, m),
         remote_url: m
             .remote_url
             .as_deref()
@@ -619,7 +622,9 @@ fn build_quote_approval(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn status_from_db(
+    urls: &InstanceUrls,
     s: &models::Status,
     account: &models::Account,
     media: Vec<models::MediaAttachment>,
@@ -633,6 +638,7 @@ pub fn status_from_db(
     reblog_mentions: &[types::StatusMention],
 ) -> types::Status {
     status_from_db_with_app(
+        urls,
         s,
         account,
         media,
@@ -646,6 +652,7 @@ pub fn status_from_db(
 
 #[allow(clippy::too_many_arguments)]
 pub fn status_from_db_with_app(
+    urls: &InstanceUrls,
     s: &models::Status,
     account: &models::Account,
     media: Vec<models::MediaAttachment>,
@@ -662,6 +669,7 @@ pub fn status_from_db_with_app(
     let content = render_status_content(s, account, mentions);
     let reblog_status = reblog.map(|(rs, ra, rm)| {
         Box::new(status_from_db(
+            urls,
             &rs,
             &ra,
             rm,
@@ -725,7 +733,7 @@ pub fn status_from_db_with_app(
             // boosts). Local rows may store a NULL `uri`, so never fall back to
             // the bare id.
             let base = crate::federation::tag::status_uri(
-                local_domain(),
+                &urls.local_domain,
                 account.id,
                 account.id_scheme,
                 &account.username,
@@ -747,7 +755,10 @@ pub fn status_from_db_with_app(
                     .clone()
                     .filter(|u| !u.is_empty() && Some(u.as_str()) != s.uri.as_deref())
                     .unwrap_or_else(|| {
-                        format!("https://{}/@{}/{}", local_domain(), account.username, s.id)
+                        format!(
+                            "https://{}/@{}/{}",
+                            &urls.local_domain, account.username, s.id
+                        )
                     }),
             )
         } else {
@@ -768,10 +779,10 @@ pub fn status_from_db_with_app(
         content,
         reblog: reblog_status,
         application,
-        account: account_from_db(account),
+        account: account_from_db(urls, account),
         media_attachments: media
             .iter()
-            .map(media_from_db)
+            .map(|m| media_from_db(urls, m))
             .filter(|m| m.url.is_some() || m.remote_url.as_deref().is_some_and(|u| !u.is_empty()))
             .collect(),
         mentions: mentions.to_vec(),

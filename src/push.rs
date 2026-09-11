@@ -781,7 +781,7 @@ async fn build_admin_notification_payload(
         None
     };
 
-    let mut from_api = account_from_db(&from_account);
+    let mut from_api = account_from_db(&state.urls, &from_account);
     from_api.emojis = fetch_account_emojis(state, &from_account).await;
     let payload = serde_json::json!({
         "id": notification_id.to_string(),
@@ -987,7 +987,7 @@ async fn build_notification_payload(
     .ok()
     .flatten()?;
 
-    let mut api_account = account_from_db(&from_account);
+    let mut api_account = account_from_db(&state.urls, &from_account);
     api_account.emojis = fetch_account_emojis(state, &from_account).await;
 
     let status_json = if let Some(sid) = status_id {

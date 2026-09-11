@@ -28,6 +28,10 @@ pub struct AppState {
     pub encryptor: Option<crate::rails_encryption::Encryptor>,
     /// Raised on enqueue so the durable queue loops need not poll for work.
     pub queues: Arc<crate::background::QueueWakes>,
+    /// This instance's domain and media locations, which every URL it serves is
+    /// built from. Held here rather than process-wide, so that one process can
+    /// serve several instances.
+    pub urls: Arc<crate::api::mastodon::convert::InstanceUrls>,
 }
 
 impl AppState {
@@ -62,11 +66,11 @@ impl AppState {
         let fetch = crate::federation::safe_fetch::build_client();
 
         let storage = Arc::new(Storage::from_config(&config.media_storage).await);
-        crate::api::mastodon::convert::init_media_defaults(
+        let urls = Arc::new(crate::api::mastodon::convert::InstanceUrls::new(
+            config.instance.domain.clone(),
             storage.missing_avatar_url(),
             storage.missing_header_url(),
-        );
-        crate::api::mastodon::convert::init_local_domain(config.instance.domain.clone());
+        ));
         let email = EmailSender::new(
             http.clone(),
             config.resend.api_key.clone(),
@@ -102,6 +106,7 @@ impl AppState {
             storage,
             encryptor,
             queues: Arc::default(),
+            urls,
         })
     }
 }

@@ -348,7 +348,16 @@ pub async fn get_statuses_batch(
             .cloned()
             .unwrap_or_default();
         let ctx = viewer_ctxs.get(&s.id).cloned();
-        let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+        let mut api = status_from_db(
+            &state.urls,
+            s,
+            account,
+            media,
+            reblog,
+            ctx,
+            &mentions,
+            &rb_mentions,
+        );
         api.tags = tags_map.get(&s.id).cloned().unwrap_or_default();
         api.mentions = mentions;
         api.emojis = emojis_map.get(&s.id).cloned().unwrap_or_default();
@@ -755,7 +764,7 @@ pub async fn favourite_status(
         Some(id),
         format!("{} favourited your post", from_account.display_name),
         from_account.acct().clone(),
-        super::convert::account_avatar_url_for(&from_account),
+        super::convert::account_avatar_url_for(&state.urls, &from_account),
     )
     .await;
 
@@ -988,7 +997,7 @@ pub async fn reblog_status(
         Some(original_id),
         format!("{} boosted your post", boost_account.display_name),
         boost_account.acct().clone(),
-        super::convert::account_avatar_url_for(&boost_account),
+        super::convert::account_avatar_url_for(&state.urls, &boost_account),
     )
     .await;
 

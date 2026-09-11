@@ -293,7 +293,7 @@ pub async fn follow_account(
             None,
             format!("{} wants to follow you", requester.display_name),
             requester.acct().clone(),
-            crate::api::mastodon::convert::account_avatar_url_for(&requester),
+            crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &requester),
         )
         .await;
         return build_relationship(&state, auth.account_id, target_id)
@@ -319,7 +319,7 @@ pub async fn follow_account(
         None,
         format!("{} followed you", requester.display_name),
         requester.acct().clone(),
-        crate::api::mastodon::convert::account_avatar_url_for(&requester),
+        crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &requester),
     )
     .await;
 

@@ -34,7 +34,9 @@ async fn fetch_scheduled_media(
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
-    rows.iter().map(super::convert::media_from_db).collect()
+    rows.iter()
+        .map(|m| super::convert::media_from_db(&state.urls, m))
+        .collect()
 }
 
 pub async fn list_scheduled_statuses(

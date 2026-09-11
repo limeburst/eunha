@@ -126,11 +126,7 @@ async fn verify_account_links(state: &AppState, account_id: i64) -> anyhow::Resu
         return Ok(());
     };
 
-    let link_back = format!(
-        "https://{}/@{}",
-        crate::api::mastodon::convert::local_domain(),
-        row.username,
-    );
+    let link_back = format!("https://{}/@{}", state.urls.local_domain, row.username,);
 
     let mut changed = false;
     for field in &mut fields {

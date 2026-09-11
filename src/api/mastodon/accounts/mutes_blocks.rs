@@ -478,7 +478,7 @@ pub async fn get_mutes(
     let api_accounts: Vec<ApiAccount> = accounts_ordered
         .iter()
         .map(|a| {
-            let mut api = account_from_db(a);
+            let mut api = account_from_db(&state.urls, a);
             api.emojis = mute_emojis_map.get(&a.id).cloned().unwrap_or_default();
             api.roles = mute_roles_map.get(&a.id).cloned().unwrap_or_default();
             if let Some(expires_at) = mute_expiries.get(&a.id).and_then(|e| *e) {

@@ -94,6 +94,7 @@ pub async fn invite_tree(
                 username: r.username,
                 display_name: r.display_name,
                 avatar: convert::account_avatar_url_parts(
+                    &state.urls,
                     id,
                     r.avatar_file_name.as_deref(),
                     r.avatar_remote_url.as_deref(),

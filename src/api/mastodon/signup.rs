@@ -153,7 +153,7 @@ async fn autofollow_inviter(state: &AppState, follower_account_id: i64, invite_i
         return;
     };
     let acct = follower.acct();
-    let avatar = crate::api::mastodon::convert::account_avatar_url_for(&follower);
+    let avatar = crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &follower);
 
     if inviter.locked {
         let inserted = sqlx::query!(

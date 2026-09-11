@@ -324,7 +324,16 @@ pub async fn batch_quote_data(
         let media = media_map.get(&qs.id).cloned().unwrap_or_default();
         let mentions = mentions_map.get(&qs.id).cloned().unwrap_or_default();
         let ctx = ctxs.get(&qs.id).cloned();
-        let mut api = super::convert::status_from_db(qs, account, media, None, ctx, &mentions, &[]);
+        let mut api = super::convert::status_from_db(
+            &state.urls,
+            qs,
+            account,
+            media,
+            None,
+            ctx,
+            &mentions,
+            &[],
+        );
         api.tags = tags_map.get(&qs.id).cloned().unwrap_or_default();
         api.mentions = mentions;
         api.emojis = emojis_map.get(&qs.id).cloned().unwrap_or_default();
@@ -1021,6 +1030,7 @@ pub async fn build_status_with_app(
     };
 
     let mut api = super::convert::status_from_db_with_app(
+        &state.urls,
         s,
         account,
         media,

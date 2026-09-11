@@ -572,7 +572,7 @@ async fn publish_one(
             Some(status.id),
             format!("{} mentioned you", account.display_name),
             account.acct().clone(),
-            crate::api::mastodon::convert::account_avatar_url_for(&account),
+            crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
         )
         .await;
         notified.insert(parent_account_id);
@@ -589,7 +589,7 @@ async fn publish_one(
             Some(status.id),
             format!("{} mentioned you", account.display_name),
             account.acct().clone(),
-            crate::api::mastodon::convert::account_avatar_url_for(&account),
+            crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &account),
         )
         .await;
         notified.insert(mentioned.id);

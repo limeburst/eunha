@@ -67,18 +67,23 @@ async fn test_quote_consent_handshake_between_instances() {
         .json()
         .await
         .unwrap();
-    // Read bob's canonical stored uri from B's own DB. The serialized API `uri`
-    // is derived from the process-global local_domain() (a OnceLock set by the
-    // first AppState::new in the process), so under parallel test load it is
-    // whichever instance initialized first — not necessarily B. B matches
-    // incoming QuoteRequests against the stored uri, and that is what B would
-    // federate in production, so use it here.
+    // B matches incoming QuoteRequests against the stored uri, and that is what
+    // it federates, so read it from B's own DB.
     let s_id: i64 = s["id"].as_str().unwrap().parse().unwrap();
     let s_uri: String = sqlx::query_scalar!("SELECT uri FROM statuses WHERE id = $1", s_id)
         .fetch_one(&b.db)
         .await
         .unwrap()
         .expect("local status must have a stored uri");
+    // The API's `uri` used to come from a process-wide domain, set by whichever
+    // instance in the process started first. Two instances share this process.
+    assert!(
+        s["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.starts_with(&format!("https://{}/", b.domain))),
+        "B's API must name B's own domain, not another instance's in the same process: {}",
+        s["uri"],
+    );
     // b.alice is the author on instance B; treat it as "bob" for clarity.
     let bob_uri = format!("https://{}/users/alice", b.domain);
 
@@ -107,10 +112,15 @@ async fn test_quote_consent_handshake_between_instances() {
         .json()
         .await
         .unwrap();
-    // Use alice's canonical stored uri (see the note on s_uri below): the
-    // serialized API `uri` derives from the process-global local_domain(),
-    // which under parallel test load is whichever instance built its AppState
-    // first — not necessarily A. The stored uri always carries A's domain.
+    // As for bob's status above: the stored uri is what A federates, and the
+    // API's must name A, not B.
+    assert!(
+        quote_post["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.starts_with(&format!("https://{}/", a.domain))),
+        "A's API must name A's own domain, not another instance's in the same process: {}",
+        quote_post["uri"],
+    );
     let quote_post_id: i64 = quote_post["id"].as_str().unwrap().parse().unwrap();
     let quote_post_uri: String =
         sqlx::query_scalar!("SELECT uri FROM statuses WHERE id = $1", quote_post_id)

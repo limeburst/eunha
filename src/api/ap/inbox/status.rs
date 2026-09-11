@@ -429,7 +429,7 @@ async fn notify_status_author(
         Some(status_id),
         format!("{} {}", actor.display_name, verb),
         actor.acct(),
-        crate::api::mastodon::convert::account_avatar_url_for(&actor),
+        crate::api::mastodon::convert::account_avatar_url_for(&state.urls, &actor),
     )
     .await;
 }

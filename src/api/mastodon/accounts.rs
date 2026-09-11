@@ -159,7 +159,7 @@ pub async fn lookup_account(
     };
 
     if let Some(account) = found {
-        let mut api = account_from_db(&account);
+        let mut api = account_from_db(&state.urls, &account);
         api.emojis = fetch_account_emojis(&state, &account).await;
         api.roles = fetch_account_roles(&state, account.id).await;
         apply_account_stats(&state, &mut api, account.id).await;
@@ -208,7 +208,7 @@ pub async fn lookup_account(
                         )
                         .fetch_one(&state.db)
                         .await?;
-                        let mut api = account_from_db(&account);
+                        let mut api = account_from_db(&state.urls, &account);
                         api.emojis = fetch_account_emojis(&state, &account).await;
                         api.roles = fetch_account_roles(&state, account.id).await;
                         return Ok(Json(api));
@@ -248,7 +248,7 @@ pub async fn get_account(
             _ => {}
         }
     }
-    let mut api_account = account_from_db(&account);
+    let mut api_account = account_from_db(&state.urls, &account);
     api_account.emojis = fetch_account_emojis(&state, &account).await;
     api_account.roles = fetch_account_roles(&state, account.id).await;
     apply_account_stats(&state, &mut api_account, account.id).await;
@@ -261,7 +261,7 @@ pub async fn get_account(
         .fetch_optional(&state.db)
         .await
         {
-            let mut moved_api = account_from_db(&moved);
+            let mut moved_api = account_from_db(&state.urls, &moved);
             moved_api.emojis = fetch_account_emojis(&state, &moved).await;
             moved_api.roles = fetch_account_roles(&state, moved.id).await;
             apply_account_stats(&state, &mut moved_api, moved.id).await;
@@ -400,8 +400,16 @@ pub async fn get_account_statuses(
                 .and_then(|(rs, _, _)| pin_mentions_map.get(&rs.id))
                 .cloned()
                 .unwrap_or_default();
-            let mut api_status =
-                status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+            let mut api_status = status_from_db(
+                &state.urls,
+                s,
+                &account,
+                media,
+                reblog,
+                ctx,
+                &mentions,
+                &rb_mentions,
+            );
             api_status.account.emojis = pin_account_emojis_map
                 .get(&account.id)
                 .cloned()
@@ -646,7 +654,16 @@ pub async fn get_account_statuses(
             .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
             .cloned()
             .unwrap_or_default();
-        let mut api = status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+        let mut api = status_from_db(
+            &state.urls,
+            s,
+            &account,
+            media,
+            reblog,
+            ctx,
+            &mentions,
+            &rb_mentions,
+        );
         api.account.emojis = account_emojis_map
             .get(&account.id)
             .cloned()
@@ -820,8 +837,16 @@ pub async fn get_account_pins(
             .and_then(|(rs, _, _)| pin_mentions_map.get(&rs.id))
             .cloned()
             .unwrap_or_default();
-        let mut api_status =
-            status_from_db(s, &account, media, reblog, ctx, &mentions, &rb_mentions);
+        let mut api_status = status_from_db(
+            &state.urls,
+            s,
+            &account,
+            media,
+            reblog,
+            ctx,
+            &mentions,
+            &rb_mentions,
+        );
         api_status.account.emojis = pin_account_emojis_map
             .get(&account.id)
             .cloned()
@@ -1781,7 +1806,7 @@ pub async fn batch_accounts_to_api(
     accounts
         .iter()
         .map(|a| {
-            let mut api = super::convert::account_from_db(a);
+            let mut api = super::convert::account_from_db(&state.urls, a);
             api.emojis = emojis_map.get(&a.id).cloned().unwrap_or_default();
             api.roles = roles_map.get(&a.id).cloned().unwrap_or_default();
             if let Some(&(s, fg, fr)) = stats_map.get(&a.id) {

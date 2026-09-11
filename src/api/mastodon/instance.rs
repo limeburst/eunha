@@ -535,7 +535,7 @@ async fn fetch_contact_account(state: &AppState) -> Option<super::types::Account
     .await
     .ok()
     .flatten()?;
-    let mut api = super::convert::account_from_db(&account);
+    let mut api = super::convert::account_from_db(&state.urls, &account);
     api.emojis = super::accounts::fetch_account_emojis(state, &account).await;
     api.roles = {
         let m = super::accounts::batch_account_roles(state, std::slice::from_ref(&account)).await;

@@ -107,7 +107,11 @@ pub async fn upload_media(
         .await?;
         state.queues.media.notify_one();
 
-        return Ok((StatusCode::ACCEPTED, Json(media_from_db(&attachment))).into_response());
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(media_from_db(&state.urls, &attachment)),
+        )
+            .into_response());
     }
 
     // Images: process synchronously and return 200.
@@ -161,7 +165,11 @@ pub async fn upload_media(
     .fetch_one(&state.db)
     .await?;
 
-    Ok((StatusCode::OK, Json(media_from_db(&attachment))).into_response())
+    Ok((
+        StatusCode::OK,
+        Json(media_from_db(&state.urls, &attachment)),
+    )
+        .into_response())
 }
 
 /// Transcode a video/gifv/audio upload (ffmpeg), store the result + thumbnail,
@@ -456,7 +464,7 @@ pub async fn get_media(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    Ok(Json(media_from_db(&attachment)))
+    Ok(Json(media_from_db(&state.urls, &attachment)))
 }
 
 // ── PUT /api/v1/media/:id ─────────────────────────────────────────────────
@@ -580,7 +588,7 @@ pub async fn update_media(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(media_from_db(&updated)))
+    Ok(Json(media_from_db(&state.urls, &updated)))
 }
 
 // ── DELETE /api/v1/media/:id ──────────────────────────────────────────────

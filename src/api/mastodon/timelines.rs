@@ -1374,7 +1374,16 @@ async fn build_status_list(
             .and_then(|(rs, _, _)| mentions_map.get(&rs.id))
             .cloned()
             .unwrap_or_default();
-        let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+        let mut api = status_from_db(
+            &state.urls,
+            s,
+            account,
+            media,
+            reblog,
+            ctx,
+            &mentions,
+            &rb_mentions,
+        );
         // A status keeps the attribution it was posted with when read back.
         api.application = applications_map.get(&s.id).cloned();
         api.account.emojis = account_emojis_map

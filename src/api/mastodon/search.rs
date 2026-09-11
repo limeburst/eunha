@@ -403,7 +403,16 @@ pub async fn search(
                 .cloned()
                 .unwrap_or_default();
             let ctx = ctxs.get(&s.id).cloned();
-            let mut api = status_from_db(s, account, media, reblog, ctx, &mentions, &rb_mentions);
+            let mut api = status_from_db(
+                &state.urls,
+                s,
+                account,
+                media,
+                reblog,
+                ctx,
+                &mentions,
+                &rb_mentions,
+            );
             api.account.emojis = account_emojis_map
                 .get(&account.id)
                 .cloned()
