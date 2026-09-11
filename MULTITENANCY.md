@@ -45,11 +45,18 @@ host, corrected what those figures implied:
     connections cost a tenant as much as its eunha process.
  -  Idle CPU is negligible once the queues are quiet — under 6% of one core for
     300 tenants, eunha and PostgreSQL together.
+ -  With the timed tasks sleeping until something is due, an idle tenant holds
+    a third of a connection on average rather than one and a third.
+ -  A prototype running many tenants in one process cut eunha's memory to about
+    3 MiB per tenant, from 12–16 MiB as separate processes, with twelve threads
+    for the whole process and no slowdown from a saturated neighbour.
 
 Resident memory, not CPU, therefore decides how many small tenants a host
 holds. One hundred tenants that have each served load and hold two warm
 connections cost roughly 4 GiB of eunha and 4 GiB of PostgreSQL backends,
-before shared buffers, Redis and the operating system.
+before shared buffers, Redis and the operating system. With the hosting profile
+the PostgreSQL share falls to about 0.2 GiB, and in one shared process eunha's
+would fall to about 0.3 GiB.
 
 
 Isolation model
@@ -118,10 +125,12 @@ queue_idle_poll_seconds = 300
 and `TOKIO_WORKER_THREADS=2` in the process environment.
 
 The zero minimum allows a quiet process to release its PostgreSQL connections
-without stopping. In practice it releases them between the periodic tasks that
-run every minute, holding 1.35 on average; closing them that often is what
-keeps each one from growing to 19–24 MiB of cached state. Promote a
-demonstrably busy tenant to three connections.
+without stopping. Its queue loops and timed tasks wake about once per
+`queue_idle_poll_seconds`, so an idle tenant holds a third of a connection on
+average, and closing them that often is also what keeps each one from growing
+to 19–24 MiB of cached state. Tenants started together wake together, so a host
+that restarts every tenant at once sees their whole pools open at the same
+moment. Promote a demonstrably busy tenant to three connections.
 Larger pools should follow measurements rather than plan names or member count.
 
 The control plane records at least:
@@ -221,8 +230,14 @@ startup.
 Phase 4: optional multi-instance runtime shards
 -----------------------------------------------
 
-Only build a shared Eunha runtime after production measurements show that
-resident process overhead is a material host constraint even with dormancy.
+A throwaway prototype has measured what sharing would save
+([BENCHMARKING.md](./BENCHMARKING.md), “One process for many tenants”). With the
+same tenants and load, eunha needed about 3 MiB per tenant in one process
+against 12–16 MiB as separate processes, twelve threads instead of four per
+tenant, a seventh of the startup time and no more CPU, and a saturated tenant
+did not slow the rest. The savings are real and large. What remains to justify
+building it is the engineering below, and PostgreSQL, which became the limit at
+600 tenants.
 
 A runtime shard may host a bounded group of small tenants:
 
@@ -334,8 +349,10 @@ Complete these measurements before moving between phases:
 4.  Compare warm processes with scale-to-zero under representative daily usage.
 5.  Attribute PostgreSQL, Redis and worker consumption per tenant.
 6.  Run the same workload against Mastodon where performance claims are needed.
-7.  Build a shared-runtime prototype only if process RSS remains a meaningful
-    capacity constraint after the preceding changes.
+7.  Measure a shared-runtime prototype. Done on 2026-09-11 with a throwaway
+    one: about 3 MiB of eunha per tenant against 12–16 MiB as separate
+    processes. Before production, repeat it with `Host` routing, per-tenant
+    fairness, and PostgreSQL measured at the tenant counts a shard would reach.
 
 The multi-instance runtime is justified when its measured savings exceed its
 additional isolation, deployment and incident-response costs. Until then,

@@ -235,10 +235,11 @@ with `TOKIO_WORKER_THREADS=2` in the environment.
 | Transactions                            |        0.2/s |           0.2/s |
 
 The memory is the point. Connections are closed before they accumulate caches,
-so a sampled connection stays at 4–5 MiB instead of 19–24 MiB. They do not
-reach zero: the scheduled-status and poll-expiry tasks both run every minute,
+so a sampled connection stays at 4–5 MiB instead of 19–24 MiB. They did not
+reach zero: the scheduled-status and poll-expiry tasks both ran every minute,
 on two connections at once, and sqlx closes idle connections on a 20-second
-cycle, so each is open for 20–40 seconds of every minute.
+cycle, so each was open for 20–40 seconds of every minute — until those tasks
+were changed, below.
 
 p95 latency at 200 and 800 req/s:
 
@@ -256,6 +257,32 @@ no memory left to keep 400 tenants resident, and every request to one whose
 pages had been compressed waited for them. Memory, not CPU or connections, was
 the ceiling, and the baseline's earlier collapse at 300 tenants — before the
 harness recorded decompression — fits the same explanation.
+
+
+Timed tasks
+-----------
+
+What kept those connections open was three timed tasks — scheduled statuses,
+poll expiry and suspended account cleanup — which ran every minute or two
+whether or not anything was due. Each now sleeps until its next item falls due
+and, when nothing is, for `queue_idle_poll_seconds`, and is woken early when a
+schedule or a poll is created or moved.
+
+With the hosting profile, 100 tenants were left idle for eleven minutes and then
+sampled every two seconds for ten:
+
+| Idle, per tenant                        |     Before |        After |
+| --------------------------------------- | ---------: | -----------: |
+| PostgreSQL connections held, on average |       1.35 |         0.33 |
+| New connections                         | 2 a minute | 0.8 a minute |
+| Transactions                            |      0.2/s |       0.13/s |
+
+Two things nearly made this measurement wrong, and both apply to any idle figure
+taken with a long poll. An idle tenant's cost is periodic: with a 300-second
+poll, a one-minute window can fall between two rounds of wake-ups and report
+nothing at all, which is what the first attempt did. And tenants started
+together wake together: the peak was 200 connections, every tenant's whole
+pool at once, which is also what a host restart does to real tenants.
 
 
 Waking tenants
@@ -277,40 +304,149 @@ than all of them.
 What one Mac mini holds
 -----------------------
 
-Memory decides it. Per tenant, from the runs above:
+Memory decides it. Per tenant, from the runs above, for a process per tenant:
 
 | Tenant                                        |     eunha | PostgreSQL |   Total |
 | --------------------------------------------- | --------: | ---------: | ------: |
-| Idle, never busy (hosting profile)            | 13–14 MiB |      7 MiB | ~21 MiB |
-| Idle after serving load (hosting profile)[^1] |   ~40 MiB |      7 MiB | ~47 MiB |
+| Idle, never busy (hosting profile)            | 12–14 MiB |     ~2 MiB | ~16 MiB |
+| Idle after serving load (hosting profile)[^1] |   ~40 MiB |     ~2 MiB | ~42 MiB |
 | Warm, default settings                        |   ~40 MiB |  38–47 MiB | ~85 MiB |
 
-Planning on ~47 MiB — every tenant has at some point been busy — and setting
+PostgreSQL's share is a third of a connection on average at 4–5 MiB each, since
+the timed tasks stopped waking every minute; it was 7 MiB before.
+
+Planning on ~42 MiB — every tenant has at some point been busy — and setting
 aside macOS and services (4 GiB), `shared_buffers`, and page cache and Redis:
 
-| Host memory |     Set aside | For tenants | Tenants at 47 MiB | At 85 MiB |
+| Host memory |     Set aside | For tenants | Tenants at 42 MiB | At 85 MiB |
 | ----------: | ------------: | ----------: | ----------------: | --------: |
-|      16 GiB | 4 + 2 + 2 GiB |       8 GiB |              ~170 |       ~95 |
-|      32 GiB | 4 + 4 + 4 GiB |      20 GiB |              ~430 |      ~240 |
-|      64 GiB | 4 + 8 + 8 GiB |      44 GiB |              ~950 |      ~530 |
+|      16 GiB | 4 + 2 + 2 GiB |       8 GiB |              ~190 |       ~95 |
+|      32 GiB | 4 + 4 + 4 GiB |      20 GiB |              ~490 |      ~240 |
+|      64 GiB | 4 + 8 + 8 GiB |      44 GiB |            ~1,070 |      ~530 |
 
-Those are ceilings; plan steady state at 70–80% of them. The other resources
-do not bind first at those counts:
+Those are ceilings; plan steady state at 70–80% of them. One process for many
+tenants would raise them several times over (see “One process for many
+tenants”). At these counts the other resources do not bind first:
 
  -  **CPU.** A request costs 1.5–2 ms of CPU across eunha and PostgreSQL. Ten
-    cores at half utilisation serve roughly 2,500–3,000 req/s, which for 430
-    tenants is 6 req/s each at peak — far more than a small instance's clients
+    cores at half utilisation serve roughly 2,500–3,000 req/s, which for 490
+    tenants is 5 req/s each at peak — far more than a small instance's clients
     make.
- -  **Connections.** 430 tenants hold about 580 connections idle and up to 860
-    when all are busy; `max_connections = 1000` covers it. Beyond roughly 700
-    tenants, put PgBouncer in front.
- -  **Threads.** Four per tenant is 1,700 at 430, against a macOS host-wide
-    limit of 30,720.
+ -  **Connections.** 490 idle tenants hold about 160 connections on average, but
+    tenants that wake together — after a host restart — briefly open their whole
+    pools, and 490 two-connection pools is 980. `max_connections = 1000` only
+    just covers that; spread the wake-ups, or put PgBouncer in front, well
+    before then.
+ -  **Threads.** Four per tenant is about 2,000 at 490, against a macOS
+    host-wide limit of 30,720.
  -  **Disk.** An empty tenant database is 15 MiB. Real ones grow with federated
     content, which this benchmark does not model.
 
-[^1]: The retained eunha heap was measured with a worker per core; two workers
-      may retain less, which has not been measured.
+[^1]: Measured on tenants that had served the whole baseline sequence, with a
+      worker per core. One tenant profiled after a single 30-second burst kept
+      15–31 MiB whatever its worker count (see “Where a tenant's memory goes”),
+      so ~40 MiB is a conservative figure to plan on.
+
+
+Where a tenant's memory goes
+----------------------------
+
+Profiled with macOS's own tools — `MallocStackLogging` set on the eunha
+process, then `heap`, `vmmap` and `malloc_history` — so without changing a
+line of eunha. One tenant in the hosting profile, fresh and after 30 seconds at
+160 req/s, across 16 runs:
+
+|                                  |   Fresh | After load |
+| -------------------------------- | ------: | ---------: |
+| Footprint                        |  14 MiB |  15–31 MiB |
+| Live allocations                 | 3.4 MiB |    3.4 MiB |
+| Fragmentation in the malloc zone |  ~6 MiB | 7.5–22 MiB |
+
+The live 3.4 MiB is mostly startup state that every process repeats: 1.4 MiB
+for the router — 594 routes, each with its middleware layers cloned — about
+0.3 MiB of root certificates, and 0.2 MiB for the S3 client. What belongs to
+the tenant itself, its pool, Redis connection and configuration, is about
+0.3 MiB. A burst of load leaves 35 KiB of new live data behind.
+
+Everything else is fragmentation: freed space scattered across pages that each
+still hold something live, which the allocator cannot hand back. It is
+bimodal — a process either settles near 15 MiB or keeps 20–31 MiB — and does
+not follow the number of Tokio workers: with one worker a tenant kept 29 MiB
+twice, and with ten it never settled below 24 MiB. `malloc_zone_pressure_relief`
+released nothing on any call. Latency was the same whichever way a run went.
+
+Two consequences. A process per tenant pays about 10 MiB that one shared
+process would pay once — router, certificates, the binary's dirty data pages,
+stacks and allocator metadata — before any fragmentation. And the
+fragmentation, the larger and less predictable part, is the allocator's rather
+than eunha's.
+
+### Allocators
+
+For comparison, eunha was built with jemalloc (`tikv-jemallocator`) and with
+mimalloc as its global allocator. Neither is kept; the system allocator is what
+eunha uses. Same profile, at each allocator's default settings:
+
+| Allocator               | Runs |  Fresh | After load | Two minutes later |        p95 |
+| ----------------------- | ---: | -----: | ---------: | ----------------: | ---------: |
+| System                  |    4 | 14 MiB |  25–35 MiB |         25–31 MiB |  7.7–13 ms |
+| jemalloc 5.3.1          |    3 | 16 MiB |  29–35 MiB |         23–35 MiB | 7.5–7.9 ms |
+| mimalloc (crate 0.1.52) |    3 | 16 MiB |  35–48 MiB |         20–36 MiB | 8.0–9.0 ms |
+
+At their defaults neither does better than the system allocator once the load
+has passed, and both start 2 MiB larger. Both return memory lazily — on later
+allocations rather than on a clock of their own — so a process that goes quiet
+keeps most of what it had; jemalloc gave memory back in one run of three,
+mimalloc in all three but from a higher peak.
+
+
+One process for many tenants
+----------------------------
+
+Whether sharing a process is worth building was measured rather than argued,
+with a throwaway prototype: a binary that loads many tenants' configurations
+into one process, each with its own database pool, Redis namespace,
+application state, background tasks and listening port, on one Tokio runtime.
+It is not a working multi-tenant server — it routes by port rather than by
+`Host`, and the process-wide statics keep the first tenant's domain — but what
+it costs to run is what a real one would cost. Its source, harness and results
+are kept outside the repository, in `benchmark-results/modes-20260911/`.
+
+The same tenants, configuration (the hosting profile) and load, each run from a
+fresh start:
+
+| eunha, per tenant           | Separate ×100 |   Shared ×100 |  Separate ×300 |   Shared ×300 |    Shared ×600 |
+| --------------------------- | ------------: | ------------: | -------------: | ------------: | -------------: |
+| Memory, idle after 11 min   |      12.0 MiB |       3.0 MiB |       12.1 MiB |       3.2 MiB |        2.9 MiB |
+| Memory, a minute after load |      13.0 MiB |       7.0 MiB |       15.7 MiB |       3.3 MiB |        3.4 MiB |
+| Threads, whole population   |           400 |            12 |          1,200 |            12 |             12 |
+| Until every tenant answers  |        13.8 s |         1.7 s |         43.7 s |         6.2 s |         15.1 s |
+| p95 at 200 / 800 req/s      | 11.4 / 8.9 ms | 10.6 / 786 ms | 19.2 / 10.9 ms | 17.3 / 8.4 ms | 31.0 / 21.8 ms |
+| eunha CPU at 800 req/s      |          104% |           75% |            75% |           57% |            70% |
+
+At 300 tenants eunha needed 4.7 GiB as separate processes and under 1 GiB as
+one, and 600 tenants in one process needed 2 GiB. The shared process also spent
+about a quarter less CPU on the same load. Its one bad number, shared ×100 at
+800 req/s, came with CPU far from saturated and did not recur at 300 or 600
+tenants; it reads as the workstation, but it happened once and is not
+explained.
+
+A saturated tenant did not slow its neighbours in either mode. With one tenant
+sent 1,200 req/s while the rest shared 100, its own requests queued for seconds
+behind its two connections, and the others' p95 stayed at 9–22 ms — faster, in
+fact, than when measured alone just before, because that run found their
+connections closed and had to open them again.
+
+What limits the shared process is PostgreSQL. From 300 to 600 tenants its CPU at
+800 req/s went from 119% to 251% of a core, more than three times eunha's, and
+latency rose with it: 600 databases on one server, not 600 tenants in one
+process.
+
+With the timed-task change, then, an idle tenant in a shared process costs about
+3 MiB of eunha and a third of a connection, against about 42 MiB as its own
+process after serving load. On memory alone a 32 GiB Mac mini would hold
+several thousand; that is not a number to plan on until PostgreSQL has been
+measured holding that many databases.
 
 
 Ways to scale further
@@ -318,14 +454,15 @@ Ways to scale further
 
 In order of what the measurements say they are worth:
 
-1.  **Let the minute tasks sleep until they are due.** Scheduled statuses and
-    poll expiry know when their next item falls due; waking on insert, as the
-    queues now do, would let an idle tenant hold no connection at all and stop
-    two connection setups a minute per tenant.
-2.  **Return retained heap.** A tenant that has served a burst keeps about
-    40 MiB where a fresh one needs 14. An allocator that decays unused memory
-    back to the system could recover much of the difference, which is over half
-    of the planning figure. It needs its own measurement.
+1.  **One process for many tenants.** Measured with a prototype: about 3 MiB of
+    eunha per tenant instead of 12–16, twelve threads for the whole process, a
+    seventh of the startup time, and no slowdown from a saturated neighbour. It
+    pays for fragmentation once, where a different allocator did not recover it
+    (see “Allocators”). It needs the refactor and controls in phase 4 of
+    [MULTITENANCY.md](./MULTITENANCY.md), and PostgreSQL becomes the limit.
+2.  **Spread idle wake-ups.** Tenants started together wake together every
+    `queue_idle_poll_seconds` and open their whole pools at once. A little
+    random jitter on each sleep would turn that spike into a steady trickle.
 3.  **Dormancy.** A dormant tenant costs its database on disk and nothing else,
     and wakes in 145 ms. It needs the gateway and shared workers described in
     [MULTITENANCY.md](./MULTITENANCY.md), and an admission limit on concurrent
@@ -333,8 +470,10 @@ In order of what the measurements say they are worth:
 4.  **PgBouncer** once connections approach `max_connections`, in transaction
     mode with prepared statements verified against SQLx.
 5.  **PostgreSQL on its own machine.** On one Mac mini it competes with tenants
-    for the same memory; separating them gives both room, at the cost of a
-    network hop on every query, which should be measured.
+    for the same memory, and with tenants sharing a process it is where the CPU
+    goes: at 600 tenants it used more than three times eunha's. Separating them
+    gives both room, at the cost of a network hop on every query, which should
+    be measured.
 6.  **More machines,** placing tenants by measured memory rather than by count.
 
 

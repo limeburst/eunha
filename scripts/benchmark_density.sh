@@ -31,6 +31,14 @@
 #     pool once per connection. A few backends are sampled with `vmmap`, the
 #     shared mapping (its "Untagged" region) is subtracted to leave what the
 #     connection costs privately, and shared_buffers is added once.
+#  -  An idle tenant's cost is periodic, and the defaults below are shorter
+#     than its period. A fresh tenant's queue loops back off from half a
+#     second to `queue_idle_poll_seconds` over about twice that long, and its
+#     timed tasks wake once per poll, so with the hosting profile's 300 seconds
+#     a 75-second settle measures the ramp and a 60-second window can fall
+#     between two rounds of wake-ups and report none. Tenants started together
+#     also wake together. To measure idle connections, settle for at least
+#     twice the poll and sample for at least one whole one.
 #  -  CPU is summed over the processes alive at each end of a window, and a
 #     backend that exits inside it takes its CPU time with it. When pools close
 #     idle connections, PostgreSQL's CPU is a lower bound — it can even come out
