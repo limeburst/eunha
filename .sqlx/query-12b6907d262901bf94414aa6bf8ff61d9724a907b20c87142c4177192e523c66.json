@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO eunha.scheduled_status_attempts\n             (scheduled_status_id, attempts, run_at, last_error, created_at, updated_at)\n           VALUES ($1, 1, now() + interval '20 minutes', 'test', now(), now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "12b6907d262901bf94414aa6bf8ff61d9724a907b20c87142c4177192e523c66"
+}

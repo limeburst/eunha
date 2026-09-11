@@ -174,6 +174,10 @@ pub struct WorkersConfig {
     /// enqueued, so this bounds how late those can start. A host of mostly idle
     /// tenants raises it, with `database_pool.idle_timeout_seconds` below it, so
     /// that an idle tenant holds no database connection at all.
+    ///
+    /// The timed tasks — scheduled statuses, poll expiry and suspended account
+    /// cleanup — sleep until their next item is due and, when nothing is, for
+    /// this long or a minute, whichever is longer.
     #[serde(default = "default_queue_idle_poll_seconds")]
     pub queue_idle_poll_seconds: u64,
 }
@@ -274,6 +278,14 @@ impl WorkersConfig {
     /// The longest an idle queue loop sleeps between looks at its table.
     pub fn queue_idle_poll(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.queue_idle_poll_seconds)
+    }
+
+    /// The longest a timed task sleeps when nothing is due. Never shorter than
+    /// the minute those tasks used to run on, so that a short queue poll does
+    /// not make them busier than they were.
+    pub fn timed_task_idle_poll(&self) -> std::time::Duration {
+        self.queue_idle_poll()
+            .max(std::time::Duration::from_secs(60))
     }
 }
 

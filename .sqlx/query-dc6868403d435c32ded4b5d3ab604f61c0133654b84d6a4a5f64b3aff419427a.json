@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXTRACT(EPOCH FROM\n                    min(GREATEST(s.scheduled_at::timestamptz, a.run_at)) - now())::float8\n           FROM scheduled_statuses s\n           LEFT JOIN eunha.scheduled_status_attempts a\n             ON a.scheduled_status_id = s.id\n           WHERE a.failed_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "extract",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "dc6868403d435c32ded4b5d3ab604f61c0133654b84d6a4a5f64b3aff419427a"
+}

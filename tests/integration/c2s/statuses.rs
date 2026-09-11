@@ -2758,6 +2758,135 @@ async fn test_poll_ended_notifies_author_and_voters() {
     );
 }
 
+/// The notifier used to look only at polls that had ended in the last two
+/// minutes, so a pass that ran late missed them. It now carries forward how far
+/// it got, and a pass that slept for a quarter of an hour still reaches a poll
+/// that ended ten minutes ago.
+#[tokio::test]
+async fn test_poll_expiry_reaches_a_poll_that_ended_during_a_long_sleep() {
+    let ctx = TestContext::new("poll-ended-long-sleep").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({ "poll": { "options": ["A", "B"], "expires_in": 86400 }, "visibility": "public" }),
+    ).await.json().await.unwrap();
+    let poll_id: i64 = status["poll"]["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query!(
+        "UPDATE polls SET expires_at = now() - interval '10 minutes' WHERE id = $1",
+        poll_id,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let mark = eunha::background::PollExpiryMark {
+        expires_at: chrono::Utc::now() - chrono::Duration::minutes(15),
+        id: i64::MAX,
+    };
+    eunha::background::notify_polls_expired_after(&ctx.state, Some(mark))
+        .await
+        .unwrap();
+
+    let notifs: Vec<Value> = ctx
+        .api
+        .get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        notifs.iter().any(|n| n["type"].as_str() == Some("poll")),
+        "a poll that ended after the notifier's mark should be notified, however long ago",
+    );
+}
+
+/// Each pass starts where the last one stopped, so a poll is handled once
+/// however often the notifier runs. Counting notifications alone could not show
+/// this — `create_and_push` already drops a duplicate — but a second pass used
+/// to enqueue the poll's ActivityPub `Update` again, so what is checked is how
+/// many polls each pass handled.
+#[tokio::test]
+async fn test_poll_expiry_handles_each_poll_once() {
+    let ctx = TestContext::new("poll-ended-once").await;
+
+    let status: Value = ctx.api.post_json(
+        "/api/v1/statuses",
+        Some(&ctx.alice_token),
+        &json!({ "poll": { "options": ["A", "B"], "expires_in": 86400 }, "visibility": "public" }),
+    ).await.json().await.unwrap();
+    let poll_id: i64 = status["poll"]["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query!(
+        "UPDATE polls SET expires_at = now() - interval '10 seconds' WHERE id = $1",
+        poll_id,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let (mark, handled) = eunha::background::notify_polls_expired_after(&ctx.state, None)
+        .await
+        .unwrap();
+    assert_eq!(handled, 1, "the first pass handles the poll that ended");
+    let (next, handled) = eunha::background::notify_polls_expired_after(&ctx.state, Some(mark))
+        .await
+        .unwrap();
+    assert_eq!(
+        handled, 0,
+        "a second pass must not handle the same poll again"
+    );
+    assert!(
+        next.expires_at >= mark.expires_at,
+        "the mark never moves back"
+    );
+
+    let notifs: Vec<Value> = ctx
+        .api
+        .get("/api/v1/notifications", Some(&ctx.alice_token))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let poll_notifications = notifs
+        .iter()
+        .filter(|n| n["type"].as_str() == Some("poll"))
+        .count();
+    assert_eq!(
+        poll_notifications, 1,
+        "a second pass must not notify the same poll again"
+    );
+}
+
+/// The notifier sleeps until the next running poll ends.
+#[tokio::test]
+async fn test_next_poll_expiry_is_when_the_next_poll_ends() {
+    let ctx = TestContext::new("poll-next-expiry").await;
+
+    assert_eq!(
+        eunha::background::next_poll_expiry(&ctx.state)
+            .await
+            .unwrap(),
+        None,
+        "with no poll running there is nothing to wake for",
+    );
+
+    ctx.api
+        .post_json(
+            "/api/v1/statuses",
+            Some(&ctx.alice_token),
+            &json!({ "poll": { "options": ["A", "B"], "expires_in": 3600 }, "visibility": "public" }),
+        )
+        .await;
+    let seconds = eunha::background::next_poll_expiry(&ctx.state)
+        .await
+        .unwrap()
+        .expect("a running poll has an end");
+    assert!(
+        (3500.0..=3600.0).contains(&seconds),
+        "the poll ends in about an hour, not {seconds}s",
+    );
+}
+
 /// GET /api/v1/polls/:id returns poll details.
 #[tokio::test]
 async fn test_get_poll() {
@@ -3977,6 +4106,89 @@ async fn test_delete_scheduled_status() {
         )
         .await;
     assert_eq!(not_found.status(), StatusCode::NOT_FOUND);
+}
+
+/// The publisher sleeps until the next schedule is due: at its time, or at its
+/// retry time once an attempt has failed, and not at all for a parked one.
+#[tokio::test]
+async fn test_next_scheduled_status_due() {
+    let ctx = TestContext::new("sched-next-due").await;
+
+    assert_eq!(
+        eunha::background::next_scheduled_status_due(&ctx.state)
+            .await
+            .unwrap(),
+        None,
+        "with nothing scheduled there is nothing to wake for",
+    );
+
+    let in_ten_minutes = (chrono::Utc::now() + chrono::Duration::minutes(10)).to_rfc3339();
+    let created: Value = ctx
+        .api
+        .post_json(
+            "/api/v1/statuses",
+            Some(&ctx.alice_token),
+            &json!({
+                "status": "due in ten minutes",
+                "visibility": "public",
+                "scheduled_at": in_ten_minutes
+            }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
+    let seconds = eunha::background::next_scheduled_status_due(&ctx.state)
+        .await
+        .unwrap()
+        .expect("a schedule is waiting");
+    assert!(
+        (590.0..=600.0).contains(&seconds),
+        "the schedule is due in ten minutes, not {seconds}s",
+    );
+
+    // Overdue, but backing off after a failed attempt: the retry time counts.
+    sqlx::query!(
+        "UPDATE scheduled_statuses SET scheduled_at = now() - interval '1 minute' WHERE id = $1",
+        id,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    sqlx::query!(
+        r#"INSERT INTO eunha.scheduled_status_attempts
+             (scheduled_status_id, attempts, run_at, last_error, created_at, updated_at)
+           VALUES ($1, 1, now() + interval '20 minutes', 'test', now(), now())"#,
+        id,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    let seconds = eunha::background::next_scheduled_status_due(&ctx.state)
+        .await
+        .unwrap()
+        .expect("a retry is waiting");
+    assert!(
+        (1190.0..=1200.0).contains(&seconds),
+        "a schedule backing off is due at its retry, not {seconds}s",
+    );
+
+    // Parked after its last attempt: kept, but never due again.
+    sqlx::query!(
+        "UPDATE eunha.scheduled_status_attempts SET failed_at = now() WHERE scheduled_status_id = $1",
+        id,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        eunha::background::next_scheduled_status_due(&ctx.state)
+            .await
+            .unwrap(),
+        None,
+        "a parked schedule is not waited for",
+    );
 }
 
 /// A past-due scheduled status is published by the background job and appears in the timeline.

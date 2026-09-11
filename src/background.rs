@@ -48,11 +48,18 @@ pub fn spawn(state: AppState) {
 /// `[workers] queue_idle_poll_seconds`, for what no wake-up announces: a retry
 /// whose `run_at` has come due, and a job enqueued by another process sharing
 /// the database.
+///
+/// The timed tasks have wake-ups too, for when the next thing they are waiting
+/// for moves earlier than the time they went to sleep until.
 #[derive(Default)]
 pub struct QueueWakes {
     pub delivery: tokio::sync::Notify,
     pub inbox: tokio::sync::Notify,
     pub media: tokio::sync::Notify,
+    /// A scheduled status was created or moved.
+    pub scheduled_statuses: tokio::sync::Notify,
+    /// A poll was created, or when it ends changed.
+    pub polls: tokio::sync::Notify,
 }
 
 /// How long a queue loop sleeps after finding nothing: `floor` at first,
@@ -92,16 +99,81 @@ impl IdleBackoff {
     }
 }
 
+// ── Timed tasks ───────────────────────────────────────────────────────────
+
+/// How long a timed task sleeps before its next pass: until its next item is
+/// due, but no less than `floor` and no more than `ceiling`.
+///
+/// Scheduled statuses, poll expiry and suspended account cleanup used to run
+/// every minute or two whether or not anything was due, and every pass opened a
+/// database connection, so an idle tenant was never without one for long. Most
+/// tenants have nothing scheduled and no poll running, and for them this is the
+/// ceiling. The floor keeps an item that stays due — one whose work keeps
+/// failing — from turning the loop into a busy one.
+fn timed_task_nap(seconds_until_due: Option<f64>, floor: Duration, ceiling: Duration) -> Duration {
+    let ceiling = ceiling.max(floor);
+    match seconds_until_due {
+        Some(s) if s.is_finite() => {
+            Duration::from_secs_f64(s.clamp(0.0, ceiling.as_secs_f64())).max(floor)
+        }
+        _ => ceiling,
+    }
+}
+
+/// Sleep for `nap`, or until `wake` says the next item may now be due sooner.
+async fn sleep_or_wake(wake: &tokio::sync::Notify, nap: Duration) {
+    tokio::select! {
+        _ = wake.notified() => {}
+        _ = tokio::time::sleep(nap) => {}
+    }
+}
+
+/// Shortest pause between passes when an item is due. Scheduled statuses and
+/// polls fall due at a known instant, so a second is precise enough.
+const TIMED_TASK_FLOOR: Duration = Duration::from_secs(1);
+
+/// Shortest pause after a pass fails, which is the minute these tasks ran on:
+/// a database that is down should not be asked again every second.
+const TIMED_TASK_FAILURE_FLOOR: Duration = Duration::from_secs(60);
+
 // ── Scheduled status publisher ────────────────────────────────────────────
 
 async fn run_scheduled_statuses(state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let ceiling = state.config.workers.sanitized().timed_task_idle_poll();
     loop {
-        interval.tick().await;
-        if let Err(e) = publish_due_statuses(&state).await {
-            tracing::error!(error = %e, "scheduled status publish failed");
-        }
+        let floor = match publish_due_statuses(&state).await {
+            Ok(()) => TIMED_TASK_FLOOR,
+            Err(e) => {
+                tracing::error!(error = %e, "scheduled status publish failed");
+                TIMED_TASK_FAILURE_FLOOR
+            }
+        };
+        let due = next_scheduled_status_due(&state).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "could not find when the next scheduled status is due");
+            None
+        });
+        sleep_or_wake(
+            &state.queues.scheduled_statuses,
+            timed_task_nap(due, floor, ceiling),
+        )
+        .await;
     }
+}
+
+/// Seconds until the next schedule falls due — at its time, or at its retry
+/// time after a failed attempt — or `None` when nothing is waiting. Measured
+/// against the database's clock, which is the one `publish_due_statuses` uses.
+pub async fn next_scheduled_status_due(state: &AppState) -> anyhow::Result<Option<f64>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXTRACT(EPOCH FROM
+                    min(GREATEST(s.scheduled_at::timestamptz, a.run_at)) - now())::float8
+           FROM scheduled_statuses s
+           LEFT JOIN eunha.scheduled_status_attempts a
+             ON a.scheduled_status_id = s.id
+           WHERE a.failed_at IS NULL"#,
+    )
+    .fetch_one(&state.db)
+    .await?)
 }
 
 /// How many times a scheduled status that wrote nothing is retried before it is
@@ -399,8 +471,11 @@ async fn publish_one(
                 )
                 .execute(&state.db)
                 .await;
-                if let Err(e) = poll_created {
-                    tracing::error!(scheduled_id, status_id = status.id, error = %e, "scheduled status published without its poll");
+                match poll_created {
+                    Ok(_) => state.queues.polls.notify_one(),
+                    Err(e) => {
+                        tracing::error!(scheduled_id, status_id = status.id, error = %e, "scheduled status published without its poll")
+                    }
                 }
             }
         }
@@ -504,14 +579,38 @@ async fn publish_one(
 /// Mastodon's `Scheduler::SuspendedUserCleanupScheduler`: once a suspension has
 /// stood for `DELAY_TO_DELETION`, the account's data is purged for good. Since
 /// account deletion is expensive, only a few are processed per pass.
+///
+/// Between passes it sleeps until the oldest request comes due. It needs no
+/// wake-up: a new request falls due `DELAY_TO_DELETION` after it is made, later
+/// than anything already waiting and far later than the ceiling.
 async fn run_suspended_account_cleanup(state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(120));
+    let ceiling = state.config.workers.sanitized().timed_task_idle_poll();
     loop {
-        interval.tick().await;
         if let Err(e) = process_deletion_requests(&state).await {
             tracing::error!(error = %e, "suspended account cleanup failed");
         }
+        let due = next_deletion_request_due(&state).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "could not find when the next deletion request is due");
+            None
+        });
+        tokio::time::sleep(timed_task_nap(due, DELETION_PASS_FLOOR, ceiling)).await;
     }
+}
+
+/// The two minutes this task always waited between passes. A request whose
+/// deletion keeps failing stays due, and is retried no faster than before.
+const DELETION_PASS_FLOOR: Duration = Duration::from_secs(120);
+
+/// Seconds until the oldest deletion request comes due, or `None` when there
+/// are none. Uses this process's clock, as `process_deletion_requests` does.
+async fn next_deletion_request_due(state: &AppState) -> anyhow::Result<Option<f64>> {
+    let oldest = sqlx::query_scalar!("SELECT min(created_at) FROM account_deletion_requests")
+        .fetch_one(&state.db)
+        .await?;
+    Ok(oldest.map(|created_at| {
+        let due = created_at + crate::delete_account::DELAY_TO_DELETION;
+        (due - chrono::Utc::now().naive_utc()).num_milliseconds() as f64 / 1000.0
+    }))
 }
 
 /// `MAX_DELETIONS_PER_JOB`
@@ -547,30 +646,111 @@ pub async fn process_deletion_requests(state: &AppState) -> anyhow::Result<()> {
 
 // ── Poll expiry notifier ──────────────────────────────────────────────────
 
+/// How far the notifier has got: every poll that ended before `expires_at` has
+/// been handled, and of those ending exactly then, every one up to `id`.
+/// Ordering by both lets a pass stop at its batch limit without skipping or
+/// repeating a poll that ends at the same instant as the last one handled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PollExpiryMark {
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub id: i64,
+}
+
+/// Polls handled per pass. A pass that fills it runs again straight away.
+const POLL_EXPIRY_BATCH: i64 = 100;
+
 async fn run_poll_expiry(state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let ceiling = state.config.workers.sanitized().timed_task_idle_poll();
+    let mut mark = None;
     loop {
-        interval.tick().await;
-        if let Err(e) = notify_expired_polls(&state).await {
-            tracing::error!(error = %e, "poll expiry task failed");
-        }
+        let floor = match notify_polls_expired_after(&state, mark).await {
+            Ok((reached, handled)) => {
+                mark = Some(reached);
+                if handled as i64 == POLL_EXPIRY_BATCH {
+                    continue;
+                }
+                TIMED_TASK_FLOOR
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "poll expiry task failed");
+                TIMED_TASK_FAILURE_FLOOR
+            }
+        };
+        let due = next_poll_expiry(&state).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "could not find when the next poll ends");
+            None
+        });
+        sleep_or_wake(&state.queues.polls, timed_task_nap(due, floor, ceiling)).await;
     }
 }
 
+/// Seconds until the next running poll ends, or `None` when none is running.
+pub async fn next_poll_expiry(state: &AppState) -> anyhow::Result<Option<f64>> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT EXTRACT(EPOCH FROM min(expires_at::timestamptz) - now())::float8
+           FROM polls
+           WHERE expires_at::timestamptz > now()"#,
+    )
+    .fetch_one(&state.db)
+    .await?)
+}
+
+/// Notify the author and voters of every poll that ended in the last two
+/// minutes.
 pub async fn notify_expired_polls(state: &AppState) -> anyhow::Result<()> {
-    // Find polls that just expired and haven't had expiry notifications sent yet.
-    // We track this with a simple approach: notify all unique voters + the poll author
-    // for polls that expired in the last 2 minutes (our tick interval + buffer).
+    notify_polls_expired_after(state, None).await.map(|_| ())
+}
+
+/// Notify the author and voters of the polls that ended after `mark` and by
+/// now, oldest first, and return how far that got and how many polls it
+/// handled. A pass that handled `POLL_EXPIRY_BATCH` stopped at the limit.
+///
+/// Without a mark it starts two minutes back. That window used to be the whole
+/// of it: a pass a minute over the last two minutes, so every poll fell inside
+/// two passes — the notification was deduplicated, but a local poll's
+/// ActivityPub `Update` was enqueued twice — and a pass more than two minutes
+/// late would have missed polls outright. Now it is only where a freshly
+/// started process begins, so a poll that ended while the process restarted is
+/// still notified, and a notifier that sleeps for many minutes still reaches
+/// every poll that ended in the meantime, once.
+pub async fn notify_polls_expired_after(
+    state: &AppState,
+    mark: Option<PollExpiryMark>,
+) -> anyhow::Result<(PollExpiryMark, usize)> {
+    let now = sqlx::query_scalar!(r#"SELECT now() AS "now!""#)
+        .fetch_one(&state.db)
+        .await?;
+    let mark = mark.unwrap_or(PollExpiryMark {
+        expires_at: now - chrono::Duration::minutes(2),
+        id: i64::MAX,
+    });
     let expired = sqlx::query!(
-        r#"SELECT p.id, p.status_id, p.account_id
+        r#"SELECT p.id, p.status_id, p.account_id, p.expires_at::timestamptz AS "expires_at!"
            FROM polls p
-           WHERE p.expires_at IS NOT NULL
-             AND p.expires_at <= now()
-             AND p.expires_at > now() - interval '2 minutes'
-           LIMIT 100"#,
+           WHERE (p.expires_at::timestamptz, p.id) > ($1::timestamptz, $2::bigint)
+             AND p.expires_at::timestamptz <= $3::timestamptz
+           ORDER BY p.expires_at::timestamptz ASC, p.id ASC
+           LIMIT $4"#,
+        mark.expires_at,
+        mark.id,
+        now,
+        POLL_EXPIRY_BATCH,
     )
     .fetch_all(&state.db)
     .await?;
+
+    let handled = expired.len();
+    let full = handled as i64 == POLL_EXPIRY_BATCH;
+    let reached = match expired.last() {
+        Some(last) if full => PollExpiryMark {
+            expires_at: last.expires_at,
+            id: last.id,
+        },
+        _ => PollExpiryMark {
+            expires_at: now,
+            id: i64::MAX,
+        },
+    };
 
     for poll in expired {
         if let Err(e) =
@@ -604,7 +784,7 @@ pub async fn notify_expired_polls(state: &AppState) -> anyhow::Result<()> {
             .await;
         }
     }
-    Ok(())
+    Ok((reached, handled))
 }
 
 #[cfg(test)]
@@ -647,5 +827,50 @@ mod idle_backoff_tests {
         wake.notify_one();
         backoff.idle(&wake).await;
         assert_eq!(backoff.current, Duration::from_millis(1));
+    }
+}
+
+#[cfg(test)]
+mod timed_task_tests {
+    use super::timed_task_nap;
+    use std::time::Duration;
+
+    const FLOOR: Duration = Duration::from_secs(1);
+    const CEILING: Duration = Duration::from_secs(300);
+
+    #[test]
+    fn nothing_due_sleeps_for_the_ceiling() {
+        assert_eq!(timed_task_nap(None, FLOOR, CEILING), CEILING);
+    }
+
+    #[test]
+    fn an_item_due_soon_is_slept_until() {
+        assert_eq!(
+            timed_task_nap(Some(42.5), FLOOR, CEILING),
+            Duration::from_millis(42_500)
+        );
+    }
+
+    #[test]
+    fn a_distant_item_waits_no_longer_than_the_ceiling() {
+        assert_eq!(timed_task_nap(Some(86_400.0), FLOOR, CEILING), CEILING);
+        assert_eq!(timed_task_nap(Some(f64::MAX), FLOOR, CEILING), CEILING);
+    }
+
+    #[test]
+    fn an_overdue_item_does_not_spin() {
+        assert_eq!(timed_task_nap(Some(-30.0), FLOOR, CEILING), FLOOR);
+        assert_eq!(timed_task_nap(Some(0.0), FLOOR, CEILING), FLOOR);
+        assert_eq!(timed_task_nap(Some(f64::NAN), FLOOR, CEILING), CEILING);
+    }
+
+    #[test]
+    fn a_floor_above_the_ceiling_wins() {
+        let floor = Duration::from_secs(120);
+        assert_eq!(timed_task_nap(None, floor, Duration::from_secs(60)), floor);
+        assert_eq!(
+            timed_task_nap(Some(5.0), floor, Duration::from_secs(60)),
+            floor
+        );
     }
 }

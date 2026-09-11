@@ -657,6 +657,7 @@ pub(super) async fn sync_remote_poll(
         )
         .execute(&state.db)
         .await?;
+        state.queues.polls.notify_one();
     } else {
         let poll_id = crate::snowflake::next_id();
         if let Some(inserted_poll_id) = sqlx::query_scalar!(
@@ -678,6 +679,7 @@ pub(super) async fn sync_remote_poll(
         .fetch_optional(&state.db)
         .await?
         {
+            state.queues.polls.notify_one();
             sqlx::query!(
                 "UPDATE statuses SET poll_id = $1 WHERE id = $2",
                 inserted_poll_id,

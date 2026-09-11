@@ -228,6 +228,7 @@ pub async fn edit_status(
                     )
                     .execute(&state.db)
                     .await;
+                    state.queues.polls.notify_one();
                 }
                 None => {
                     if let Ok(poll_id) = sqlx::query_scalar!(
@@ -244,6 +245,7 @@ pub async fn edit_status(
                     .fetch_one(&state.db)
                     .await
                     {
+                        state.queues.polls.notify_one();
                         let _ = sqlx::query!(
                             "UPDATE statuses SET poll_id = $1 WHERE id = $2",
                             poll_id, id,

@@ -682,6 +682,7 @@ pub(super) async fn handle_create(
         .fetch_optional(&state.db)
         .await
         {
+            state.queues.polls.notify_one();
             let _ = sqlx::query!(
                 "UPDATE statuses SET poll_id = $1 WHERE id = $2",
                 poll_id,

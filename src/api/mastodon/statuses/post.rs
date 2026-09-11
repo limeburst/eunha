@@ -148,6 +148,7 @@ pub async fn post_status(
             )
             .fetch_one(&state.db)
             .await?;
+            state.queues.scheduled_statuses.notify_one();
             let resp = ScheduledStatusResponse {
                 id: row.id.to_string(),
                 scheduled_at: row
@@ -637,6 +638,7 @@ pub async fn post_status(
         )
         .fetch_one(&state.db)
         .await?;
+        state.queues.polls.notify_one();
         // Link the poll back onto the status, mirroring the federation ingest
         // path so `statuses.poll_id` is consistently populated for local polls.
         sqlx::query!(
