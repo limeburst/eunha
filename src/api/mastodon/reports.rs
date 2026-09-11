@@ -125,7 +125,7 @@ pub async fn file_report(
         let state2 = state.clone();
         let reporter_id = auth.account_id;
         let rid = report.id;
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             notify_admins(&state2, reporter_id, "admin.report", Some(rid)).await;
         });
     }

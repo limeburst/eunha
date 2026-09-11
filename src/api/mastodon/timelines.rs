@@ -223,7 +223,7 @@ pub async fn home_timeline(
             if feed::sync_fanout() {
                 feed::feed_populate(&mut redis2, &redis_keys, account_id, &db).await;
             } else {
-                tokio::spawn(async move {
+                crate::tenants::spawn(async move {
                     feed::feed_populate(&mut redis2, &redis_keys, account_id, &db).await;
                 });
             }
@@ -678,7 +678,7 @@ pub async fn list_timeline(
                 feed::list_feed_populate(&mut redis2, &redis_keys, list_id, owner_id, &policy, &db)
                     .await;
             } else {
-                tokio::spawn(async move {
+                crate::tenants::spawn(async move {
                     feed::list_feed_populate(
                         &mut redis2,
                         &redis_keys,

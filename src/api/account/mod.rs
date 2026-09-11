@@ -640,7 +640,7 @@ pub async fn delete_post(
 
     let account_id = account.account_id;
     let bg = state.clone();
-    tokio::spawn(async move {
+    crate::tenants::spawn(async move {
         if let Err(e) = crate::delete_account::call(
             &bg,
             account_id,

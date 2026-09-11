@@ -330,7 +330,7 @@ pub async fn follow_account(
     if feed::sync_fanout() {
         feed::backfill_follow(&mut redis, &redis_keys, &db, follower_id, target_id).await;
     } else {
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             feed::backfill_follow(&mut redis, &redis_keys, &db, follower_id, target_id).await;
         });
     }
@@ -395,7 +395,7 @@ pub async fn unfollow_account(
         if feed::sync_fanout() {
             feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, follower_id).await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, follower_id).await;
             });
         }

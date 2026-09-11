@@ -399,7 +399,7 @@ pub(super) async fn handle_create(
     // ones. Mastodon 4.7.0 likewise takes the first `Link` it finds.
     if let Some(card_url) = preview_card_link(&attachments).map(str::to_owned) {
         let state = state.clone();
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             let Some(card_id) =
                 crate::preview_card::fetch_and_store(&state.db, &state.fetch, &card_url).await
             else {
@@ -699,7 +699,7 @@ pub(super) async fn handle_create(
         let uri = uri.to_owned();
         let child_id = inserted_id;
         let child_author = account_id;
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             tracing::debug!(uri, "fetching unknown parent status for thread resolution");
             if let Err(e) = fetch_remote_status(&state, &uri).await {
                 tracing::debug!(uri, error = %e, "failed to store fetched parent status");
@@ -763,7 +763,7 @@ pub(super) async fn handle_create(
         )
         .await;
     } else {
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             crate::feed::fanout_new_status(
                 &mut redis,
                 &redis_keys,

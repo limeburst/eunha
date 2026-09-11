@@ -129,7 +129,7 @@ pub async fn upload_media(
     // Decoding, blurhashing and resizing are CPU work that would hold a Tokio
     // worker for as long as they take, stalling every request scheduled on it —
     // every tenant's, when a process serves several.
-    let (data, processed) = tokio::task::spawn_blocking(move || {
+    let (data, processed) = crate::tenants::spawn_blocking(move || {
         let processed = process_image(&data);
         (data, processed)
     })
@@ -209,7 +209,7 @@ async fn process_media(
 
     if media_type == "video" || media_type == "gifv" {
         if let Ok(frame) = crate::media::transcode::extract_frame(data).await {
-            let processed = tokio::task::spawn_blocking(move || process_image(&frame))
+            let processed = crate::tenants::spawn_blocking(move || process_image(&frame))
                 .await
                 .map_err(|e| anyhow::anyhow!("frame processing did not finish: {e}"))?;
             if let Some((_orig, small_bytes, small_dim, bh)) = processed {

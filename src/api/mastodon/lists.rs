@@ -294,7 +294,7 @@ pub async fn add_list_accounts(
                     )
                     .await;
                 } else {
-                    tokio::spawn(async move {
+                    crate::tenants::spawn(async move {
                         feed::backfill_list_member(
                             &mut redis,
                             &redis_keys,

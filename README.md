@@ -153,10 +153,18 @@ is started:
 Every instance in a directory must name the same value for both, and a lone
 instance is held to them too.
 
+Everything an instance does is logged inside a `tenant{domain=…}` span — its
+requests, its streaming connections, its background queues and every task any
+of them starts — so one process's log can be read one instance at a time. A
+lone instance's lines carry it too. A task started with Tokio directly would
+begin outside every span, so `clippy.toml` refuses `tokio::spawn` and
+`spawn_blocking` in favour of `tenants::spawn` and `tenants::spawn_blocking`,
+which carry the span along.
+
 This is the start of the shared-process work planned in
-[MULTITENANCY.md](./MULTITENANCY.md). Per-tenant tracing and adding a tenant
-without a restart are not built yet; what sharing a process saves is measured
-in [BENCHMARKING.md](./BENCHMARKING.md).
+[MULTITENANCY.md](./MULTITENANCY.md). Adding a tenant without a restart is not
+built yet; what sharing a process saves is measured in
+[BENCHMARKING.md](./BENCHMARKING.md).
 
 
 Tracking Mastodon

@@ -23,6 +23,11 @@
 //! database pools that could open more connections than their PostgreSQL
 //! server accepts — a budget that, overrun, fails whichever tenant happens to
 //! ask last rather than failing the configuration at startup.
+//!
+//! Everything a tenant does runs in its [`span`], so every line logged names
+//! the instance it was for. Tasks keep it through [`spawn`] and
+//! [`spawn_blocking`]; `clippy.toml` refuses Tokio's own, which would start
+//! them outside every span.
 
 use crate::{config, migrate, state::AppState};
 use anyhow::{Context as _, Result};
@@ -40,6 +45,44 @@ use sqlx::{
 use std::{collections::HashMap, path::Path, str::FromStr as _, sync::Arc};
 use tokio::sync::Semaphore;
 use tower::ServiceExt as _;
+use tracing::Instrument as _;
+
+/// The span a tenant's work runs in, so that every line it logs names the
+/// instance it was for: `tenant{domain=seoul.earth}`.
+///
+/// At ERROR, so that no filter keeping an event drops the tenant it belongs
+/// to, and a root span, so that it never nests inside another tenant's.
+pub fn span(domain: &str) -> tracing::Span {
+    tracing::error_span!(parent: None, "tenant", domain = %domain)
+}
+
+/// `tokio::spawn`, keeping the span the task was spawned from. A task Tokio
+/// starts directly begins outside every span, so nothing it logged would say
+/// which tenant it was working for.
+#[allow(clippy::disallowed_methods)]
+pub fn spawn<F>(future: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tokio::spawn(future.in_current_span())
+}
+
+/// `tokio::task::spawn_blocking`, keeping the span the work was handed over
+/// from — and the subscriber, which a thread of the blocking pool would not
+/// otherwise know when it is only the calling thread's default, as in tests.
+#[allow(clippy::disallowed_methods)]
+pub fn spawn_blocking<F, R>(work: F) -> tokio::task::JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let span = tracing::Span::current();
+    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+    tokio::task::spawn_blocking(move || {
+        tracing::dispatcher::with_default(&dispatch, || span.in_scope(work))
+    })
+}
 
 /// How many tenants are brought up at once.
 const STARTUP_CONCURRENCY: usize = 8;
@@ -922,7 +965,7 @@ vapid_public_key = ""
 
         let first = {
             let t = t.clone();
-            tokio::spawn(async move { t.dispatch(request("busy.example")).await })
+            spawn(async move { t.dispatch(request("busy.example")).await })
         };
         for _ in 0..200 {
             if busy_limit.available_permits() == 0 {
@@ -958,5 +1001,71 @@ vapid_public_key = ""
             StatusCode::OK,
             "and the tenant serves again"
         );
+    }
+
+    /// Log output kept in memory, to read back what was logged and in which
+    /// span.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Captured {
+        fn line_with(&self, needle: &str) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap())
+                .lines()
+                .find(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("nothing logged {needle:?}"))
+                .to_string()
+        }
+    }
+
+    /// Work a tenant hands to a task or to the blocking pool still logs as that
+    /// tenant, where a task Tokio starts directly logs as nobody — which is
+    /// why `clippy.toml` refuses the direct form.
+    #[tokio::test]
+    async fn spawned_work_logs_as_the_tenant_that_spawned_it() {
+        use tracing::Instrument as _;
+
+        let logs = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .finish();
+        let _default = tracing::subscriber::set_default(subscriber);
+
+        async {
+            spawn(async { tracing::warn!("from a task") })
+                .await
+                .unwrap();
+            spawn_blocking(|| tracing::warn!("from the blocking pool"))
+                .await
+                .unwrap();
+            #[allow(clippy::disallowed_methods)]
+            let bare = tokio::spawn(async { tracing::warn!("from a bare task") });
+            bare.await.unwrap();
+        }
+        .instrument(span("a.example"))
+        .await;
+
+        for message in ["from a task", "from the blocking pool"] {
+            let line = logs.line_with(message);
+            assert!(line.contains("tenant{domain=a.example}"), "{line}");
+        }
+        let bare = logs.line_with("from a bare task");
+        assert!(!bare.contains("tenant{"), "{bare}");
     }
 }

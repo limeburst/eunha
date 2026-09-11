@@ -140,7 +140,7 @@ pub async fn block_domain(
             )
             .await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 crate::feed::unmerge_domain_from_home(
                     &mut redis,
                     &state.redis_keys,

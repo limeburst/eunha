@@ -175,7 +175,7 @@ pub async fn authorize_follow_request(
         if feed::sync_fanout() {
             feed::backfill_follow(&mut redis, &redis_keys, &db, requester_id, followed_id).await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 feed::backfill_follow(&mut redis, &redis_keys, &db, requester_id, followed_id)
                     .await;
             });

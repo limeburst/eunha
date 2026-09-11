@@ -625,7 +625,7 @@ pub async fn delete_status(
             feed::fanout_remove_status(&mut redis, &redis_keys, &db, author_id, id).await;
             feed::fanout_remove_from_lists(&mut redis, &redis_keys, &db, author_id, id).await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 feed::fanout_remove_status(&mut redis, &redis_keys, &db, author_id, id).await;
                 feed::fanout_remove_from_lists(&mut redis, &redis_keys, &db, author_id, id).await;
             });
@@ -1032,7 +1032,7 @@ pub async fn reblog_status(
         if feed::sync_fanout() {
             feed::fanout_new_status(&mut redis, &redis_keys, &db, booster_id, bid, &[]).await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 feed::fanout_new_status(&mut redis, &redis_keys, &db, booster_id, bid, &[]).await;
             });
         }

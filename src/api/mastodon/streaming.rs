@@ -10,6 +10,7 @@ use bytes::Bytes;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::time::Duration;
+use tracing::Instrument as _;
 
 use crate::{middleware::AuthenticatedUser, state::AppState, streaming::Event};
 
@@ -52,18 +53,24 @@ pub async fn handler(
     };
 
     tracing::info!(?initial_stream, ?account_id, "streaming: upgrade accepted");
-    ws.on_upgrade(move |socket| async move {
-        let account_id = if account_id.is_some() {
-            account_id
-        } else if let Some(tok) = token {
-            resolve_token(&state, &tok).await
-        } else {
-            None
-        };
+    // The upgraded connection is served from a task axum spawns, which starts
+    // outside this request's span; take the tenant along.
+    let span = tracing::Span::current();
+    ws.on_upgrade(move |socket| {
+        async move {
+            let account_id = if account_id.is_some() {
+                account_id
+            } else if let Some(tok) = token {
+                resolve_token(&state, &tok).await
+            } else {
+                None
+            };
 
-        tracing::info!(?initial_stream, ?account_id, "streaming: connection open");
-        run(socket, initial_stream, account_id, state).await;
-        tracing::info!("streaming: connection closed");
+            tracing::info!(?initial_stream, ?account_id, "streaming: connection open");
+            run(socket, initial_stream, account_id, state).await;
+            tracing::info!("streaming: connection closed");
+        }
+        .instrument(span)
     })
 }
 

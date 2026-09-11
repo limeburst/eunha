@@ -353,7 +353,7 @@ pub async fn api_create_account(
     let to = email.clone();
     let uname = username.clone();
     let locale_for_email = locale_str.clone();
-    tokio::spawn(async move {
+    crate::tenants::spawn(async move {
         if let Err(e) = email_sender
             .send_confirmation(&to, &uname, "", &confirm_url, &locale_for_email)
             .await
@@ -404,7 +404,7 @@ pub async fn confirm_email(
 
     // A 2048-bit key is on the order of a hundred milliseconds of CPU.
     let (private_key, public_key) =
-        match tokio::task::spawn_blocking(crypto::generate_rsa_keypair).await {
+        match crate::tenants::spawn_blocking(crypto::generate_rsa_keypair).await {
             Ok(Ok(kp)) => kp,
             _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
@@ -494,7 +494,7 @@ pub async fn confirm_email(
     // open instances get it too so admins have visibility into new accounts).
     {
         let state2 = state.clone();
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             crate::push::notify_admins(&state2, account_id, "admin.sign_up", None).await;
         });
     }
@@ -507,7 +507,7 @@ pub async fn confirm_email(
         // inviter when the invite is flagged for it. Spawned so signup latency and
         // success don't depend on the follow side effects.
         let state2 = state.clone();
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             autofollow_inviter(&state2, account_id, id).await;
         });
     }
@@ -610,7 +610,7 @@ pub async fn request_password_reset(
     let email = state.email.clone();
     let to = row.email.clone();
     let name = row.username.clone();
-    tokio::spawn(async move {
+    crate::tenants::spawn(async move {
         if let Err(e) = email
             .send_password_reset(&to, &name, &reset_url, "en")
             .await

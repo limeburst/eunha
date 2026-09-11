@@ -132,7 +132,7 @@ pub async fn block_account(
         if feed::sync_fanout() {
             feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, blocker_id).await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 feed::unmerge_from_home(&mut redis, &redis_keys, &db, target_id, blocker_id).await;
             });
         }

@@ -22,6 +22,10 @@
 //!   surfaces/   — other public API surfaces (oEmbed, streaming).
 //!   tenants     — several instances served by one process.
 
+// Tests start servers and clients of their own, which belong to no tenant, so
+// clippy.toml's rule that tasks keep their tenant's span does not apply here.
+#![allow(clippy::disallowed_methods)]
+
 mod helpers;
 
 mod c2s;

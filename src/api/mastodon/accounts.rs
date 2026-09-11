@@ -1961,7 +1961,7 @@ pub async fn delete_account(
         crate::delete_account::call(&state, account_id, options).await?;
     } else {
         let state = state.clone();
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             if let Err(e) = crate::delete_account::call(&state, account_id, options).await {
                 tracing::error!(account_id, error = %e, "account deletion failed");
             }

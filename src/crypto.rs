@@ -8,7 +8,7 @@ async fn off_the_runtime<T: Send + 'static>(
     what: &'static str,
     work: impl FnOnce() -> AppResult<T> + Send + 'static,
 ) -> AppResult<T> {
-    tokio::task::spawn_blocking(work)
+    crate::tenants::spawn_blocking(work)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{what} did not finish: {e}")))?
 }
@@ -61,7 +61,7 @@ pub fn generate_token(len: usize) -> String {
 /// A new 2048-bit RSA keypair as PEM, `(private, public)`.
 ///
 /// Generating one takes on the order of a hundred milliseconds of CPU, so async
-/// code runs it with `tokio::task::spawn_blocking` rather than on a worker.
+/// code runs it with `crate::tenants::spawn_blocking` rather than on a worker.
 pub fn generate_rsa_keypair() -> AppResult<(String, String)> {
     use pkcs8::spki::EncodePublicKey;
     use pkcs8::LineEnding;

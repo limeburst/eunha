@@ -1288,7 +1288,7 @@ pub fn spawn_card_fetch(state: &AppState, status_id: i64, content: String) {
         None => return,
     };
     let state = state.clone();
-    tokio::spawn(async move {
+    crate::tenants::spawn(async move {
         let Some(card_id) =
             crate::preview_card::fetch_and_store(&state.db, &state.fetch, &url).await
         else {

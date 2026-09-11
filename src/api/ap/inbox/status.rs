@@ -298,7 +298,7 @@ pub(super) async fn handle_announce(
             )
             .await;
         } else {
-            tokio::spawn(async move {
+            crate::tenants::spawn(async move {
                 crate::feed::fanout_new_status(
                     &mut redis,
                     &redis_keys,

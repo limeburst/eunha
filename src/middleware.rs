@@ -3,6 +3,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use tracing::Instrument as _;
 
 use crate::{config::InstanceConfig, error::AppError, state::AppState};
 
@@ -10,7 +11,9 @@ use crate::{config::InstanceConfig, error::AppError, state::AppState};
 #[derive(Clone)]
 pub struct ResolvedInstance(pub InstanceConfig);
 
-/// Injects the single-tenant instance config into every request's extensions.
+/// Injects the instance config into every request's extensions, and runs the
+/// request in its tenant's span, so that everything it logs — and every task it
+/// spawns through [`crate::tenants::spawn`] — names the instance.
 pub async fn resolve_instance(
     State(state): State<AppState>,
     mut req: Request,
@@ -18,7 +21,8 @@ pub async fn resolve_instance(
 ) -> Result<Response, AppError> {
     req.extensions_mut()
         .insert(ResolvedInstance((*state.instance).clone()));
-    Ok(next.run(req).await)
+    let span = crate::tenants::span(&state.instance.domain);
+    Ok(next.run(req).instrument(span).await)
 }
 
 /// Resolved OAuth token + account, injected by [`authenticate`].

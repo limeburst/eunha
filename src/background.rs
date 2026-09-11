@@ -2,30 +2,32 @@ use std::time::Duration;
 
 use crate::state::AppState;
 
-/// Spawns all background tasks. Called once at startup.
+/// Spawns all background tasks, each in the tenant's span so that what they log
+/// names the instance. Called once at startup.
 pub fn spawn(state: AppState) {
-    tokio::spawn(run_scheduled_statuses(state.clone()));
-    tokio::spawn(run_poll_expiry(state.clone()));
-    tokio::spawn(run_suspended_account_cleanup(state.clone()));
-    tokio::spawn(crate::federation::delivery::run_delivery_cleanup(
+    let _tenant = crate::tenants::span(&state.instance.domain).entered();
+    crate::tenants::spawn(run_scheduled_statuses(state.clone()));
+    crate::tenants::spawn(run_poll_expiry(state.clone()));
+    crate::tenants::spawn(run_suspended_account_cleanup(state.clone()));
+    crate::tenants::spawn(crate::federation::delivery::run_delivery_cleanup(
         state.clone(),
     ));
-    tokio::spawn(crate::api::ap::inbox::run_inbox_cleanup(state.clone()));
-    tokio::spawn(crate::api::mastodon::media::run_media_queue(state.clone()));
-    tokio::spawn(crate::software_updates::run_update_check(state.clone()));
+    crate::tenants::spawn(crate::api::ap::inbox::run_inbox_cleanup(state.clone()));
+    crate::tenants::spawn(crate::api::mastodon::media::run_media_queue(state.clone()));
+    crate::tenants::spawn(crate::software_updates::run_update_check(state.clone()));
 
     // Queue loops are sized from `[workers]` in config. Each loop claims work
     // with `FOR UPDATE SKIP LOCKED`, so adding loops within this process scales
     // the same way adding processes would.
     let workers = state.config.workers.sanitized();
     for index in 0..workers.delivery_workers {
-        tokio::spawn(crate::federation::delivery::run_delivery_queue(
+        crate::tenants::spawn(crate::federation::delivery::run_delivery_queue(
             state.clone(),
             index,
         ));
     }
     for index in 0..workers.inbox_workers {
-        tokio::spawn(crate::api::ap::inbox::run_inbox_queue(state.clone(), index));
+        crate::tenants::spawn(crate::api::ap::inbox::run_inbox_queue(state.clone(), index));
     }
     tracing::info!(
         delivery_workers = workers.delivery_workers,

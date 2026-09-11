@@ -104,7 +104,7 @@ async fn links_back(http: &reqwest::Client, url: &str, link_back: &str) -> bool 
 /// local account's profile fields, stamping `verified_at` on success.
 pub fn spawn(state: &AppState, account_id: i64) {
     let state = state.clone();
-    tokio::spawn(async move {
+    crate::tenants::spawn(async move {
         if let Err(e) = verify_account_links(&state, account_id).await {
             tracing::warn!(error = %e, account_id, "link verification failed");
         }

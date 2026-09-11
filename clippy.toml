@@ -1,0 +1,8 @@
+# A task spawned with Tokio directly starts outside any span, so everything it
+# logs loses the tenant it was doing the work for. `eunha::tenants::spawn` and
+# `spawn_blocking` carry the current span into the task.
+disallowed-methods = [
+  { path = "tokio::spawn", reason = "use crate::tenants::spawn, which keeps the tenant's span" },
+  { path = "tokio::task::spawn", reason = "use crate::tenants::spawn, which keeps the tenant's span" },
+  { path = "tokio::task::spawn_blocking", reason = "use crate::tenants::spawn_blocking, which keeps the tenant's span" },
+]

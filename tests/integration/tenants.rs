@@ -322,6 +322,77 @@ async fn test_tenants_share_no_in_process_state() {
     assert_eq!(b.state.urls.local_domain, b.domain);
 }
 
+/// Log output kept in memory, to read back what was logged and in which span.
+#[derive(Clone, Default)]
+struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Captured {
+    fn line_with(&self, needle: &str) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("nothing logged {needle:?}"))
+            .to_string()
+    }
+}
+
+/// With two tenants behind one listener, what each one's request logs names
+/// that tenant and not its neighbour — the difference between one process's
+/// log and a log that cannot say whose trouble a line is.
+#[tokio::test]
+async fn test_what_a_request_logs_names_its_tenant() {
+    let logs = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    let _default = tracing::subscriber::set_default(subscriber);
+
+    let a = TestContext::new("tenant-logs-a").await;
+    let b = TestContext::new("tenant-logs-b").await;
+    let base_url = serve(vec![a.state.clone(), b.state.clone()]).await;
+    // Whether anything wants an event is cached per callsite for the whole
+    // process. The other tests running alongside log with no subscriber at
+    // all, and one of them registering the failure log's callsite while this
+    // subscriber was being registered cached "nobody" for it — so this test
+    // passed alone and, in the full suite, captured nothing. Ask again now
+    // that this subscriber is certainly there.
+    tracing::callsite::rebuild_interest_cache();
+    for ctx in [&a, &b] {
+        let response = ApiClient::new(&base_url, &ctx.domain)
+            .get(&format!("/api/v1/nowhere-{}", ctx.domain), None)
+            .await;
+        assert!(response.status().is_client_error(), "{}", response.status());
+    }
+
+    for (ctx, other) in [(&a, &b), (&b, &a)] {
+        let line = logs.line_with(&format!("path=/api/v1/nowhere-{}", ctx.domain));
+        assert!(
+            line.contains(&format!("tenant{{domain={}}}", ctx.domain)),
+            "{line}"
+        );
+        assert!(
+            !line.contains(&format!("domain={}", other.domain)),
+            "{line}"
+        );
+    }
+}
+
 /// A process asks the real PostgreSQL server how many connections it accepts,
 /// and refuses to start with a pool that could open more, rather than failing
 /// some request later on. Were the server not asked, this pool would start.

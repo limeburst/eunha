@@ -121,7 +121,7 @@ impl Drop for RedisLock {
         let key = std::mem::take(&mut self.key);
         let token = std::mem::take(&mut self.token);
         let use_pooled_function = self.use_pooled_function;
-        tokio::spawn(async move {
+        crate::tenants::spawn(async move {
             // A pooled Redis installs this named function so tenant users need
             // no permission to submit arbitrary Lua. Dedicated deployments
             // retain the EVAL fallback and require no provisioning change.

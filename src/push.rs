@@ -623,7 +623,7 @@ pub async fn create_and_push(
     let icon_s = icon;
     let title_s = title;
     let body_s = body;
-    tokio::spawn(async move {
+    crate::tenants::spawn(async move {
         deliver(
             state_clone,
             recipient_id,
