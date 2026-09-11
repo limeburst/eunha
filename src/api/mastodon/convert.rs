@@ -307,7 +307,7 @@ pub fn account_from_db_for_viewer(
         // Local accounts: the human url is /@username; the AP uri follows the
         // account's id_scheme (/users/{username} or /ap/users/{id}).
         (
-            format!("https://{}/@{}", &urls.local_domain, a.username),
+            format!("https://{}/@{}", urls.local_domain, a.username),
             crate::federation::tag::account_uri(&urls.local_domain, a.id, a.id_scheme, &a.username),
         )
     } else {
@@ -757,7 +757,7 @@ pub fn status_from_db_with_app(
                     .unwrap_or_else(|| {
                         format!(
                             "https://{}/@{}/{}",
-                            &urls.local_domain, account.username, s.id
+                            urls.local_domain, account.username, s.id
                         )
                     }),
             )
