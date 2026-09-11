@@ -4,7 +4,7 @@ import { NavLink, useLocation, useParams } from 'react-router-dom'
 import type { mastodon } from '../masto.ts'
 import { getFollowers, getFollowing, lookupAccount } from '../api.ts'
 import { getToken } from '../auth.ts'
-import { useInfiniteFeed } from '../hooks/use-infinite-feed.ts'
+import { useInfinitePaginator } from '../hooks/use-infinite-paginator.ts'
 import { TopBar } from '@/components/top-bar.tsx'
 import { AccountRow } from '@/components/account-row.tsx'
 import { InfiniteScroll } from '@/components/infinite-scroll.tsx'
@@ -14,6 +14,8 @@ const tab =
   'border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground no-underline hover:text-foreground'
 const cls = ({ isActive }: { isActive: boolean }) =>
   cn(tab, isActive && 'border-primary text-foreground')
+
+async function* emptyPages<T>(): AsyncIterable<T[]> {}
 
 export default function AccountList() {
   const { acct = '' } = useParams()
@@ -32,13 +34,15 @@ export default function AccountList() {
       .catch((e) => setError(String(e)))
   }, [handle, token])
 
-  const feed = useInfiniteFeed<mastodon.v1.Account>(
-    (maxId) =>
+  // Followers and following are ordered by relationship IDs, not account IDs.
+  // Their Link headers therefore carry the only safe next-page cursor.
+  const feed = useInfinitePaginator<mastodon.v1.Account>(
+    () =>
       account
         ? following
-          ? getFollowing(account.id, token ?? undefined, maxId)
-          : getFollowers(account.id, token ?? undefined, maxId)
-        : Promise.resolve([]),
+          ? getFollowing(account.id, token ?? undefined)
+          : getFollowers(account.id, token ?? undefined)
+        : emptyPages<mastodon.v1.Account>(),
     [account?.id, following, token],
   )
   const accounts = feed.items

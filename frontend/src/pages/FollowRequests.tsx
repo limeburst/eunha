@@ -3,17 +3,21 @@ import { useCallback } from 'react'
 import type { mastodon } from '../masto.ts'
 import { getFollowRequests } from '../api.ts'
 import { beginLogin, getToken } from '../auth.ts'
-import { useInfiniteFeed } from '../hooks/use-infinite-feed.ts'
+import { useInfinitePaginator } from '../hooks/use-infinite-paginator.ts'
 import { TopBar } from '@/components/top-bar.tsx'
 import { AccountRow } from '@/components/account-row.tsx'
 import { FollowRequestActions } from '@/components/follow-request-actions.tsx'
 import { InfiniteScroll } from '@/components/infinite-scroll.tsx'
 import { Button } from '@/components/ui/button.tsx'
 
+async function* emptyPages<T>(): AsyncIterable<T[]> {}
+
 export default function FollowRequests() {
   const token = getToken()
-  const feed = useInfiniteFeed<mastodon.v1.Account>(
-    (maxId) => (token ? getFollowRequests(token, maxId) : Promise.resolve([])),
+  // Follow-request cursors identify request rows, whereas the response contains
+  // accounts. Follow the Link header instead of treating an account ID as one.
+  const feed = useInfinitePaginator<mastodon.v1.Account>(
+    () => (token ? getFollowRequests(token) : emptyPages<mastodon.v1.Account>()),
     [token],
   )
   const { mutate } = feed

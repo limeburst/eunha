@@ -438,11 +438,10 @@ export async function searchAccounts(
   return restClient(token).v1.accounts.search.list({ q, limit, resolve: false })
 }
 
-export async function getFollowRequests(
+export function getFollowRequests(
   token: string,
-  maxId?: string,
-): Promise<mastodon.v1.Account[]> {
-  return restClient(token).v1.followRequests.list({ limit: 40, maxId })
+): mastodon.Paginator<mastodon.v1.Account[]> {
+  return restClient(token).v1.followRequests.list({ limit: 40 })
 }
 
 export function authorizeFollowRequest(
@@ -459,20 +458,18 @@ export function rejectFollowRequest(
   return restClient(token).v1.followRequests.$select(id).reject()
 }
 
-export async function getFollowers(
+export function getFollowers(
   id: string,
   token?: string,
-  maxId?: string,
-): Promise<mastodon.v1.Account[]> {
-  return restClient(token).v1.accounts.$select(id).followers.list({ limit: 40, maxId })
+): mastodon.Paginator<mastodon.v1.Account[]> {
+  return restClient(token).v1.accounts.$select(id).followers.list({ limit: 40 })
 }
 
-export async function getFollowing(
+export function getFollowing(
   id: string,
   token?: string,
-  maxId?: string,
-): Promise<mastodon.v1.Account[]> {
-  return restClient(token).v1.accounts.$select(id).following.list({ limit: 40, maxId })
+): mastodon.Paginator<mastodon.v1.Account[]> {
+  return restClient(token).v1.accounts.$select(id).following.list({ limit: 40 })
 }
 
 // Who favourited / boosted a status. Unlike the account lists above, these
