@@ -389,6 +389,7 @@ async fn enqueue_activity(
     )
     .execute(&state.db)
     .await?;
+    state.queues.inbox.notify_one();
     Ok(())
 }
 
@@ -405,11 +406,15 @@ pub async fn run_inbox_queue(state: AppState, index: usize) {
     let workers = state.config.workers.sanitized();
     let batch = workers.inbox_batch;
     let concurrency = workers.inbox_concurrency;
+    let mut idle = crate::background::IdleBackoff::new(INBOX_QUEUE_IDLE, workers.queue_idle_poll());
 
     loop {
         match run_inbox_queue_batch(&state, &worker_id, batch, concurrency).await {
-            Ok(0) => tokio::time::sleep(INBOX_QUEUE_IDLE).await,
-            Ok(n) => tracing::debug!(count = n, "processed inbound ActivityPub activities"),
+            Ok(0) => idle.idle(&state.queues.inbox).await,
+            Ok(n) => {
+                idle.reset();
+                tracing::debug!(count = n, "processed inbound ActivityPub activities");
+            }
             Err(e) => {
                 tracing::error!(error = %e, "ingress queue batch failed");
                 tokio::time::sleep(INBOX_QUEUE_ERROR_IDLE).await;

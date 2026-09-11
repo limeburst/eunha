@@ -26,6 +26,8 @@ pub struct AppState {
     /// `None` when the instance has not been given the encryption keys, in
     /// which case signing keys stay in the legacy `accounts` columns.
     pub encryptor: Option<crate::rails_encryption::Encryptor>,
+    /// Raised on enqueue so the durable queue loops need not poll for work.
+    pub queues: Arc<crate::background::QueueWakes>,
 }
 
 impl AppState {
@@ -99,6 +101,7 @@ impl AppState {
             streaming: StreamBus::new(),
             storage,
             encryptor,
+            queues: Arc::default(),
         })
     }
 }

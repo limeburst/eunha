@@ -168,6 +168,14 @@ pub struct WorkersConfig {
     /// Activities processed concurrently per ingress loop.
     #[serde(default = "default_inbox_concurrency")]
     pub inbox_concurrency: usize,
+    /// The longest an idle queue loop waits before looking for work again, in
+    /// seconds. A job this process enqueues wakes its loop at once regardless;
+    /// the poll only finds retries that have come due and jobs another process
+    /// enqueued, so this bounds how late those can start. A host of mostly idle
+    /// tenants raises it, with `database_pool.idle_timeout_seconds` below it, so
+    /// that an idle tenant holds no database connection at all.
+    #[serde(default = "default_queue_idle_poll_seconds")]
+    pub queue_idle_poll_seconds: u64,
 }
 
 /// Whether integrity proofs are signed when a config says nothing about it.
@@ -230,6 +238,10 @@ fn default_inbox_concurrency() -> usize {
     4
 }
 
+fn default_queue_idle_poll_seconds() -> u64 {
+    30
+}
+
 impl Default for WorkersConfig {
     fn default() -> Self {
         Self {
@@ -239,6 +251,7 @@ impl Default for WorkersConfig {
             inbox_workers: default_inbox_workers(),
             inbox_batch: default_inbox_batch(),
             inbox_concurrency: default_inbox_concurrency(),
+            queue_idle_poll_seconds: default_queue_idle_poll_seconds(),
         }
     }
 }
@@ -254,7 +267,13 @@ impl WorkersConfig {
             inbox_workers: self.inbox_workers.max(1),
             inbox_batch: self.inbox_batch.max(1),
             inbox_concurrency: self.inbox_concurrency.max(1),
+            queue_idle_poll_seconds: self.queue_idle_poll_seconds.max(1),
         }
+    }
+
+    /// The longest an idle queue loop sleeps between looks at its table.
+    pub fn queue_idle_poll(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.queue_idle_poll_seconds)
     }
 }
 

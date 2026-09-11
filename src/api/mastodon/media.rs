@@ -105,6 +105,7 @@ pub async fn upload_media(
         )
         .execute(&state.db)
         .await?;
+        state.queues.media.notify_one();
 
         return Ok((StatusCode::ACCEPTED, Json(media_from_db(&attachment))).into_response());
     }
@@ -321,10 +322,14 @@ const MEDIA_QUEUE_ERROR_IDLE: std::time::Duration = std::time::Duration::from_se
 /// Drain the durable media-processing queue. Spawned once at startup.
 pub async fn run_media_queue(state: AppState) {
     let worker_id = format!("media-{}", std::process::id());
+    let mut idle = crate::background::IdleBackoff::new(
+        MEDIA_QUEUE_IDLE,
+        state.config.workers.sanitized().queue_idle_poll(),
+    );
     loop {
         match run_media_queue_batch(&state, &worker_id).await {
-            Ok(0) => tokio::time::sleep(MEDIA_QUEUE_IDLE).await,
-            Ok(_) => {}
+            Ok(0) => idle.idle(&state.queues.media).await,
+            Ok(_) => idle.reset(),
             Err(e) => {
                 tracing::error!(error = %e, "media processing queue batch failed");
                 tokio::time::sleep(MEDIA_QUEUE_ERROR_IDLE).await;

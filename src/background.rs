@@ -36,6 +36,62 @@ pub fn spawn(state: AppState) {
     );
 }
 
+// ── Queue wake-ups ────────────────────────────────────────────────────────
+
+/// One wake-up per durable queue, raised by whoever enqueues a job.
+///
+/// Jobs are enqueued by requests this process serves, so the loop draining a
+/// queue can be told about them rather than finding them by polling. Polling
+/// every half-second cost an idle instance three transactions a second and kept
+/// a database connection open for good, which on a host of mostly idle tenants
+/// is most of what those tenants cost. The loops still poll, backing off towards
+/// `[workers] queue_idle_poll_seconds`, for what no wake-up announces: a retry
+/// whose `run_at` has come due, and a job enqueued by another process sharing
+/// the database.
+#[derive(Default)]
+pub struct QueueWakes {
+    pub delivery: tokio::sync::Notify,
+    pub inbox: tokio::sync::Notify,
+    pub media: tokio::sync::Notify,
+}
+
+/// How long a queue loop sleeps after finding nothing: `floor` at first,
+/// doubling with every empty pass up to `ceiling`, and `floor` again once work
+/// turns up.
+pub struct IdleBackoff {
+    floor: Duration,
+    ceiling: Duration,
+    current: Duration,
+}
+
+impl IdleBackoff {
+    pub fn new(floor: Duration, ceiling: Duration) -> Self {
+        Self {
+            floor,
+            ceiling: ceiling.max(floor),
+            current: floor,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.current = self.floor;
+    }
+
+    /// Sleep until `wake` is raised or the current interval passes.
+    ///
+    /// `Notify` keeps a permit raised while nobody was waiting, so a job
+    /// enqueued between an empty claim and this call ends the sleep at once
+    /// instead of waiting out the interval.
+    pub async fn idle(&mut self, wake: &tokio::sync::Notify) {
+        tokio::select! {
+            _ = wake.notified() => self.reset(),
+            _ = tokio::time::sleep(self.current) => {
+                self.current = (self.current * 2).min(self.ceiling);
+            }
+        }
+    }
+}
+
 // ── Scheduled status publisher ────────────────────────────────────────────
 
 async fn run_scheduled_statuses(state: AppState) {
@@ -549,4 +605,47 @@ pub async fn notify_expired_polls(state: &AppState) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod idle_backoff_tests {
+    use super::IdleBackoff;
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    #[tokio::test]
+    async fn empty_passes_back_off_to_the_ceiling_and_work_resets_it() {
+        let wake = Notify::new();
+        let mut backoff = IdleBackoff::new(Duration::from_millis(1), Duration::from_millis(4));
+        for _ in 0..4 {
+            backoff.idle(&wake).await;
+        }
+        assert_eq!(backoff.current, Duration::from_millis(4));
+        backoff.reset();
+        assert_eq!(backoff.current, Duration::from_millis(1));
+    }
+
+    #[tokio::test]
+    async fn a_job_enqueued_before_the_loop_sleeps_is_not_missed() {
+        let wake = Notify::new();
+        let hour = Duration::from_secs(3600);
+        let mut backoff = IdleBackoff::new(hour, hour);
+        wake.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), backoff.idle(&wake))
+            .await
+            .expect("a wake-up raised before the sleep should end it at once");
+    }
+
+    #[tokio::test]
+    async fn a_wake_up_shortens_the_next_sleep() {
+        let wake = Notify::new();
+        let mut backoff = IdleBackoff::new(Duration::from_millis(1), Duration::from_secs(3600));
+        for _ in 0..3 {
+            backoff.idle(&wake).await;
+        }
+        assert_eq!(backoff.current, Duration::from_millis(8));
+        wake.notify_one();
+        backoff.idle(&wake).await;
+        assert_eq!(backoff.current, Duration::from_millis(1));
+    }
 }

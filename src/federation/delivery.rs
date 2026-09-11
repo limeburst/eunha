@@ -413,6 +413,7 @@ async fn enqueue_to_inboxes(
     )
     .execute(&state.db)
     .await?;
+    state.queues.delivery.notify_one();
 
     Ok(result.rows_affected())
 }
@@ -518,11 +519,16 @@ pub async fn run_delivery_queue(state: AppState, index: usize) {
     let workers = state.config.workers.sanitized();
     let batch = workers.delivery_batch;
     let concurrency = workers.delivery_concurrency;
+    let mut idle =
+        crate::background::IdleBackoff::new(DELIVERY_QUEUE_IDLE, workers.queue_idle_poll());
 
     loop {
         match run_delivery_queue_batch(&state, &worker_id, batch, concurrency).await {
-            Ok(0) => tokio::time::sleep(DELIVERY_QUEUE_IDLE).await,
-            Ok(n) => tracing::debug!(count = n, "processed ActivityPub delivery jobs"),
+            Ok(0) => idle.idle(&state.queues.delivery).await,
+            Ok(n) => {
+                idle.reset();
+                tracing::debug!(count = n, "processed ActivityPub delivery jobs");
+            }
             Err(e) => {
                 tracing::error!(error = %e, "ActivityPub delivery queue batch failed");
                 tokio::time::sleep(DELIVERY_QUEUE_ERROR_IDLE).await;
