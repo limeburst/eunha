@@ -26,8 +26,9 @@ pub async fn move_account(
     .fetch_one(&state.db)
     .await?;
 
-    let valid =
-        crate::crypto::verify_password(&form.current_password, &user.encrypted_password).is_ok();
+    let valid = crate::crypto::verify_password(&form.current_password, &user.encrypted_password)
+        .await
+        .is_ok();
     if !valid {
         return Err(AppError::Unauthorized);
     }

@@ -227,7 +227,10 @@ pub async fn login_post(
         _ => return render_error(locale.t("invalid_credentials")),
     };
 
-    if verify_password(&form.password, &row.encrypted_password).is_err() {
+    if verify_password(&form.password, &row.encrypted_password)
+        .await
+        .is_err()
+    {
         return render_error(locale.t("invalid_credentials"));
     }
 
@@ -454,11 +457,14 @@ pub async fn password_post(
         Err(_) => err!(locale.t("password_error"), "/account/password?err=1"),
     };
 
-    if verify_password(&form.current_password, &row.encrypted_password).is_err() {
+    if verify_password(&form.current_password, &row.encrypted_password)
+        .await
+        .is_err()
+    {
         err!(locale.t("password_error"), "/account/password?err=1");
     }
 
-    let new_hash = match hash_password(&form.new_password) {
+    let new_hash = match hash_password(&form.new_password).await {
         Ok(h) => h,
         Err(_) => err!(locale.t("password_error"), "/account/password?err=1"),
     };
@@ -599,6 +605,7 @@ pub async fn delete_post(
             form.password.as_deref().unwrap_or(""),
             &account.encrypted_password,
         )
+        .await
         .is_ok()
     };
     if !passed {

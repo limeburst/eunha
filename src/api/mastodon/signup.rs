@@ -307,6 +307,7 @@ pub async fn api_create_account(
     }
 
     let password_hash = crypto::hash_password(password)
+        .await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("password hashing failed")))?;
     let reason = form
         .reason
@@ -401,10 +402,12 @@ pub async fn confirm_email(
         return Redirect::to("/account/login?confirmed=invalid").into_response();
     };
 
-    let (private_key, public_key) = match crypto::generate_rsa_keypair() {
-        Ok(kp) => kp,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
+    // A 2048-bit key is on the order of a hundred milliseconds of CPU.
+    let (private_key, public_key) =
+        match tokio::task::spawn_blocking(crypto::generate_rsa_keypair).await {
+            Ok(Ok(kp)) => kp,
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
 
     let instance_domain = &state.instance.domain;
     let url = format!("https://{}/@{}", instance_domain, pending.username);
@@ -659,7 +662,7 @@ pub async fn apply_password_reset(
         return (StatusCode::UNPROCESSABLE_ENTITY, "Invalid or expired token").into_response();
     };
 
-    let hash = match crypto::hash_password(&password) {
+    let hash = match crypto::hash_password(&password).await {
         Ok(h) => h,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response(),
     };

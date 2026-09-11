@@ -1,6 +1,37 @@
 use crate::error::{AppError, AppResult};
 
-pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
+/// Run deliberately expensive work — a password hash takes tens of
+/// milliseconds of CPU — on Tokio's blocking pool. On a worker it would stall
+/// every request scheduled there for as long, and in a process serving several
+/// instances those are other tenants' requests too.
+async fn off_the_runtime<T: Send + 'static>(
+    what: &'static str,
+    work: impl FnOnce() -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{what} did not finish: {e}")))?
+}
+
+/// Check `password` against a bcrypt or argon2 `hash`, off the async runtime.
+pub async fn verify_password(password: &str, hash: &str) -> AppResult<()> {
+    let (password, hash) = (password.to_owned(), hash.to_owned());
+    off_the_runtime("password check", move || {
+        verify_password_blocking(&password, &hash)
+    })
+    .await
+}
+
+/// Hash a new password with argon2, off the async runtime.
+pub async fn hash_password(password: &str) -> AppResult<String> {
+    let password = password.to_owned();
+    off_the_runtime("password hashing", move || {
+        hash_password_blocking(&password)
+    })
+    .await
+}
+
+fn verify_password_blocking(password: &str, hash: &str) -> AppResult<()> {
     if hash.starts_with("$2a$") || hash.starts_with("$2b$") || hash.starts_with("$2y$") {
         let ok = bcrypt::verify(password, hash)
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bcrypt error")))?;
@@ -27,6 +58,10 @@ pub fn generate_token(len: usize) -> String {
         .collect()
 }
 
+/// A new 2048-bit RSA keypair as PEM, `(private, public)`.
+///
+/// Generating one takes on the order of a hundred milliseconds of CPU, so async
+/// code runs it with `tokio::task::spawn_blocking` rather than on a worker.
 pub fn generate_rsa_keypair() -> AppResult<(String, String)> {
     use pkcs8::spki::EncodePublicKey;
     use pkcs8::LineEnding;
@@ -52,7 +87,7 @@ pub fn generate_rsa_keypair() -> AppResult<(String, String)> {
     Ok((priv_pem, pub_pem))
 }
 
-pub fn hash_password(password: &str) -> AppResult<String> {
+fn hash_password_blocking(password: &str) -> AppResult<String> {
     use argon2::password_hash::{rand_core::OsRng, SaltString};
     use argon2::{Argon2, PasswordHasher};
 

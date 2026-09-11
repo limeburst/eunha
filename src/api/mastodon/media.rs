@@ -126,7 +126,16 @@ pub async fn upload_media(
     let data = strip_exif(&data, &content_type);
     state.storage.store(&data, &file_key, &content_type).await?;
 
-    let (file_meta, blurhash, thumbnail_file_name) = match process_image(&data, &content_type) {
+    // Decoding, blurhashing and resizing are CPU work that would hold a Tokio
+    // worker for as long as they take, stalling every request scheduled on it —
+    // every tenant's, when a process serves several.
+    let (data, processed) = tokio::task::spawn_blocking(move || {
+        let processed = process_image(&data);
+        (data, processed)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("image processing did not finish: {e}"))?;
+    let (file_meta, blurhash, thumbnail_file_name) = match processed {
         Some((orig_dim, small_bytes, small_dim, bh)) => {
             let small_filename = format!("small.{}", file_ext);
             let small_key = format!(
@@ -200,7 +209,10 @@ async fn process_media(
 
     if media_type == "video" || media_type == "gifv" {
         if let Ok(frame) = crate::media::transcode::extract_frame(data).await {
-            if let Some((_orig, small_bytes, small_dim, bh)) = process_image(&frame, "image/png") {
+            let processed = tokio::task::spawn_blocking(move || process_image(&frame))
+                .await
+                .map_err(|e| anyhow::anyhow!("frame processing did not finish: {e}"))?;
+            if let Some((_orig, small_bytes, small_dim, bh)) = processed {
                 let small_filename = "small.jpg".to_string();
                 let small_key = format!(
                     "media_attachments/files/{}/small/{}",
@@ -244,10 +256,9 @@ async fn process_media(
 
 /// Decode image, compute original + small dimensions and blurhash.
 /// Returns (orig_dim, small_jpeg_bytes, small_dim, blurhash).
-fn process_image(
-    data: &[u8],
-    _content_type: &str,
-) -> Option<(serde_json::Value, Vec<u8>, serde_json::Value, String)> {
+///
+/// CPU-bound: call it from the blocking pool, never on a Tokio worker.
+fn process_image(data: &[u8]) -> Option<(serde_json::Value, Vec<u8>, serde_json::Value, String)> {
     let img = image::load_from_memory(data).ok()?;
     let (ow, oh) = (img.width(), img.height());
     let orig_dim = image_dim_json(ow, oh);

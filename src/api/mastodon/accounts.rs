@@ -1940,7 +1940,7 @@ pub async fn delete_account(
             return Err(AppError::Unauthorized);
         }
     } else {
-        crate::crypto::verify_password(&field("password"), &user.encrypted_password)?;
+        crate::crypto::verify_password(&field("password"), &user.encrypted_password).await?;
     }
 
     crate::delete_account::suspend(

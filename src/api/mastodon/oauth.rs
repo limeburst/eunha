@@ -234,7 +234,7 @@ pub async fn issue_token(
             .await?
             .ok_or(AppError::Unauthorized)?;
 
-            verify_password(password, &user.encrypted_password)?;
+            crate::crypto::verify_password(password, &user.encrypted_password).await?;
 
             sqlx::query!(
                 r#"UPDATE users SET
@@ -389,22 +389,6 @@ fn scope_is_subset(requested: &str, granted: &str) -> bool {
         .split(' ')
         .filter(|s| !s.is_empty())
         .all(|s| granted_set.contains(s))
-}
-
-fn verify_password(password: &str, hash: &str) -> Result<(), AppError> {
-    if hash.starts_with("$2a$") || hash.starts_with("$2b$") || hash.starts_with("$2y$") {
-        bcrypt::verify(password, hash)
-            .map_err(|_| AppError::Internal(anyhow::anyhow!("bcrypt error")))?
-            .then_some(())
-            .ok_or(AppError::Unauthorized)
-    } else {
-        let parsed = argon2::PasswordHash::new(hash)
-            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid password hash")))?;
-        use argon2::PasswordVerifier;
-        argon2::Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .map_err(|_| AppError::Unauthorized)
-    }
 }
 
 fn generate_token(len: usize) -> String {
@@ -786,7 +770,8 @@ async fn do_authorize(state: &AppState, form: &AuthorizeForm) -> Result<String, 
     .map_err(|_| "Database error".to_string())?
     .ok_or_else(|| "Invalid email or password".to_string())?;
 
-    verify_password(&form.password, &user.encrypted_password)
+    crate::crypto::verify_password(&form.password, &user.encrypted_password)
+        .await
         .map_err(|_| "Invalid email or password".to_string())?;
 
     let scopes = form
