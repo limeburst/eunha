@@ -92,11 +92,27 @@ impl IdleBackoff {
     pub async fn idle(&mut self, wake: &tokio::sync::Notify) {
         tokio::select! {
             _ = wake.notified() => self.reset(),
-            _ = tokio::time::sleep(self.current) => {
+            _ = tokio::time::sleep(jittered(self.current, rand::random())) => {
                 self.current = (self.current * 2).min(self.ceiling);
             }
         }
     }
+}
+
+/// The most an idle sleep is shortened by, at random.
+const IDLE_JITTER: f64 = 0.25;
+
+/// `nap`, shortened by up to `IDLE_JITTER` of itself; `unit`, in `[0, 1)`, says
+/// how far.
+///
+/// Tenants started together — every tenant on a host that has just restarted —
+/// would otherwise wake together on every idle poll and open their whole pools
+/// at once: a hundred started as one reached 200 connections. Jittering each
+/// sleep independently lets them drift apart within a few rounds. It only ever
+/// shortens a sleep, so a configured ceiling is still the longest anything
+/// waits.
+fn jittered(nap: Duration, unit: f64) -> Duration {
+    nap.mul_f64(1.0 - unit.clamp(0.0, 1.0) * IDLE_JITTER)
 }
 
 // ── Timed tasks ───────────────────────────────────────────────────────────
@@ -110,13 +126,21 @@ impl IdleBackoff {
 /// tenants have nothing scheduled and no poll running, and for them this is the
 /// ceiling. The floor keeps an item that stays due — one whose work keeps
 /// failing — from turning the loop into a busy one.
-fn timed_task_nap(seconds_until_due: Option<f64>, floor: Duration, ceiling: Duration) -> Duration {
+///
+/// Only an idle nap, with nothing due before the ceiling, is `jittered` by
+/// `jitter`; an item that falls due is woken for on time.
+fn timed_task_nap(
+    seconds_until_due: Option<f64>,
+    floor: Duration,
+    ceiling: Duration,
+    jitter: f64,
+) -> Duration {
     let ceiling = ceiling.max(floor);
     match seconds_until_due {
-        Some(s) if s.is_finite() => {
-            Duration::from_secs_f64(s.clamp(0.0, ceiling.as_secs_f64())).max(floor)
+        Some(s) if s.is_finite() && s < ceiling.as_secs_f64() => {
+            Duration::from_secs_f64(s.max(0.0)).max(floor)
         }
-        _ => ceiling,
+        _ => jittered(ceiling, jitter).max(floor),
     }
 }
 
@@ -154,7 +178,7 @@ async fn run_scheduled_statuses(state: AppState) {
         });
         sleep_or_wake(
             &state.queues.scheduled_statuses,
-            timed_task_nap(due, floor, ceiling),
+            timed_task_nap(due, floor, ceiling, rand::random()),
         )
         .await;
     }
@@ -593,7 +617,13 @@ async fn run_suspended_account_cleanup(state: AppState) {
             tracing::error!(error = %e, "could not find when the next deletion request is due");
             None
         });
-        tokio::time::sleep(timed_task_nap(due, DELETION_PASS_FLOOR, ceiling)).await;
+        tokio::time::sleep(timed_task_nap(
+            due,
+            DELETION_PASS_FLOOR,
+            ceiling,
+            rand::random(),
+        ))
+        .await;
     }
 }
 
@@ -680,7 +710,11 @@ async fn run_poll_expiry(state: AppState) {
             tracing::error!(error = %e, "could not find when the next poll ends");
             None
         });
-        sleep_or_wake(&state.queues.polls, timed_task_nap(due, floor, ceiling)).await;
+        sleep_or_wake(
+            &state.queues.polls,
+            timed_task_nap(due, floor, ceiling, rand::random()),
+        )
+        .await;
     }
 }
 
@@ -832,45 +866,82 @@ mod idle_backoff_tests {
 
 #[cfg(test)]
 mod timed_task_tests {
-    use super::timed_task_nap;
+    use super::{jittered, timed_task_nap};
     use std::time::Duration;
 
     const FLOOR: Duration = Duration::from_secs(1);
     const CEILING: Duration = Duration::from_secs(300);
+    /// No jitter, so an idle nap comes out exact.
+    const NONE: f64 = 0.0;
+    /// As much jitter as `rand::random` can produce.
+    const MOST: f64 = 0.999_999;
 
     #[test]
     fn nothing_due_sleeps_for_the_ceiling() {
-        assert_eq!(timed_task_nap(None, FLOOR, CEILING), CEILING);
+        assert_eq!(timed_task_nap(None, FLOOR, CEILING, NONE), CEILING);
     }
 
     #[test]
     fn an_item_due_soon_is_slept_until() {
         assert_eq!(
-            timed_task_nap(Some(42.5), FLOOR, CEILING),
+            timed_task_nap(Some(42.5), FLOOR, CEILING, NONE),
             Duration::from_millis(42_500)
         );
     }
 
     #[test]
     fn a_distant_item_waits_no_longer_than_the_ceiling() {
-        assert_eq!(timed_task_nap(Some(86_400.0), FLOOR, CEILING), CEILING);
-        assert_eq!(timed_task_nap(Some(f64::MAX), FLOOR, CEILING), CEILING);
+        assert_eq!(
+            timed_task_nap(Some(86_400.0), FLOOR, CEILING, NONE),
+            CEILING
+        );
+        assert_eq!(
+            timed_task_nap(Some(f64::MAX), FLOOR, CEILING, NONE),
+            CEILING
+        );
     }
 
     #[test]
     fn an_overdue_item_does_not_spin() {
-        assert_eq!(timed_task_nap(Some(-30.0), FLOOR, CEILING), FLOOR);
-        assert_eq!(timed_task_nap(Some(0.0), FLOOR, CEILING), FLOOR);
-        assert_eq!(timed_task_nap(Some(f64::NAN), FLOOR, CEILING), CEILING);
+        assert_eq!(timed_task_nap(Some(-30.0), FLOOR, CEILING, NONE), FLOOR);
+        assert_eq!(timed_task_nap(Some(0.0), FLOOR, CEILING, NONE), FLOOR);
+        assert_eq!(
+            timed_task_nap(Some(f64::NAN), FLOOR, CEILING, NONE),
+            CEILING
+        );
     }
 
     #[test]
     fn a_floor_above_the_ceiling_wins() {
         let floor = Duration::from_secs(120);
-        assert_eq!(timed_task_nap(None, floor, Duration::from_secs(60)), floor);
-        assert_eq!(
-            timed_task_nap(Some(5.0), floor, Duration::from_secs(60)),
-            floor
+        let ceiling = Duration::from_secs(60);
+        assert_eq!(timed_task_nap(None, floor, ceiling, NONE), floor);
+        assert_eq!(timed_task_nap(None, floor, ceiling, MOST), floor);
+        assert_eq!(timed_task_nap(Some(5.0), floor, ceiling, MOST), floor);
+    }
+
+    #[test]
+    fn only_an_idle_nap_is_jittered() {
+        let idle = timed_task_nap(None, FLOOR, CEILING, MOST);
+        assert!(idle < CEILING, "an idle nap is shortened, got {idle:?}");
+        assert!(
+            idle >= CEILING.mul_f64(0.75),
+            "by no more than a quarter, got {idle:?}"
         );
+        assert_eq!(
+            timed_task_nap(Some(42.5), FLOOR, CEILING, MOST),
+            Duration::from_millis(42_500),
+            "an item that falls due is woken for on time",
+        );
+    }
+
+    #[test]
+    fn jitter_only_ever_shortens_by_up_to_a_quarter() {
+        let nap = Duration::from_secs(300);
+        assert_eq!(jittered(nap, 0.0), nap);
+        assert_eq!(jittered(nap, 0.5), Duration::from_millis(262_500));
+        assert!(jittered(nap, MOST) >= Duration::from_secs(225));
+        assert_eq!(jittered(nap, 7.0), Duration::from_secs(225));
+        assert_eq!(jittered(nap, -1.0), nap);
     }
 }
