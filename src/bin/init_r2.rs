@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
         .map(eunha::config::Config::from_file)
         .transpose()?;
     let ms = cfg.as_ref().map(|c| &c.media_storage);
+    let key_prefix = ms.map(|m| m.key_prefix.as_str()).unwrap_or("");
 
     let bucket = args
         .bucket
@@ -86,17 +87,18 @@ async fn main() -> Result<()> {
     ];
 
     for (key, data) in assets {
-        tracing::info!("uploading {} ({} bytes) ...", key, data.len());
+        let object_key = eunha::media::prefixed_key(key_prefix, key);
+        tracing::info!("uploading {} ({} bytes) ...", object_key, data.len());
         s3.put_object()
             .bucket(&bucket)
-            .key(*key)
+            .key(&object_key)
             .body(ByteStream::from(data.to_vec()))
             .content_type("image/png")
             .cache_control("public, max-age=2419200, must-revalidate")
             .send()
             .await
-            .with_context(|| format!("uploading {key}"))?;
-        tracing::info!("uploaded {}", key);
+            .with_context(|| format!("uploading {object_key}"))?;
+        tracing::info!("uploaded {}", object_key);
     }
 
     tracing::info!("R2 bucket initialized");

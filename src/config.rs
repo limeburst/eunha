@@ -397,6 +397,10 @@ pub struct ResendConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MediaStorageConfig {
     pub bucket: String,
+    /// Namespace prepended to every object key in shared buckets. Empty keeps
+    /// the historical one-bucket-per-instance layout.
+    #[serde(default)]
+    pub key_prefix: String,
     pub region: String,
     pub endpoint: Option<String>,
     pub access_key_id: String,

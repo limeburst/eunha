@@ -10,6 +10,7 @@ pub mod transcode;
 pub struct Storage {
     client: aws_sdk_s3::Client,
     bucket: String,
+    key_prefix: String,
     base_url: String,
 }
 
@@ -33,15 +34,20 @@ impl Storage {
         Storage {
             client,
             bucket: config.bucket.clone(),
+            key_prefix: config.key_prefix.trim_matches('/').to_string(),
             base_url: config.base_url.clone(),
         }
+    }
+
+    fn object_key(&self, key: &str) -> String {
+        prefixed_key(&self.key_prefix, key)
     }
 
     pub async fn store(&self, data: &[u8], key: &str, content_type: &str) -> AppResult<String> {
         self.client
             .put_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.object_key(key))
             .body(data.to_vec().into())
             .content_type(content_type)
             .send()
@@ -51,7 +57,11 @@ impl Storage {
     }
 
     pub fn public_url(&self, key: &str) -> String {
-        format!("{}/{}", self.base_url.trim_end_matches('/'), key)
+        format!(
+            "{}/{}",
+            self.base_url.trim_end_matches('/'),
+            self.object_key(key)
+        )
     }
 
     pub fn missing_avatar_url(&self) -> String {
@@ -67,7 +77,7 @@ impl Storage {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.object_key(key))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("S3 get: {}", e)))?;
@@ -83,11 +93,23 @@ impl Storage {
         self.client
             .delete_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(self.object_key(key))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("S3 delete: {}", e)))?;
         Ok(())
+    }
+}
+
+/// Convert the logical key stored in PostgreSQL into its physical object key.
+/// Media maintenance binaries use the same boundary as the serving process.
+pub fn prefixed_key(prefix: &str, key: &str) -> String {
+    let prefix = prefix.trim_matches('/');
+    let key = key.trim_start_matches('/');
+    if prefix.is_empty() {
+        key.to_string()
+    } else {
+        format!("{prefix}/{key}")
     }
 }
 
@@ -165,4 +187,25 @@ fn ext_for(content_type: &str) -> &'static str {
     mime_guess::get_mime_extensions_str(content_type)
         .and_then(|e| e.first().copied())
         .unwrap_or("bin")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prefixed_key;
+
+    #[test]
+    fn empty_prefix_preserves_existing_object_keys() {
+        assert_eq!(
+            prefixed_key("", "accounts/avatars/a.png"),
+            "accounts/avatars/a.png"
+        );
+    }
+
+    #[test]
+    fn prefix_namespaces_object_keys_once() {
+        assert_eq!(
+            prefixed_key("/tenants/abc/", "/media/file.png"),
+            "tenants/abc/media/file.png"
+        );
+    }
 }

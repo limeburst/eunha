@@ -535,6 +535,7 @@ impl TestContext {
             bind_address: "127.0.0.1:0".into(),
             media_storage: eunha::config::MediaStorageConfig {
                 bucket: "test-bucket".into(),
+                key_prefix: String::new(),
                 region: "us-east-1".into(),
                 endpoint: Some(fake_s3.clone()),
                 access_key_id: "test-key".into(),

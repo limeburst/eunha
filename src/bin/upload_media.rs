@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
         .map(eunha::config::Config::from_file)
         .transpose()?;
     let ms = cfg.as_ref().map(|c| &c.media_storage);
+    let key_prefix = ms.map(|m| m.key_prefix.clone()).unwrap_or_default();
 
     let bucket_val = args
         .bucket
@@ -99,7 +100,15 @@ async fn main() -> Result<()> {
     let client = Arc::new(client);
     let bucket = Arc::new(bucket_val);
     let media_dir_arc = Arc::new(media_dir);
-    let uploaded = upload_parallel(client, bucket, media_dir_arc, files, args.concurrency).await?;
+    let uploaded = upload_parallel(
+        client,
+        bucket,
+        Arc::new(key_prefix),
+        media_dir_arc,
+        files,
+        args.concurrency,
+    )
+    .await?;
     tracing::info!("uploaded {} files total", uploaded);
 
     tracing::info!("done");
@@ -132,6 +141,7 @@ fn collect_files_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 async fn upload_parallel(
     client: Arc<aws_sdk_s3::Client>,
     bucket: Arc<String>,
+    key_prefix: Arc<String>,
     root: Arc<PathBuf>,
     files: Vec<PathBuf>,
     concurrency: usize,
@@ -143,11 +153,13 @@ async fn upload_parallel(
         .map(|path| {
             let client = client.clone();
             let bucket = bucket.clone();
+            let key_prefix = key_prefix.clone();
             let root = root.clone();
             let counter = counter.clone();
             async move {
                 let rel = path.strip_prefix(root.as_ref()).unwrap();
-                let key = rel.to_string_lossy().replace('\\', "/");
+                let logical_key = rel.to_string_lossy().replace('\\', "/");
+                let key = eunha::media::prefixed_key(&key_prefix, &logical_key);
                 let data = tokio::fs::read(&path)
                     .await
                     .with_context(|| format!("reading {}", path.display()))?;

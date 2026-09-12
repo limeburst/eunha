@@ -94,6 +94,21 @@ prefix or separate coordination endpoint is configured.
 Several instances in one process
 --------------------------------
 
+Instances may share an S3-compatible media bucket when every one has a stable,
+unique object namespace. Set `media_storage.key_prefix` to prepend that
+namespace to every object read, write, delete and public URL. Leave it empty
+for the historical dedicated-bucket layout:
+
+~~~~ toml
+[media_storage]
+bucket = "eunha-media"
+key_prefix = "tenants/9bd0de00b92141828d4bd2d36222f70c"
+base_url = "https://r2.eunha.space"
+~~~~
+
+The prefix is an ownership boundary for object layout, not authorization;
+bucket credentials can still access other prefixes in the same bucket.
+
 Every eunha process serves a registry of instances and hands each request to
 one of them by its `Host` header. Run without arguments, it serves the single
 instance in `config.toml` and the environment, as it always has, and answers
