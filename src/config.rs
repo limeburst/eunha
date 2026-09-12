@@ -365,6 +365,10 @@ impl LimitsConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct InstanceConfig {
     pub domain: String,
+    /// Additional HTTP hostnames that serve this instance without changing
+    /// its canonical ActivityPub identity or emitted URLs.
+    #[serde(default)]
+    pub aliases: Vec<String>,
     pub title: String,
     #[serde(default)]
     pub description: String,

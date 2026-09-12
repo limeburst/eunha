@@ -175,6 +175,27 @@ fn normalize_host(host: &str) -> String {
     host.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
+fn instance_hosts(instance: &config::InstanceConfig) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(&instance.domain)
+        .chain(instance.aliases.iter())
+        .map(|host| normalize_host(host))
+}
+
+fn aliases(configs: &[TenantConfig]) -> HashMap<String, String> {
+    configs
+        .iter()
+        .flat_map(|tenant| {
+            let canonical = normalize_host(&tenant.config.instance.domain);
+            tenant
+                .config
+                .instance
+                .aliases
+                .iter()
+                .map(move |alias| (normalize_host(alias), canonical.clone()))
+        })
+        .collect()
+}
+
 /// What the tenants of one process agreed on.
 struct ProcessSettings {
     bind_address: String,
@@ -241,9 +262,15 @@ fn process_settings(configs: &[TenantConfig]) -> Result<ProcessSettings> {
             first.source,
             tenant.source,
         );
-        let host = normalize_host(&tenant.config.instance.domain);
-        if let Some(other) = hosts.insert(host.clone(), &tenant.source) {
-            anyhow::bail!("{other} and {} both serve {host}", tenant.source);
+        for host in instance_hosts(&tenant.config.instance) {
+            anyhow::ensure!(
+                !host.is_empty(),
+                "{} contains an empty instance hostname",
+                tenant.source
+            );
+            if let Some(other) = hosts.insert(host.clone(), &tenant.source) {
+                anyhow::bail!("{other} and {} both serve {host}", tenant.source);
+            }
         }
     }
     Ok(ProcessSettings {
@@ -518,6 +545,7 @@ enum Slot {
 /// never half of each.
 struct Registry {
     by_host: HashMap<String, Slot>,
+    aliases: HashMap<String, String>,
     /// The only tenant, which answers every host, as a lone instance always has.
     only: Option<Tenant>,
 }
@@ -525,12 +553,16 @@ struct Registry {
 impl Registry {
     /// A registry of these slots, in which a lone serving tenant answers every
     /// host.
-    fn new(by_host: HashMap<String, Slot>) -> Self {
+    fn with_aliases(by_host: HashMap<String, Slot>, aliases: HashMap<String, String>) -> Self {
         let only = match (by_host.len(), by_host.values().next()) {
             (1, Some(Slot::Serving(tenant))) => Some(tenant.clone()),
             _ => None,
         };
-        Self { by_host, only }
+        Self {
+            by_host,
+            aliases,
+            only,
+        }
     }
 
     fn lookup(&self, host: &str) -> Lookup<'_> {
@@ -538,7 +570,8 @@ impl Registry {
             return Lookup::Serving(tenant);
         }
         let host = normalize_host(host);
-        let slot = self.by_host.get(&host).or_else(|| {
+        let canonical = self.aliases.get(&host).map(String::as_str).unwrap_or(&host);
+        let slot = self.by_host.get(canonical).or_else(|| {
             // `Host` carries a port when the client connected to a
             // non-default one; a tenant's domain usually does not.
             let (name, port) = host.rsplit_once(':')?;
@@ -604,6 +637,7 @@ enum Lookup<'a> {
 /// and the others serve: one tenant's pending migration should not take its
 /// neighbours down with it.
 pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
+    let alias_map = aliases(&configs);
     let settings = process_settings(&configs)?;
     admit(&configs, &settings)?;
     check_database_servers(&configs).await?;
@@ -631,7 +665,7 @@ pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
 
     Ok(Tenants {
         router: crate::build_app(),
-        registry: RwLock::new(Arc::new(Registry::new(by_host))),
+        registry: RwLock::new(Arc::new(Registry::with_aliases(by_host, alias_map))),
         settings,
         running: tokio::sync::Mutex::new(running),
     })
@@ -714,14 +748,23 @@ impl Tenants {
         };
         let shared = states.len() > 1;
         let mut by_host = HashMap::new();
+        let mut alias_map = HashMap::new();
         let mut running = HashMap::new();
         for state in states {
             let host = normalize_host(&state.instance.domain);
             anyhow::ensure!(
-                !by_host.contains_key(&host),
+                !by_host.contains_key(&host) && !alias_map.contains_key(&host),
                 "two tenants both serve {host}"
             );
             by_host.insert(host.clone(), Slot::Serving(Tenant::new(&state, shared)));
+            for alias in &state.instance.aliases {
+                let alias = normalize_host(alias);
+                anyhow::ensure!(
+                    !by_host.contains_key(&alias) && !alias_map.contains_key(&alias),
+                    "two tenants both serve {alias}"
+                );
+                alias_map.insert(alias, host.clone());
+            }
             running.insert(
                 host,
                 Running {
@@ -733,7 +776,7 @@ impl Tenants {
         }
         Ok(Self {
             router: crate::build_app(),
-            registry: RwLock::new(Arc::new(Registry::new(by_host))),
+            registry: RwLock::new(Arc::new(Registry::with_aliases(by_host, alias_map))),
             settings,
             running: tokio::sync::Mutex::new(running),
         })
@@ -764,6 +807,7 @@ impl Tenants {
     /// started with. A tenant that then fails to start does not fail the
     /// reload: its host answers 503, and the next reload tries it again.
     pub async fn reload(&self, configs: Vec<TenantConfig>) -> Result<Reloaded> {
+        let alias_map = aliases(&configs);
         let mut running = self.running.lock().await;
         let next = process_settings(&configs)?;
         check_reloadable(&self.settings, &next)?;
@@ -789,7 +833,7 @@ impl Tenants {
         for host in &plan.restart {
             by_host.insert(host.clone(), Slot::Unavailable);
         }
-        self.publish(Registry::new(by_host.clone()));
+        self.publish(Registry::with_aliases(by_host.clone(), alias_map.clone()));
         let stopping = plan
             .stop
             .iter()
@@ -845,7 +889,7 @@ impl Tenants {
                 }
             }
         }
-        self.publish(Registry::new(by_host));
+        self.publish(Registry::with_aliases(by_host, alias_map));
         Ok(reloaded)
     }
 
@@ -1007,6 +1051,7 @@ vapid_public_key = ""
                     (host.to_string(), slot)
                 })
                 .collect(),
+            aliases: HashMap::new(),
             only: None,
         }
     }
@@ -1048,6 +1093,25 @@ vapid_public_key = ""
     }
 
     #[test]
+    fn aliases_dispatch_to_the_canonical_tenant() {
+        let t = Registry::with_aliases(
+            HashMap::from([
+                (
+                    "seoul.eunha.space".to_string(),
+                    Slot::Serving(serving(None)),
+                ),
+                (
+                    "busan.eunha.space".to_string(),
+                    Slot::Serving(serving(None)),
+                ),
+            ]),
+            HashMap::from([("seoul.earth".to_string(), "seoul.eunha.space".to_string())]),
+        );
+        assert!(matches!(t.lookup("seoul.earth"), Lookup::Serving(_)));
+        assert!(matches!(t.lookup("unknown.example"), Lookup::Unknown));
+    }
+
+    #[test]
     fn a_tenant_that_did_not_start_is_unavailable_not_unknown() {
         let t = registry(vec![
             ("seoul.earth", Some(serving(None))),
@@ -1058,17 +1122,20 @@ vapid_public_key = ""
 
     #[test]
     fn a_lone_tenant_answers_every_host() {
-        let t = Registry::new(HashMap::from([(
-            "seoul.earth".to_string(),
-            Slot::Serving(serving(None)),
-        )]));
+        let t = Registry::with_aliases(
+            HashMap::from([("seoul.earth".to_string(), Slot::Serving(serving(None)))]),
+            HashMap::new(),
+        );
         assert!(matches!(t.lookup("localhost:3000"), Lookup::Serving(_)));
         assert!(matches!(t.lookup(""), Lookup::Serving(_)));
 
-        let not_lone = Registry::new(HashMap::from([
-            ("seoul.earth".to_string(), Slot::Serving(serving(None))),
-            ("example.social".to_string(), Slot::Unavailable),
-        ]));
+        let not_lone = Registry::with_aliases(
+            HashMap::from([
+                ("seoul.earth".to_string(), Slot::Serving(serving(None))),
+                ("example.social".to_string(), Slot::Unavailable),
+            ]),
+            HashMap::new(),
+        );
         assert!(matches!(not_lone.lookup("localhost:3000"), Lookup::Unknown));
     }
 

@@ -12,6 +12,17 @@ database schema to updated Mastodon database schema.
 It's not Eunha's goal to completely mimic Mastodon's feature set or its
 implementation detail, and Eunha may contain behavioral differences.
 
+An instance may answer additional HTTP hostnames without changing its canonical
+ActivityPub identity by listing `aliases` under `[instance]`. Handlers continue
+to emit URLs and account identities using `instance.domain`; aliases only affect
+the shared runtime's initial Host dispatch.
+
+~~~~ toml
+[instance]
+domain = "garden.eunha.space"
+aliases = ["garden.eunha.site"]
+~~~~
+
 
 Contributing
 ------------
