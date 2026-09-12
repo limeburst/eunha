@@ -3,6 +3,7 @@
 //! propagating profile Updates to the fediverse.
 
 use super::*;
+use crate::media::picture::{self, Fit, Picture};
 
 // ── GET /api/v1/accounts/verify_credentials ────────────────────────────────
 
@@ -52,6 +53,34 @@ pub async fn verify_credentials(
 }
 
 // ── PATCH /api/v1/accounts/update_credentials ─────────────────────────────
+
+/// `Account::Avatar::AVATAR_GEOMETRY`: `400x400#`.
+const AVATAR_FIT: Fit = Fit::Cover(400, 400);
+/// `Account::Header::HEADER_MAX_PIXELS`: 1500×500.
+const HEADER_FIT: Fit = Fit::Pixels(750_000);
+
+/// An avatar or header as it is stored, with the content type of what is
+/// stored: upright, fitted and without its metadata, as Mastodon's
+/// `lazy_thumbnail` leaves it. See [`crate::media::picture`].
+async fn process_profile_image(
+    data: Vec<u8>,
+    content_type: String,
+    fit: Fit,
+) -> AppResult<(Vec<u8>, String)> {
+    let processed = crate::tenants::spawn_blocking(move || match Picture::decode(&data) {
+        Some(picture) => match picture.original(&data, fit) {
+            Some(stored) => {
+                let content_type = stored.content_type().to_owned();
+                (stored.bytes, content_type)
+            }
+            None => (data, content_type),
+        },
+        None => (picture::strip_metadata(&data), content_type),
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("image processing did not finish: {e}"))?;
+    Ok(processed)
+}
 
 async fn do_update_credentials(
     state: &AppState,
@@ -207,6 +236,7 @@ async fn do_update_credentials(
                     .await
                     .map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
+                    let (data, ct) = process_profile_image(data.to_vec(), ct, AVATAR_FIT).await?;
                     let key = crate::media::account_avatar_key(auth.account_id, &ct);
                     state.storage.store(&data, &key, &ct).await?;
                     avatar_url = key.rsplit('/').next().map(str::to_string);
@@ -223,6 +253,7 @@ async fn do_update_credentials(
                     .await
                     .map_err(|e| AppError::Unprocessable(e.to_string()))?;
                 if !data.is_empty() {
+                    let (data, ct) = process_profile_image(data.to_vec(), ct, HEADER_FIT).await?;
                     let key = crate::media::account_header_key(auth.account_id, &ct);
                     state.storage.store(&data, &key, &ct).await?;
                     header_url = key.rsplit('/').next().map(str::to_string);

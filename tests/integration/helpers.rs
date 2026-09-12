@@ -549,6 +549,7 @@ impl TestContext {
             },
             instance: eunha::config::InstanceConfig {
                 domain: domain.clone(),
+                aliases: Vec::new(),
                 title: "c2s test".into(),
                 description: String::new(),
                 short_description: String::new(),
@@ -694,6 +695,28 @@ pub fn tiny_png() -> Vec<u8> {
         0xbc, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, // IEND chunk
         0x44, 0xae, 0x42, 0x60, 0x82,
     ]
+}
+
+/// A 64×32 JPEG stored the way a camera held upright stores it: sideways, red
+/// on the left and blue on the right, with EXIF orientation 6 saying to turn it
+/// clockwise into a 32×64 portrait.
+pub fn sideways_jpeg() -> Vec<u8> {
+    use image::{codecs::jpeg::JpegEncoder, ImageEncoder, Rgb, RgbImage};
+
+    let mut exif = b"MM\0\x2a\0\0\0\x08".to_vec();
+    exif.extend_from_slice(&[0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]);
+    let image = RgbImage::from_fn(64, 32, |x, _| {
+        if x < 32 {
+            Rgb([255, 0, 0])
+        } else {
+            Rgb([0, 0, 255])
+        }
+    });
+    let mut bytes = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 95);
+    encoder.set_exif_metadata(exif).unwrap();
+    encoder.encode_image(&image).unwrap();
+    bytes
 }
 
 /// Grant a user admin privileges by assigning a role with position >= 100

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT avatar_content_type, avatar_file_name, header_content_type, header_file_name FROM accounts WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "avatar_content_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "avatar_file_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "header_content_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "header_file_name",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "8161f606fdbb6f87092d6c0a1be1118b598bac87f5a2faaf2c765ca7d851a5fc"
+}

@@ -5,6 +5,7 @@ use crate::{
     error::{AppError, AppResult},
 };
 
+pub mod picture;
 pub mod transcode;
 
 pub struct Storage {

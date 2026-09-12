@@ -1518,6 +1518,48 @@ async fn test_update_credentials_display_name() {
     assert_eq!(body["display_name"].as_str(), Some("Alice Updated"));
 }
 
+/// An avatar and a header are re-encoded rather than stored as sent — which
+/// is what turns them upright and takes their EXIF — so what is recorded is
+/// the type of what was stored, not what the client said it sent.
+#[tokio::test]
+async fn test_update_credentials_reencodes_avatar_and_header() {
+    let ctx = TestContext::new("update-creds-images").await;
+
+    let part = |name: &str| {
+        reqwest::multipart::Part::bytes(crate::helpers::sideways_jpeg())
+            .file_name(format!("{name}.png"))
+            .mime_str("image/png")
+            .unwrap()
+    };
+    let form = reqwest::multipart::Form::new()
+        .part("avatar", part("avatar"))
+        .part("header", part("header"));
+    let resp = ctx
+        .api
+        .http
+        .patch(ctx.api.url("/api/v1/accounts/update_credentials"))
+        .header("host", &ctx.api.host)
+        .bearer_auth(&ctx.alice_token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let alice_id: i64 = ctx.alice_id.parse().unwrap();
+    let row = sqlx::query!(
+        "SELECT avatar_content_type, avatar_file_name, header_content_type, header_file_name FROM accounts WHERE id = $1",
+        alice_id,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    assert_eq!(row.avatar_content_type.as_deref(), Some("image/jpeg"));
+    assert_eq!(row.header_content_type.as_deref(), Some("image/jpeg"));
+    assert!(!row.avatar_file_name.unwrap().ends_with(".png"));
+    assert!(!row.header_file_name.unwrap().ends_with(".png"));
+}
+
 /// update_credentials strips surrounding whitespace from display_name and note,
 /// mirroring Mastodon's `Account#prepare_contents` — a trailing newline from a
 /// client must not survive into the stored profile. The strip happens before the

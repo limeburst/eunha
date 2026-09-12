@@ -1,4 +1,5 @@
 use super::{convert::media_from_db, types::MediaAttachment};
+use crate::media::picture::{self, Fit, Picture};
 use crate::{
     error::{AppError, AppResult},
     middleware::AuthenticatedUser,
@@ -8,11 +9,12 @@ use axum::{
     extract::{Extension, Multipart, Path},
     Json,
 };
-use image::imageops::FilterType;
-use img_parts::ImageEXIF;
+use image::ImageFormat;
 
-// Mastodon's small thumbnail pixel limit (≈640×360 at 16:9)
-const SMALL_PIXELS: u32 = 230_400;
+/// `MediaAttachment::IMAGE_STYLES[:original]`: 3840×2160.
+const ORIGINAL_PIXELS: u64 = 8_294_400;
+/// `MediaAttachment::IMAGE_STYLES[:small]`: 640×360.
+const SMALL_PIXELS: u64 = 230_400;
 
 // ── POST /api/v1/media, POST /api/v2/media ────────────────────────────────
 
@@ -114,44 +116,50 @@ pub async fn upload_media(
             .into_response());
     }
 
-    // Images: process synchronously and return 200.
-    let file_ext = crate::media::ext_for_content_type(&content_type);
-    let file_filename = format!("original.{}", file_ext);
+    // Images: process synchronously and return 200. Decoding, turning
+    // upright, re-encoding and blurhashing are CPU work that would hold a Tokio
+    // worker for as long as they take, stalling every request scheduled on it —
+    // every tenant's, when a process serves several.
+    let processed = crate::tenants::spawn_blocking(move || process_image(data))
+        .await
+        .map_err(|e| anyhow::anyhow!("image processing did not finish: {e}"))?;
+    let content_type = processed
+        .content_type
+        .map(str::to_owned)
+        .unwrap_or(content_type);
+    let file_filename = format!(
+        "original.{}",
+        crate::media::ext_for_content_type(&content_type)
+    );
     let file_key = format!(
         "media_attachments/files/{}/original/{}",
         crate::media::int_to_path(media_id),
         file_filename
     );
-
-    let data = strip_exif(&data, &content_type);
+    let data = processed.original;
     state.storage.store(&data, &file_key, &content_type).await?;
 
-    // Decoding, blurhashing and resizing are CPU work that would hold a Tokio
-    // worker for as long as they take, stalling every request scheduled on it —
-    // every tenant's, when a process serves several.
-    let (data, processed) = crate::tenants::spawn_blocking(move || {
-        let processed = process_image(&data);
-        (data, processed)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("image processing did not finish: {e}"))?;
-    let (file_meta, blurhash, thumbnail_file_name) = match processed {
-        Some((orig_dim, small_bytes, small_dim, bh)) => {
-            let small_filename = format!("small.{}", file_ext);
-            let small_key = format!(
-                "media_attachments/files/{}/small/{}",
-                crate::media::int_to_path(media_id),
-                small_filename
-            );
-            state
-                .storage
-                .store(&small_bytes, &small_key, &content_type)
-                .await?;
-            let meta = serde_json::json!({ "original": orig_dim, "small": small_dim });
-            (Some(meta), Some(bh), Some(small_filename))
-        }
-        None => (None, None, None),
-    };
+    let (file_meta, blurhash, thumbnail_file_name) =
+        match (processed.original_meta, processed.small) {
+            (Some(original_meta), Some(small)) => {
+                let small_filename = format!(
+                    "small.{}",
+                    crate::media::ext_for_content_type(small.content_type)
+                );
+                let small_key = format!(
+                    "media_attachments/files/{}/small/{}",
+                    crate::media::int_to_path(media_id),
+                    small_filename
+                );
+                state
+                    .storage
+                    .store(&small.bytes, &small_key, small.content_type)
+                    .await?;
+                let meta = serde_json::json!({ "original": original_meta, "small": small.meta });
+                (Some(meta), Some(small.blurhash), Some(small_filename))
+            }
+            _ => (None, None, None),
+        };
 
     let file_size = data.len() as i32;
     let attachment = sqlx::query_as!(
@@ -209,10 +217,12 @@ async fn process_media(
 
     if media_type == "video" || media_type == "gifv" {
         if let Ok(frame) = crate::media::transcode::extract_frame(data).await {
-            let processed = crate::tenants::spawn_blocking(move || process_image(&frame))
-                .await
-                .map_err(|e| anyhow::anyhow!("frame processing did not finish: {e}"))?;
-            if let Some((_orig, small_bytes, small_dim, bh)) = processed {
+            let small = crate::tenants::spawn_blocking(move || {
+                Picture::decode(&frame).and_then(|picture| thumbnail(&picture, ImageFormat::Jpeg))
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("frame processing did not finish: {e}"))?;
+            if let Some(small) = small {
                 let small_filename = "small.jpg".to_string();
                 let small_key = format!(
                     "media_attachments/files/{}/small/{}",
@@ -221,13 +231,13 @@ async fn process_media(
                 );
                 state
                     .storage
-                    .store(&small_bytes, &small_key, "image/jpeg")
+                    .store(&small.bytes, &small_key, small.content_type)
                     .await
                     .map_err(|e| anyhow::anyhow!("store thumbnail: {e}"))?;
-                file_meta["small"] = small_dim;
+                file_meta["small"] = small.meta;
                 thumbnail_filename = Some(small_filename);
-                thumbnail_ct = Some("image/jpeg".to_string());
-                blurhash = Some(bh);
+                thumbnail_ct = Some(small.content_type.to_string());
+                blurhash = Some(small.blurhash);
             }
         }
     }
@@ -254,41 +264,66 @@ async fn process_media(
     Ok(())
 }
 
-/// Decode image, compute original + small dimensions and blurhash.
-/// Returns (orig_dim, small_jpeg_bytes, small_dim, blurhash).
+/// An image upload as it is stored.
+struct ProcessedImage {
+    original: Vec<u8>,
+    /// What `original` was re-encoded as; `None` when it is the upload's own
+    /// bytes, less what metadata could be removed from them.
+    content_type: Option<&'static str>,
+    original_meta: Option<serde_json::Value>,
+    small: Option<Thumbnail>,
+}
+
+struct Thumbnail {
+    bytes: Vec<u8>,
+    content_type: &'static str,
+    meta: serde_json::Value,
+    blurhash: String,
+}
+
+/// Turn an image upload upright, cap it at Mastodon's original size, and make
+/// its small thumbnail and blurhash, the way `MediaAttachment`'s image styles
+/// do. See [`crate::media::picture`] for why the original is re-encoded.
 ///
 /// CPU-bound: call it from the blocking pool, never on a Tokio worker.
-fn process_image(data: &[u8]) -> Option<(serde_json::Value, Vec<u8>, serde_json::Value, String)> {
-    let img = image::load_from_memory(data).ok()?;
-    let (ow, oh) = (img.width(), img.height());
-    let orig_dim = image_dim_json(ow, oh);
-
-    // Compute blurhash from original (4×4 components, matching Mastodon)
-    let rgba = img.to_rgba8();
-    let bh = blurhash::encode(4, 4, ow, oh, rgba.as_raw()).ok()?;
-
-    // Resize to small: scale down only if total pixels exceed SMALL_PIXELS
-    let small_img = if ow * oh > SMALL_PIXELS {
-        let scale = (SMALL_PIXELS as f64 / (ow * oh) as f64).sqrt();
-        let sw = ((ow as f64 * scale).round() as u32).max(1);
-        let sh = ((oh as f64 * scale).round() as u32).max(1);
-        img.resize(sw, sh, FilterType::Lanczos3)
-    } else {
-        img
+fn process_image(data: Vec<u8>) -> ProcessedImage {
+    let Some(picture) = Picture::decode(&data) else {
+        return ProcessedImage {
+            original: picture::strip_metadata(&data),
+            content_type: None,
+            original_meta: None,
+            small: None,
+        };
     };
-    let (sw, sh) = (small_img.width(), small_img.height());
-    let small_dim = image_dim_json(sw, sh);
+    let small = thumbnail(&picture, picture.thumbnail_format());
+    match picture.original(&data, Fit::Pixels(ORIGINAL_PIXELS)) {
+        Some(original) => ProcessedImage {
+            original_meta: Some(image_dim_json(original.width(), original.height())),
+            content_type: Some(original.content_type()),
+            original: original.bytes,
+            small,
+        },
+        None => ProcessedImage {
+            original_meta: Some(image_dim_json(picture.width(), picture.height())),
+            content_type: None,
+            original: data,
+            small,
+        },
+    }
+}
 
-    // Encode small as JPEG
-    let mut small_bytes = Vec::new();
-    small_img
-        .write_to(
-            &mut std::io::Cursor::new(&mut small_bytes),
-            image::ImageFormat::Jpeg,
-        )
-        .ok()?;
-
-    Some((orig_dim, small_bytes, small_dim, bh))
+/// The 230,400-pixel `small` style, blurhashed from itself as Mastodon's
+/// `BlurhashTranscoder` does.
+fn thumbnail(picture: &Picture, format: ImageFormat) -> Option<Thumbnail> {
+    let small = picture.rendition(Fit::Pixels(SMALL_PIXELS), format)?;
+    let (width, height) = (small.width(), small.height());
+    let blurhash = blurhash::encode(4, 4, width, height, small.image.to_rgba8().as_raw()).ok()?;
+    Some(Thumbnail {
+        content_type: small.content_type(),
+        meta: image_dim_json(width, height),
+        bytes: small.bytes,
+        blurhash,
+    })
 }
 
 fn image_dim_json(w: u32, h: u32) -> serde_json::Value {
@@ -298,39 +333,6 @@ fn image_dim_json(w: u32, h: u32) -> serde_json::Value {
         "size": format!("{}x{}", w, h),
         "aspect": w as f64 / h as f64,
     })
-}
-
-/// Strip EXIF (including GPS) from JPEG, PNG, and WebP without re-encoding.
-/// Falls back to returning the original bytes unchanged for unsupported formats.
-fn strip_exif(data: &[u8], content_type: &str) -> Vec<u8> {
-    let bytes: bytes::Bytes = data.to_vec().into();
-    match content_type {
-        ct if ct.contains("jpeg") || ct.contains("jpg") => {
-            if let Ok(mut jpeg) = img_parts::jpeg::Jpeg::from_bytes(bytes) {
-                jpeg.set_exif(None);
-                jpeg.encoder().bytes().to_vec()
-            } else {
-                data.to_vec()
-            }
-        }
-        ct if ct.contains("png") => {
-            if let Ok(mut png) = img_parts::png::Png::from_bytes(bytes) {
-                png.set_exif(None);
-                png.encoder().bytes().to_vec()
-            } else {
-                data.to_vec()
-            }
-        }
-        ct if ct.contains("webp") => {
-            if let Ok(mut webp) = img_parts::webp::WebP::from_bytes(bytes) {
-                webp.set_exif(None);
-                webp.encoder().bytes().to_vec()
-            } else {
-                data.to_vec()
-            }
-        }
-        _ => data.to_vec(),
-    }
 }
 
 // ── Media processing queue (eunha.media_processing_jobs) ───────────────────

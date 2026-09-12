@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 use serde_json::Value;
 
-use crate::helpers::{tiny_png, TestContext};
+use crate::helpers::{sideways_jpeg, tiny_png, TestContext};
 
 /// POST /api/v1/media uploads an image and returns a media attachment.
 #[tokio::test]
@@ -24,6 +24,33 @@ async fn test_media_upload_image() {
     assert!(media["id"].as_str().is_some(), "id missing");
     assert_eq!(media["type"].as_str(), Some("image"));
     assert!(media["url"].as_str().is_some(), "url missing");
+}
+
+/// A photo is stored upright, as Mastodon's libvips thumbnailing leaves it:
+/// its EXIF orientation is applied to the pixels, so the dimensions a client
+/// lays the attachment out by are the portrait ones.
+#[tokio::test]
+async fn test_media_upload_applies_exif_orientation() {
+    let ctx = TestContext::new("media-orientation").await;
+
+    let resp = ctx
+        .api
+        .post_multipart_file(
+            "/api/v1/media",
+            &ctx.alice_token,
+            "portrait.jpg",
+            "image/jpeg",
+            sideways_jpeg(),
+            &[],
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let media: Value = resp.json().await.unwrap();
+    assert_eq!(media["meta"]["original"]["width"], 32);
+    assert_eq!(media["meta"]["original"]["height"], 64);
+    assert_eq!(media["meta"]["small"]["width"], 32);
+    assert_eq!(media["meta"]["small"]["height"], 64);
+    assert!(media["blurhash"].as_str().is_some(), "blurhash missing");
 }
 
 /// POST /api/v2/media also works and returns the same shape.
