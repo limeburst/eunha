@@ -369,8 +369,33 @@ the tenant itself, its pool, Redis connection and configuration, is about
 0.3 MiB. A burst of load leaves 35 KiB of new live data behind.
 
 Of those, the router is now built once for the whole process rather than once
-per instance, so instances sharing a process share it. The certificates and the
-S3 client are still each instance's own.
+per instance, and what that saves was measured the same way as everything else
+here: one process serving the same tenants, under the binary before the change
+and the binary after it. Its harness and results are in
+`benchmark-results/router-20260912/`.
+
+| One process, idle           | 10 tenants | 50 tenants | Per tenant |
+| --------------------------- | ---------: | ---------: | ---------: |
+| A router for every instance |   37.0 MiB |  144.0 MiB |   2.68 MiB |
+| One router for the process  |   14.0 MiB |   27.0 MiB |   0.33 MiB |
+
+The per-tenant column is the slope between the two sizes, not footprint divided
+by tenants, which would bury it under the ~10.5 MiB a process pays once however
+many tenants it serves — both builds pay that, and both run 12 threads. So a
+tenant's own router cost about 2.35 MiB of footprint, rather more than the
+1.4 MiB of live allocations above: footprint counts the pages those allocations
+sit on, not the bytes. At 50 tenants that is 117 MiB the process no longer
+needs, and it is what stops the routes from being the thing that limits how
+many tenants a process can hold.
+
+Read the absolute numbers only against each other. These tenants have no data
+and serve no requests, with pools of two connections, measured 30 seconds after
+every tenant answered — so they cost less per tenant than the 3 MiB the
+prototype measured under load with seeded databases. Both builds served the
+same tenants alternately, twice over at each size, and repeated to the tenth of
+a MiB.
+
+The certificates and the S3 client are still each instance's own.
 
 Everything else is fragmentation: freed space scattered across pages that each
 still hold something live, which the allocator cannot hand back. It is
