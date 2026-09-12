@@ -63,16 +63,23 @@ reviewed_for = "4.7.1"
 [[divergence]]
 id = "update-check-asks-about-mastodon"
 kind = "behaviour"
-summary = "Update notices are about the Mastodon release implemented, not about eunha"
-mastodon = "Asks the update server about its own version and reports on itself."
+summary = "Update notices are asked for only when configured, and are about the Mastodon release implemented"
+mastodon = "Polls its update server by default, about its own version, reporting on itself."
 eunha = """
-Asks the same server about the Mastodon release it implements, and says so in \
+Asks nothing unless `software_update_url` names a server. When one is named, \
+asks that server about the Mastodon release eunha implements, and says so in \
 the notices it sends."""
 why = """
 Eunha's version number means nothing to that server, and eunha is not Mastodon. \
 What the question can honestly mean is 'is the schema and API eunha reproduces \
 still supported?', which is worth an administrator's attention and is what gets \
-asked."""
+asked when it is asked at all.
+
+It is not asked by default because nothing in eunha reads the answer back. The \
+notices are recorded for a Mastodon that may later boot on the database, and \
+mailed to the instance's own administrators — who, on a hosted instance, cannot \
+act on them, since only whoever runs the binary can take a release up. An \
+operator who wants the end-of-support warning names the server and gets it."""
 evidence = "tests/integration/surfaces/software_updates.rs"
 since = "4.7.0"
 reviewed_for = "4.7.1"

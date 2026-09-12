@@ -346,9 +346,25 @@ Mastodon release *it implements*: eunha builds 4.7.1's schema and serves its
 API, so when that branch stops receiving fixes, what eunha reproduces is what
 is going out of support.
 
-The request carries the Mastodon version being asked about and eunha's own
-`User-Agent`; it does not claim to be Mastodon. Set `software_update_url` to an
-empty string to turn the check off, or to another server to ask it instead.
+Eunha asks nobody anything unless `software_update_url` names a server, which
+nothing does by default. Nothing in eunha reads the notices back: they are
+recorded for a Mastodon that may later boot on the database, and mailed to the
+instance's own administrators — who on a hosted instance cannot act on them,
+because only whoever runs the binary can take a release up. Operators who want
+the end-of-support warning name the server:
+
+~~~~ toml
+software_update_url = "https://api.joinmastodon.org/update-check"
+~~~~
+
+The request then carries the Mastodon version being asked about and eunha's own
+`User-Agent`; it does not claim to be Mastodon. A process asks once however
+many instances it serves — the question is about the release the binary
+implements, so it is the same for all of them — and records the answer in each
+of their databases. Instances naming different servers are asked separately,
+and the set is read afresh each time, so a reload's arrivals and departures are
+picked up. Whoever tracks releases for a fleet is better served by
+`mise run mastodon:status`.
 
 ### API entity parity
 

@@ -13,9 +13,17 @@
 //! `User-Agent`, and the notices are recorded as being about that release. An
 //! instance that would rather not talk to a third party at all can set
 //! `software_update_url` to an empty string, which turns the check off.
+//!
+//! A process asks once however many instances it serves. The question is about
+//! the release this binary implements, so it is the same question for all of
+//! them, and a process of fifty instances asking it fifty times was fifty
+//! requests for one answer. What stays each instance's own is the recording:
+//! its `software_updates` and `software_deprecations` rows, and the mail to
+//! whoever it is that should hear.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::state::AppState;
 
@@ -68,36 +76,54 @@ struct CurrentVersion {
     end_of_support: Option<String>,
 }
 
-/// Poll for update notices for as long as the instance runs.
-pub async fn run_update_check(state: AppState) {
-    let Some(url) = state
-        .config
-        .software_update_url
-        .clone()
-        .filter(|u| !u.is_empty())
-    else {
-        tracing::debug!("software update checks are disabled");
-        return;
-    };
-
+/// Poll for update notices for as long as the process runs, once for all the
+/// instances it serves.
+///
+/// The instances are read afresh every time, so ones that came or went with a
+/// reload are asked about, or are no longer.
+pub async fn run_for_process(tenants: Arc<crate::tenants::Tenants>) {
     let mut interval = tokio::time::interval(CHECK_INTERVAL);
     loop {
-        tokio::select! {
-            () = state.stop.cancelled() => return,
-            _ = interval.tick() => {}
-        }
-        if let Err(e) = check_once(&state, &url).await {
-            // A check that cannot run is not worth waking anyone for: the
-            // instance keeps serving, and the next tick tries again.
-            tracing::warn!(error = %e, "software update check failed");
+        interval.tick().await;
+        for (url, states) in by_url(tenants.states().await) {
+            if let Err(e) = check_once_for(&states, &url).await {
+                // A check that cannot run is not worth waking anyone for: the
+                // instances keep serving, and the next tick tries again.
+                tracing::warn!(error = %e, "software update check failed");
+            }
         }
     }
 }
 
-/// Ask once, and record what comes back.
-pub async fn check_once(state: &AppState, url: &str) -> Result<()> {
+/// The instances grouped by the update server each was told to ask, leaving out
+/// those whose check is turned off. Instances in one process usually name the
+/// same server, and then this is one group.
+fn by_url(states: Vec<AppState>) -> Vec<(String, Vec<AppState>)> {
+    let mut groups: Vec<(String, Vec<AppState>)> = Vec::new();
+    for state in states {
+        let Some(url) = state
+            .config
+            .software_update_url
+            .clone()
+            .filter(|url| !url.is_empty())
+        else {
+            continue;
+        };
+        match groups.iter_mut().find(|(asked, _)| *asked == url) {
+            Some((_, group)) => group.push(state),
+            None => groups.push((url, vec![state])),
+        }
+    }
+    groups
+}
+
+/// Ask once, and record the answer in each of these instances' databases.
+pub async fn check_once_for(states: &[AppState], url: &str) -> Result<()> {
+    let Some(asking) = states.first() else {
+        return Ok(());
+    };
     let target = crate::version::MASTODON;
-    let response = state
+    let response = asking
         .fetch
         .get(format!("{url}?version={target}"))
         .header("Accept", "application/json")
@@ -109,15 +135,43 @@ pub async fn check_once(state: &AppState, url: &str) -> Result<()> {
 
     let check: UpdateCheck = response.json().await.context("parsing update notices")?;
 
+    // One instance's database being unwritable should not keep the others from
+    // hearing, so each is tried and the first failure is what comes back.
+    let mut failed = None;
+    for state in states {
+        if let Err(e) = record(state, &check).await {
+            tracing::warn!(
+                tenant = %state.instance.domain,
+                error = %format!("{e:#}"),
+                "could not record update notices"
+            );
+            failed = failed.or(Some(e));
+        }
+    }
+    match failed {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Ask once for a single instance.
+pub async fn check_once(state: &AppState, url: &str) -> Result<()> {
+    check_once_for(std::slice::from_ref(state), url).await
+}
+
+/// Record what the server answered where this instance's admins read it, and
+/// mail whoever should hear about it.
+async fn record(state: &AppState, check: &UpdateCheck) -> Result<()> {
     let new_updates = record_updates(state, &check.updates_available).await?;
     if !new_updates.is_empty() {
         notify_of_updates(state, &new_updates).await;
     }
     if let Some(end_of_support) = check
         .current_version
-        .and_then(|current| current.end_of_support)
+        .as_ref()
+        .and_then(|current| current.end_of_support.as_deref())
     {
-        record_deprecation(state, &end_of_support).await?;
+        record_deprecation(state, end_of_support).await?;
     }
     Ok(())
 }

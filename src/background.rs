@@ -45,11 +45,6 @@ pub fn spawn(state: AppState) -> Vec<JoinHandle<()>> {
             "media queue",
             crate::api::mastodon::media::run_media_queue(state.clone()),
         ),
-        until_stopped(
-            &state,
-            "update check",
-            crate::software_updates::run_update_check(state.clone()),
-        ),
     ];
 
     // Queue loops are sized from `[workers]` in config. Each loop claims work

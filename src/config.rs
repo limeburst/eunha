@@ -33,9 +33,15 @@ pub struct Config {
     #[serde(default)]
     pub active_record_encryption: Option<ActiveRecordEncryptionConfig>,
     /// Where to ask about newer Mastodon releases and the end of support of the
-    /// one eunha implements. Empty or absent turns the check off. Defaults to
-    /// the server Mastodon itself asks.
-    #[serde(default = "default_software_update_url")]
+    /// one eunha implements. Unset — the default — asks nobody anything.
+    ///
+    /// Nothing in eunha reads the answer back: it is recorded for a Mastodon
+    /// that may later boot on the database, and mailed to this instance's own
+    /// administrators. A hosted instance's administrators cannot act on it,
+    /// since only whoever runs the binary can take a release up, so the
+    /// request is made when an operator asks for it rather than by default.
+    /// Mastodon's own server is `https://api.joinmastodon.org/update-check`.
+    #[serde(default)]
     pub software_update_url: Option<String>,
 
     /// Private networks this instance may nonetheless reach, as CIDR blocks.
@@ -197,10 +203,6 @@ pub struct WorkersConfig {
 /// Public so a test can assert the default rather than restate it.
 pub fn default_sign_integrity_proofs() -> bool {
     false
-}
-
-fn default_software_update_url() -> Option<String> {
-    Some("https://api.joinmastodon.org/update-check".to_string())
 }
 
 fn default_redis_process_metrics() -> bool {

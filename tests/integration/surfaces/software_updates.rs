@@ -264,3 +264,55 @@ async fn test_a_later_date_does_not_lower_the_warning() {
         "but a warning given is not withdrawn"
     );
 }
+
+/// A process asks the update server once however many instances it serves —
+/// the question is the same for all of them — and records the answer in each of
+/// their databases, which is where their own administrators read it.
+#[tokio::test]
+async fn test_one_request_serves_every_instance() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
+    let app = Router::new().fallback(any(move || {
+        let asked = counted.clone();
+        async move {
+            asked.fetch_add(1, Ordering::SeqCst);
+            (
+                [("content-type", "application/json")],
+                r#"{"updatesAvailable":[
+                     {"version":"4.8.0","releaseNotes":"https://example/4.8.0","urgent":false,"type":"minor"}
+                   ],"currentVersion":{"endOfSupport":null}}"#
+                    .to_string(),
+            )
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let url = format!("http://{addr}/update-check");
+
+    let a = TestContext::new("sw-shared-a").await;
+    let b = TestContext::new("sw-shared-b").await;
+    eunha::software_updates::check_once_for(&[a.state.clone(), b.state.clone()], &url)
+        .await
+        .expect("the check should succeed");
+
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        1,
+        "both instances were served by one request"
+    );
+    for ctx in [&a, &b] {
+        let rows = sqlx::query!(
+            "SELECT version, urgent, type, release_notes FROM software_updates ORDER BY version",
+        )
+        .fetch_all(&ctx.db)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1, "{} recorded the answer", ctx.domain);
+        assert_eq!(rows[0].version, "4.8.0");
+    }
+}

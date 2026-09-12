@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use eunha::{config, migrate, tenants};
+use eunha::{config, migrate, software_updates, tenants};
 use std::{path::PathBuf, sync::Arc};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -62,6 +62,8 @@ async fn main() -> anyhow::Result<()> {
     if let Some(dir) = args.tenants {
         reload_on_hangup(tenants.clone(), dir)?;
     }
+    // One check for the process, however many instances it serves.
+    tenants::spawn(software_updates::run_for_process(tenants.clone()));
     let app = tenants.router();
 
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
