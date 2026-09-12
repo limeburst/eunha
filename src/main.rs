@@ -13,6 +13,11 @@ struct Args {
     #[arg(long, value_name = "DIR", global = true)]
     tenants: Option<PathBuf>,
 
+    /// Override the process listener without changing tenant configuration.
+    /// Intended for blue/green slots behind a stable local router.
+    #[arg(long, value_name = "ADDRESS", global = true)]
+    bind_address: Option<String>,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -57,7 +62,9 @@ async fn main() -> anyhow::Result<()> {
         }],
     };
     let tenants = Arc::new(tenants::start(configs).await?);
-    let bind_address = tenants.bind_address().to_string();
+    let bind_address = args
+        .bind_address
+        .unwrap_or_else(|| tenants.bind_address().to_string());
     let serving = tenants.states().await.len();
     if let Some(dir) = args.tenants {
         reload_on_hangup(tenants.clone(), dir)?;
