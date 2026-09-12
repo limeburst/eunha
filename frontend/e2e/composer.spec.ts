@@ -183,6 +183,23 @@ test('the corner button opens a post directly', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Publish' })).toBeVisible()
 })
 
+test('the composer is inset from the bottom of a phone screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await signedIn(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'New post', exact: true }).click()
+  await page.waitForFunction(() => {
+    const panel = document.querySelector('h2')?.closest('.fixed')
+    return !!panel && getComputedStyle(panel).transform === 'none'
+  })
+
+  const bottomGap = await page.getByRole('heading', { name: 'New post' }).evaluate((h) => {
+    const panel = h.closest('.fixed')!
+    return window.innerHeight - panel.getBoundingClientRect().bottom
+  })
+  expect(bottomGap).toBe(12)
+})
+
 // The placeholder changes with the mode, because a message needs to say the
 // thing a Mastodon DM cannot show: there is no To: field, so the recipients
 // are typed into the text like any other mention.

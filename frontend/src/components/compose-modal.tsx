@@ -115,7 +115,7 @@ export function ComposeModalProvider({ children }: { children: ReactNode }) {
                   // attachments, or a long draft need more room.
                   minimized
                     ? 'right-3 bottom-3 w-[min(20rem,calc(100vw-1.5rem))] rounded-xl sm:right-6 sm:bottom-6'
-                    : 'inset-x-0 bottom-0 max-h-[100dvh] rounded-t-xl sm:right-6 sm:left-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(31.25rem,calc(100vw-3rem))] sm:rounded-xl',
+                    : 'right-3 bottom-3 left-3 max-h-[calc(100dvh-1.5rem)] rounded-xl sm:right-6 sm:bottom-6 sm:left-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(31.25rem,calc(100vw-3rem))]',
                   // Motion eunha adds: upstream swaps the panel in with none.
                   closing
                     ? 'motion-safe:animate-out motion-safe:fade-out motion-safe:zoom-out-95 motion-safe:slide-out-to-bottom-2 motion-safe:duration-150'
