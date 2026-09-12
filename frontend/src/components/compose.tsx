@@ -308,13 +308,7 @@ export function Compose({
           </p>
         )}
 
-        {/* The one child that grows. The panel reserves 520px on a wide
-            screen and the whole screen on a phone, and all of that used to
-            pile up below the Post button — 205px of nothing on a desktop and
-            497px on a phone — while the writing itself happened in a 160px
-            box. `min-h-40` stays as the floor for when there is no slack to
-            take. */}
-        <div className="relative flex flex-1 flex-col">
+        <div className="relative flex flex-col">
           <Textarea
             ref={textareaRef}
             // Borderless, like 5.0's: the panel is the frame, so the field
@@ -324,19 +318,7 @@ export function Compose({
             // there is a cursor to see. `dark:bg-transparent` is needed too:
             // the shadcn base tints textareas in dark mode.
             className={cn(
-              // Two things are needed to make the field *be* the space.
-              //
-              // `flex-1`, not `h-full`: the wrapper's height comes from the
-              // flex algorithm, and a percentage against that resolves to
-              // `auto` — which left the field at its 160px floor inside a box
-              // that had grown to fill the panel, moving the gap from under
-              // the buttons to above them rather than closing it.
-              //
-              // `field-sizing-fixed` to undo the shadcn base's
-              // `field-sizing-content`, which sizes a textarea to its text and
-              // wins over the height flex hands it. Without it the field is
-              // back to 160px, which the composer's geometry test checks.
-              'min-h-40 flex-1 field-sizing-fixed resize-none border-0 bg-transparent px-1 shadow-none dark:bg-transparent',
+              'min-h-24 max-h-[50vh] field-sizing-content resize-none overflow-y-auto border-0 bg-transparent px-1 shadow-none dark:bg-transparent',
               'focus-visible:border-0 focus-visible:ring-0',
               // `focus`, not `focus-visible`: upstream draws this on click as
               // well as on tab, and for a writing surface knowing it is live
@@ -487,9 +469,7 @@ export function Compose({
     </CardContent>
   )
 
-  // In the modal the composer is handed a column to fill, and it passes that
-  // down to the textarea. Unframed is the only way it is used today.
-  if (!framed) return <div className="flex flex-1 flex-col py-4">{content}</div>
+  if (!framed) return <div className="flex flex-col py-4">{content}</div>
 
   return (
     <Card>

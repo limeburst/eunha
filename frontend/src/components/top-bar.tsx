@@ -478,26 +478,15 @@ function MobileHeader({
 function ComposeButton({ token }: { token: string | null }) {
   const { openCompose } = useComposeModal()
   if (!token) return null
-  // The corner button offers both, where the rail's "New post" is the quick
-  // path to one of them. Upstream's own demo opens this menu rather than the
-  // composer, and it is the third way into a message the announcement lists.
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        aria-label="Compose"
-        className="bg-primary text-primary-foreground hover:bg-primary/90 fixed right-4 bottom-4 z-40 flex size-13 items-center justify-center rounded-full shadow-lg sm:right-6 sm:bottom-6"
-      >
-        <PenLine className="size-5" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" side="top" sideOffset={10}>
-        <DropdownMenuItem onClick={() => openCompose()}>
-          <PenLine /> Post
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => openCompose({ messageTo: null })}>
-          <MessageCircle /> Message
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <button
+      type="button"
+      aria-label="Compose"
+      className="bg-primary text-primary-foreground hover:bg-primary/90 fixed right-4 bottom-4 z-40 flex size-13 items-center justify-center rounded-full shadow-lg sm:right-6 sm:bottom-6"
+      onClick={() => openCompose()}
+    >
+      <PenLine className="size-5" />
+    </button>
   )
 }
 

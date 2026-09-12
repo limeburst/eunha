@@ -174,15 +174,13 @@ test('a minimised composer keeps its draft', async ({ page }) => {
   await expect(page.getByRole('textbox')).toHaveValue('a draft worth keeping')
 })
 
-// The corner button offers both, where the rail row is the quick path to one.
-test('the corner button offers a post or a message', async ({ page }) => {
+test('the corner button opens a post directly', async ({ page }) => {
   await signedIn(page)
   await page.goto('/')
   await page.getByRole('button', { name: 'Compose' }).click()
 
-  await page.getByRole('menuitem', { name: 'Message' }).click()
-  await expect(page.getByRole('heading', { name: 'New message' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'New post' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Publish' })).toBeVisible()
 })
 
 // The placeholder changes with the mode, because a message needs to say the
@@ -208,11 +206,7 @@ test('the placeholder tells a message writer where the recipients go', async ({
   )
 })
 
-// The panel reserves 520px on a wide screen and the whole screen on a phone.
-// All of it used to pile up below the Publish button — 205px of nothing on a
-// desktop, 497px on a phone — while the writing happened in a 160px box. The
-// space belongs to the writing area.
-test('the writing area takes the height the panel reserves', async ({ page }) => {
+test('the writing area grows with its content and then scrolls', async ({ page }) => {
   await signedIn(page)
   await page.goto('/')
   await page.getByRole('button', { name: 'New post', exact: true }).click()
@@ -229,32 +223,23 @@ test('the writing area takes the height the panel reserves', async ({ page }) =>
     await settled()
     return page.evaluate(() => {
       const panel = document.querySelector('h2')!.closest('.fixed')!
-      const scroller = panel.querySelector('.overflow-y-auto')!
-      const content = scroller.firstElementChild!
       const textarea = panel.querySelector('textarea')!
       return {
-        panel: panel.getBoundingClientRect().height,
         textarea: textarea.getBoundingClientRect().height,
-        // What is left over below everything the composer draws.
-        slack:
-          scroller.getBoundingClientRect().bottom -
-          content.getBoundingClientRect().bottom,
         textareaScrolls: textarea.scrollHeight > textarea.clientHeight,
       }
     })
   }
 
   const empty = await geometry()
-  expect(empty.slack).toBeLessThanOrEqual(1)
-  // Comfortably past the 160px floor it used to be stuck at — the exact figure
-  // depends on the rows above it, so the assertion is that it took the slack.
-  expect(empty.textarea).toBeGreaterThan(250)
+  expect(empty.textarea).toBeLessThan(150)
 
-  // A long post scrolls inside that area rather than growing the panel, so the
-  // Publish button stays where it was.
+  await page.getByRole('textbox').fill('a line\n'.repeat(8))
+  const grown = await geometry()
+  expect(grown.textarea).toBeGreaterThan(empty.textarea)
+
   await page.getByRole('textbox').fill('a line\n'.repeat(60))
   const full = await geometry()
-  expect(full.panel).toBeCloseTo(empty.panel, 0)
-  expect(full.textarea).toBeCloseTo(empty.textarea, 0)
+  expect(full.textarea).toBeGreaterThan(grown.textarea)
   expect(full.textareaScrolls).toBe(true)
 })
