@@ -110,11 +110,12 @@ export function ComposeModalProvider({ children }: { children: ReactNode }) {
               <div
                 className={cn(
                   'text-card-foreground fixed z-50 border shadow-xl',
-                  // Full-screen on a phone, a corner panel above the
-                  // breakpoint — the shape upstream's stylesheet describes.
+                  // Fit the composer instead of reserving empty height below
+                  // it. The viewport cap lets the body scroll when replies,
+                  // attachments, or a long draft need more room.
                   minimized
                     ? 'right-3 bottom-3 w-[min(20rem,calc(100vw-1.5rem))] rounded-xl sm:right-6 sm:bottom-6'
-                    : 'inset-0 rounded-none sm:inset-auto sm:right-6 sm:bottom-6 sm:min-h-[520px] sm:w-[min(31.25rem,calc(100vw-3rem))] sm:rounded-xl',
+                    : 'inset-x-0 bottom-0 max-h-[100dvh] rounded-t-xl sm:right-6 sm:left-auto sm:max-h-[calc(100dvh-3rem)] sm:w-[min(31.25rem,calc(100vw-3rem))] sm:rounded-xl',
                   // Motion eunha adds: upstream swaps the panel in with none.
                   closing
                     ? 'motion-safe:animate-out motion-safe:fade-out motion-safe:zoom-out-95 motion-safe:slide-out-to-bottom-2 motion-safe:duration-150'
@@ -164,9 +165,6 @@ export function ComposeModalProvider({ children }: { children: ReactNode }) {
                     aside — that is the whole point of minimising. */}
                 <div
                   className={cn(
-                    // A column, so the composer inside can hand its spare
-                    // height to the writing area instead of leaving it under
-                    // the buttons.
                     'flex flex-1 flex-col overflow-y-auto',
                     minimized && 'hidden',
                   )}

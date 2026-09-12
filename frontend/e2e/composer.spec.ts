@@ -223,16 +223,22 @@ test('the writing area grows with its content and then scrolls', async ({ page }
     await settled()
     return page.evaluate(() => {
       const panel = document.querySelector('h2')!.closest('.fixed')!
+      const scroller = panel.querySelector('.overflow-y-auto')!
+      const content = scroller.firstElementChild!
       const textarea = panel.querySelector('textarea')!
       return {
         textarea: textarea.getBoundingClientRect().height,
         textareaScrolls: textarea.scrollHeight > textarea.clientHeight,
+        slack:
+          scroller.getBoundingClientRect().bottom -
+          content.getBoundingClientRect().bottom,
       }
     })
   }
 
   const empty = await geometry()
   expect(empty.textarea).toBeLessThan(150)
+  expect(empty.slack).toBeLessThanOrEqual(1)
 
   await page.getByRole('textbox').fill('a line\n'.repeat(8))
   const grown = await geometry()
