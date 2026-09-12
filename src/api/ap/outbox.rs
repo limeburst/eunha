@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -18,7 +18,7 @@ pub struct OutboxQuery {
 }
 
 pub async fn get_outbox(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
     Query(q): Query<OutboxQuery>,
@@ -34,7 +34,7 @@ pub async fn get_outbox(
 
 /// Numeric-scheme outbox (`/ap/users/{id}/outbox`).
 pub async fn get_outbox_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
     Query(q): Query<OutboxQuery>,

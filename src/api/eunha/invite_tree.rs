@@ -1,4 +1,4 @@
-use axum::{extract::State, Extension, Json};
+use axum::{Extension, Json};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -43,7 +43,7 @@ pub struct InviteTreeResponse {
 /// authenticated local member may view it, matching the existing server-rendered
 /// `/account/invites` page.
 pub async fn invite_tree(
-    State(state): State<AppState>,
+    state: AppState,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<InviteTreeResponse>> {
     // Require an authenticated local user (app-only tokens have no user_id).

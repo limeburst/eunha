@@ -6,7 +6,7 @@ use super::*;
 // ── GET /api/v1/follow_requests ───────────────────────────────────────────
 
 pub async fn get_follow_requests(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -65,7 +65,7 @@ pub async fn get_follow_requests(
 // ── POST /api/v1/follow_requests/:id/authorize ────────────────────────────
 
 pub async fn authorize_follow_request(
-    State(state): State<AppState>,
+    state: AppState,
     Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -190,7 +190,7 @@ pub async fn authorize_follow_request(
 // ── POST /api/v1/follow_requests/:id/reject ───────────────────────────────
 
 pub async fn reject_follow_request(
-    State(state): State<AppState>,
+    state: AppState,
     Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {

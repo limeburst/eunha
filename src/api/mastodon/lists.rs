@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Json, Path, Query, State},
+    extract::{Extension, Json, Path, Query},
     http::{HeaderMap, Uri},
     response::IntoResponse,
 };
@@ -20,7 +20,7 @@ use crate::{
 // ── GET /api/v1/lists ──────────────────────────────────────────────────────
 
 pub async fn get_lists(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<List>>> {
     auth.require_scope("read:lists")?;
@@ -38,7 +38,7 @@ pub async fn get_lists(
 // ── GET /api/v1/lists/:id ─────────────────────────────────────────────────
 
 pub async fn get_list(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<List>> {
@@ -84,7 +84,7 @@ fn validate_list_form(form: &ListForm) -> AppResult<()> {
 }
 
 pub async fn create_list(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListForm>,
 ) -> AppResult<Json<List>> {
@@ -126,7 +126,7 @@ pub async fn create_list(
 // ── PUT /api/v1/lists/:id ─────────────────────────────────────────────────
 
 pub async fn update_list(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListForm>,
@@ -155,7 +155,7 @@ pub async fn update_list(
 // ── DELETE /api/v1/lists/:id ──────────────────────────────────────────────
 
 pub async fn delete_list(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
@@ -179,7 +179,7 @@ pub async fn delete_list(
 // ── GET /api/v1/lists/:id/accounts ───────────────────────────────────────
 
 pub async fn get_list_accounts(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(pagination): Query<super::types::PaginationParams>,
@@ -239,7 +239,7 @@ pub struct ListAccountsForm {
 }
 
 pub async fn add_list_accounts(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
@@ -317,7 +317,7 @@ pub async fn add_list_accounts(
 // ── DELETE /api/v1/lists/:id/accounts ────────────────────────────────────
 
 pub async fn remove_list_accounts(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ListAccountsForm>,

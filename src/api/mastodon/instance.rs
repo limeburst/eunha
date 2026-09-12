@@ -1,7 +1,7 @@
 use super::types::*;
 use crate::{error::AppResult, middleware::ResolvedInstance, state::AppState};
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query},
     Json,
 };
 use serde::Deserialize;
@@ -25,7 +25,7 @@ pub async fn get_instance_languages() -> Json<Vec<serde_json::Value>> {
 // ── GET /api/v1/instance/domain_blocks ───────────────────────────────────
 
 pub async fn get_instance_domain_blocks(
-    State(state): State<AppState>,
+    state: AppState,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     let rows = sqlx::query!(
         "SELECT domain, severity, public_comment, obfuscate FROM domain_blocks ORDER BY id"
@@ -109,7 +109,7 @@ pub async fn get_extended_description(
 // ── GET /api/v1/instance ──────────────────────────────────────────────────
 
 pub async fn get_instance_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV1>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
@@ -176,7 +176,7 @@ pub async fn get_instance_v1(
 
 // ── GET /api/v1/instance/peers ────────────────────────────────────────────
 
-pub async fn get_peers(State(state): State<AppState>) -> AppResult<Json<Vec<String>>> {
+pub async fn get_peers(state: AppState) -> AppResult<Json<Vec<String>>> {
     let rows = sqlx::query_scalar!(
         "SELECT DISTINCT domain FROM accounts WHERE domain IS NOT NULL ORDER BY domain",
     )
@@ -193,7 +193,7 @@ pub struct PeersSearchParams {
 }
 
 pub async fn search_peers(
-    State(state): State<AppState>,
+    state: AppState,
     Query(params): Query<PeersSearchParams>,
 ) -> AppResult<Json<Vec<String>>> {
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
@@ -262,7 +262,7 @@ pub async fn get_terms_of_service_by_date(
 }
 
 pub async fn get_instance_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<InstanceV2>> {
     let streaming_url = format!("wss://{}/api/v1/streaming", instance.domain);
@@ -434,9 +434,7 @@ pub async fn get_instance_v2(
 
 // ── GET /api/v1/instance/activity ────────────────────────────────────────
 
-pub async fn get_instance_activity(
-    State(state): State<AppState>,
-) -> AppResult<Json<Vec<serde_json::Value>>> {
+pub async fn get_instance_activity(state: AppState) -> AppResult<Json<Vec<serde_json::Value>>> {
     // Return 12 weeks of activity
     let rows = sqlx::query!(
         r#"SELECT

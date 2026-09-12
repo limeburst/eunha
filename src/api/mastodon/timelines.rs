@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query},
     http::{header, HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -36,7 +36,7 @@ pub struct PublicTimelineQuery {
 // ── GET /api/v1/timelines/public ──────────────────────────────────────────
 
 pub async fn public_timeline(
-    State(state): State<AppState>,
+    state: AppState,
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PublicTimelineQuery>,
@@ -184,7 +184,7 @@ pub async fn public_timeline(
 // ── GET /api/v1/timelines/home ────────────────────────────────────────────
 
 pub async fn home_timeline(
-    State(state): State<AppState>,
+    state: AppState,
     uri: Uri,
     req_headers: HeaderMap,
     Query(q): Query<PaginationParams>,
@@ -628,7 +628,7 @@ async fn home_timeline_from_db(
 // ── GET /api/v1/timelines/list/:id ───────────────────────────────────────
 
 pub async fn list_timeline(
-    State(state): State<AppState>,
+    state: AppState,
     Path(list_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
@@ -958,7 +958,7 @@ pub struct TagTimelineQuery {
 }
 
 pub async fn tag_timeline(
-    State(state): State<AppState>,
+    state: AppState,
     Path(hashtag): Path<String>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -1448,7 +1448,7 @@ pub struct LinkTimelineQuery {
 }
 
 pub async fn link_timeline(
-    State(state): State<AppState>,
+    state: AppState,
     auth: Option<Extension<AuthenticatedUser>>,
     headers: HeaderMap,
     uri: Uri,

@@ -1,10 +1,8 @@
 use super::types::CustomEmoji;
 use crate::{error::AppResult, state::AppState};
-use axum::{extract::State, response::Json};
+use axum::response::Json;
 
-pub async fn list_custom_emojis(
-    State(state): State<AppState>,
-) -> AppResult<Json<Vec<CustomEmoji>>> {
+pub async fn list_custom_emojis(state: AppState) -> AppResult<Json<Vec<CustomEmoji>>> {
     let rows = sqlx::query!(
         r#"SELECT ce.shortcode, ce.image_remote_url, ce.visible_in_picker,
                   ecc.name AS "category_name?"

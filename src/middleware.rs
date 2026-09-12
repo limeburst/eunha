@@ -1,8 +1,4 @@
-use axum::{
-    extract::{Request, State},
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, middleware::Next, response::Response};
 use tracing::Instrument as _;
 
 use crate::{config::InstanceConfig, error::AppError, state::AppState};
@@ -15,7 +11,7 @@ pub struct ResolvedInstance(pub InstanceConfig);
 /// request in its tenant's span, so that everything it logs — and every task it
 /// spawns through [`crate::tenants::spawn`] — names the instance.
 pub async fn resolve_instance(
-    State(state): State<AppState>,
+    state: AppState,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -84,7 +80,7 @@ impl AuthenticatedUser {
 /// Bearer token authentication. Attaches `AuthenticatedUser` if a valid token
 /// is present; passes through unauthenticated requests so endpoints can decide
 /// whether auth is required.
-pub async fn authenticate(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+pub async fn authenticate(state: AppState, mut req: Request, next: Next) -> Response {
     if let Some(token) = extract_bearer(&req) {
         if let Some(tok) = sqlx::query!(
             r#"SELECT t.id, u.account_id, t.application_id, t.scopes,

@@ -206,7 +206,7 @@ async fn resolve_remote_exact(
 }
 
 pub async fn search_accounts(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<AccountSearchQuery>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {

@@ -1,10 +1,9 @@
 pub mod nodeinfo;
 pub mod webfinger;
 
-use crate::state::AppState;
 use axum::{routing::get, Router};
 
-pub fn router() -> Router<AppState> {
+pub fn router() -> Router {
     Router::new()
         .route("/.well-known/webfinger", get(webfinger::webfinger))
         .route("/.well-known/nodeinfo", get(nodeinfo::nodeinfo_links))

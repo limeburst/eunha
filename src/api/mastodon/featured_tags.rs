@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     Json,
 };
 use serde::Deserialize;
@@ -22,7 +22,7 @@ fn tag_url(domain: &str, name: &str) -> String {
 // ── GET /api/v1/featured_tags ─────────────────────────────────────────────
 
 pub async fn list_featured_tags(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FeaturedTag>>> {
@@ -69,7 +69,7 @@ pub struct FeaturedTagForm {
 }
 
 pub async fn feature_tag(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<FeaturedTagForm>,
@@ -157,7 +157,7 @@ pub async fn feature_tag(
 // ── DELETE /api/v1/featured_tags/:id ─────────────────────────────────────
 
 pub async fn unfeature_tag(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -180,7 +180,7 @@ pub async fn unfeature_tag(
 // ── POST /api/v1/tags/:name/feature ──────────────────────────────────────
 
 pub async fn feature_tag_by_name(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
@@ -259,7 +259,7 @@ pub async fn feature_tag_by_name(
 // ── POST /api/v1/tags/:name/unfeature ────────────────────────────────────
 
 pub async fn unfeature_tag_by_name(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
@@ -315,7 +315,7 @@ pub async fn unfeature_tag_by_name(
 // ── GET /api/v1/featured_tags/suggestions ────────────────────────────────
 
 pub async fn featured_tag_suggestions(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::Tag>>> {

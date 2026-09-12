@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Query, RawQuery, State},
+    extract::{Extension, Path, Query, RawQuery},
     http::{HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -143,7 +143,7 @@ async fn batch_notification_status_ids(
 // ── GET /api/v1/notifications ─────────────────────────────────────────────
 
 pub async fn get_notifications(
-    State(state): State<AppState>,
+    state: AppState,
     Query(pagination): Query<PaginationParams>,
     RawQuery(qs): RawQuery,
     uri: Uri,
@@ -490,7 +490,7 @@ pub async fn get_notifications(
 // ── GET /api/v1/notifications/:id ─────────────────────────────────────────
 
 pub async fn get_notification(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Notification>> {
@@ -511,7 +511,7 @@ pub async fn get_notification(
 // ── POST /api/v1/notifications/clear ──────────────────────────────────────
 
 pub async fn clear_notifications(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
@@ -527,7 +527,7 @@ pub async fn clear_notifications(
 // ── POST /api/v1/notifications/:id/dismiss ────────────────────────────────
 
 pub async fn dismiss_notification(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -638,7 +638,7 @@ async fn notifications_for_group_key(
 }
 
 pub async fn get_notifications_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Query(pagination): Query<PaginationParams>,
     RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
@@ -1039,7 +1039,7 @@ pub async fn get_notifications_v2(
 // ── GET /api/v2/notifications/:group_key ─────────────────────────────────
 
 pub async fn get_notification_group(
-    State(state): State<AppState>,
+    state: AppState,
     Path(group_key): Path<String>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationGroup>> {
@@ -1089,7 +1089,7 @@ pub async fn get_notification_group(
 // ── POST /api/v2/notifications/:group_key/dismiss ─────────────────────────
 
 pub async fn dismiss_notification_group(
-    State(state): State<AppState>,
+    state: AppState,
     Path(group_key): Path<String>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -1112,7 +1112,7 @@ pub async fn dismiss_notification_group(
 // ── GET /api/v2/notifications/:group_key/accounts ────────────────────────
 
 pub async fn get_notification_group_accounts(
-    State(state): State<AppState>,
+    state: AppState,
     Path(group_key): Path<String>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::Account>>> {
@@ -1156,7 +1156,7 @@ pub struct UnreadCountParams {
 }
 
 pub async fn get_notifications_unread_count(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<UnreadCountParams>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -1222,7 +1222,7 @@ fn policy_to_bool(s: &str) -> bool {
 }
 
 pub async fn get_notification_policy(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationPolicy>> {
     auth.require_scope("read:notifications")?;
@@ -1306,7 +1306,7 @@ pub struct UpdateNotificationPolicyForm {
 }
 
 pub async fn update_notification_policy(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<UpdateNotificationPolicyForm>,
 ) -> AppResult<Json<NotificationPolicy>> {
@@ -1351,13 +1351,13 @@ pub async fn update_notification_policy(
     .execute(&state.db)
     .await?;
 
-    get_notification_policy(State(state), Extension(auth)).await
+    get_notification_policy(state, Extension(auth)).await
 }
 
 // ── GET /api/v1/notifications/policy ─────────────────────────────────────────
 
 pub async fn get_notification_policy_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<NotificationPolicyV1>> {
     auth.require_scope("read:notifications")?;
@@ -1437,7 +1437,7 @@ pub struct UpdateNotificationPolicyV1Form {
 }
 
 pub async fn update_notification_policy_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<UpdateNotificationPolicyV1Form>,
 ) -> AppResult<Json<NotificationPolicyV1>> {
@@ -1473,13 +1473,13 @@ pub async fn update_notification_policy_v1(
     .execute(&state.db)
     .await?;
 
-    get_notification_policy_v1(State(state), Extension(auth)).await
+    get_notification_policy_v1(state, Extension(auth)).await
 }
 
 // ── GET /api/v1/notifications/requests ───────────────────────────────────
 
 pub async fn get_notification_requests(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(pagination): Query<NotificationPagination>,
     uri: Uri,
@@ -1694,7 +1694,7 @@ pub async fn get_notification_requests(
 // ── POST /api/v1/notifications/requests/:id/accept ───────────────────────
 
 pub async fn accept_notification_request(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -1715,7 +1715,7 @@ pub async fn accept_notification_request(
 // ── POST /api/v1/notifications/requests/:id/dismiss ──────────────────────
 
 pub async fn dismiss_notification_request(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -1733,7 +1733,7 @@ pub async fn dismiss_notification_request(
 // ── POST /api/v1/notifications/requests/accept_all ───────────────────────
 
 pub async fn accept_all_notification_requests(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
@@ -1749,7 +1749,7 @@ pub async fn accept_all_notification_requests(
 // ── POST /api/v1/notifications/requests/dismiss_all ──────────────────────
 
 pub async fn dismiss_all_notification_requests(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("write:notifications")?;
@@ -1765,7 +1765,7 @@ pub async fn dismiss_all_notification_requests(
 // ── GET /api/v1/notifications/requests/merged ────────────────────────────
 
 pub async fn get_notification_requests_merged(
-    State(_state): State<AppState>,
+    _state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("read:notifications")?;
@@ -1775,7 +1775,7 @@ pub async fn get_notification_requests_merged(
 // ── GET /api/v1/notifications/requests/:id ───────────────────────────────
 
 pub async fn get_notification_request(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<NotificationRequest>> {

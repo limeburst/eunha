@@ -34,26 +34,17 @@ pub mod well_known;
 use axum::{extract::Request, middleware as axum_middleware, response::IntoResponse, Router};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
-pub fn build_app(state: state::AppState) -> Router {
-    let fallback_state = state.clone();
+/// Every route eunha serves, built once for the whole process. The instance a
+/// request belongs to rides on the request itself, put there by the tenant
+/// dispatcher, so these routes are shared by every instance the process serves.
+pub fn build_app() -> Router {
     let compressed = Router::new()
         .merge(well_known::router())
-        .merge(api::mastodon::router(state.clone()))
-        .merge(api::account::router(state.clone()))
-        .merge(api::eunha::router(state.clone()))
+        .merge(api::mastodon::router())
+        .merge(api::account::router())
+        .merge(api::eunha::router())
         .merge(api::ap::router())
-        .fallback(axum::routing::any(move |req: Request| async move {
-            let uri = req.uri().clone();
-            if uri.path().starts_with("/api/") {
-                (
-                    axum::http::StatusCode::NOT_FOUND,
-                    axum::Json(serde_json::json!({"error": "not found"})),
-                )
-                    .into_response()
-            } else {
-                web::serve(axum::extract::State(fallback_state.clone()), uri).await
-            }
-        }))
+        .fallback(axum::routing::any(fallback))
         .layer(CompressionLayer::new());
 
     Router::new()
@@ -61,15 +52,22 @@ pub fn build_app(state: state::AppState) -> Router {
         // Streaming WebSocket must be outside CompressionLayer to avoid body wrapping.
         .merge(api::mastodon::streaming_router())
         .layer(axum_middleware::from_fn(middleware::log_failures))
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            middleware::authenticate,
-        ))
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            middleware::resolve_instance,
-        ))
+        .layer(axum_middleware::from_fn(middleware::authenticate))
+        .layer(axum_middleware::from_fn(middleware::resolve_instance))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+}
+
+/// What no route claimed: JSON 404 under `/api/`, and the web app elsewhere.
+async fn fallback(state: state::AppState, req: Request) -> axum::response::Response {
+    let uri = req.uri().clone();
+    if uri.path().starts_with("/api/") {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response()
+    } else {
+        web::serve(state, uri).await
+    }
 }

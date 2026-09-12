@@ -6,7 +6,7 @@ use crate::{
     templates,
 };
 use axum::{
-    extract::{Extension, Form, Query, State},
+    extract::{Extension, Form, Query},
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json, Redirect, Response},
 };
@@ -21,7 +21,7 @@ pub struct SignUpQuery {
 }
 
 pub async fn signup_get(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(q): Query<SignUpQuery>,
     headers: axum::http::HeaderMap,
@@ -232,7 +232,7 @@ pub struct ApiCreateAccountForm {
 }
 
 pub async fn api_create_account(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     req_headers: HeaderMap,
     super::extractors::FormOrJson(form): super::extractors::FormOrJson<ApiCreateAccountForm>,
@@ -379,10 +379,7 @@ pub struct ConfirmQuery {
     pub token: String,
 }
 
-pub async fn confirm_email(
-    State(state): State<AppState>,
-    Query(q): Query<ConfirmQuery>,
-) -> Response {
+pub async fn confirm_email(state: AppState, Query(q): Query<ConfirmQuery>) -> Response {
     let pending = sqlx::query!(
         r#"DELETE FROM eunha.pending_signups
            WHERE confirmation_token = $1 AND expires_at > now()
@@ -549,7 +546,7 @@ pub async fn confirm_email(
 // ── GET /api/v1/emails/check_confirmation ────────────────────────────────
 
 pub async fn check_email_confirmation(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<crate::middleware::AuthenticatedUser>,
 ) -> AppResult<Json<bool>> {
     let confirmed = sqlx::query_scalar!(
@@ -571,7 +568,7 @@ pub struct PasswordResetRequestForm {
 }
 
 pub async fn request_password_reset(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Form(form): Form<PasswordResetRequestForm>,
 ) -> impl IntoResponse {
@@ -631,7 +628,7 @@ pub struct PasswordResetForm {
 }
 
 pub async fn apply_password_reset(
-    State(state): State<AppState>,
+    state: AppState,
     Form(form): Form<PasswordResetForm>,
 ) -> impl IntoResponse {
     let token = match form.token {

@@ -1,7 +1,4 @@
-use axum::{
-    extract::{Extension, State},
-    Json,
-};
+use axum::{extract::Extension, Json};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -104,7 +101,7 @@ pub struct AlertsInput {
 }
 
 pub async fn create_subscription(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(body): Json<CreateSubscriptionBody>,
 ) -> AppResult<Json<PushSubscription>> {
@@ -185,7 +182,7 @@ pub async fn create_subscription(
 // ── GET /api/v1/push/subscription ─────────────────────────────────────────
 
 pub async fn get_subscription(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<PushSubscription>> {
     auth.require_scope("push")?;
@@ -219,7 +216,7 @@ pub struct UpdateSubscriptionBody {
 }
 
 pub async fn update_subscription(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(body): Json<UpdateSubscriptionBody>,
 ) -> AppResult<Json<PushSubscription>> {
@@ -274,7 +271,7 @@ pub async fn update_subscription(
 // ── DELETE /api/v1/push/subscription ──────────────────────────────────────
 
 pub async fn delete_subscription(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
     auth.require_scope("push")?;

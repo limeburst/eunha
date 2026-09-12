@@ -5,7 +5,7 @@ use super::*;
 // ── GET /api/v1/statuses/:id/quotes ──────────────────────────────────────
 
 pub async fn get_status_quotes(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
@@ -77,7 +77,7 @@ pub async fn get_status_quotes(
 // ── POST /api/v1/statuses/:status_id/quotes/:id/revoke ────────────────────
 
 pub async fn revoke_quote(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path((quoted_status_id, quoting_status_id)): Path<(i64, i64)>,

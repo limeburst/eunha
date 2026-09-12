@@ -4,7 +4,7 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::StatusCode,
     Json,
 };
@@ -25,7 +25,7 @@ pub struct InviteResponse {
 }
 
 pub async fn list_invites(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<InviteResponse>>> {
@@ -78,7 +78,7 @@ pub struct CreateInviteRequest {
 }
 
 pub async fn create_invite(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<CreateInviteRequest>>,
@@ -130,7 +130,7 @@ pub async fn create_invite(
 }
 
 pub async fn delete_invite(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {

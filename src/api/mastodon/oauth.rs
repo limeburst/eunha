@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Form, Query, State},
+    extract::{Extension, Form, Query},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     Json,
@@ -19,7 +19,7 @@ use crate::{
 // ── GET /api/v1/apps/verify_credentials ───────────────────────────────────
 
 pub async fn verify_app_credentials(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     headers: axum::http::HeaderMap,
 ) -> AppResult<Json<AppCredentials>> {
@@ -71,7 +71,7 @@ pub struct RegisterAppForm {
 }
 
 pub async fn register_app(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     FormOrJson(form): FormOrJson<RegisterAppForm>,
 ) -> AppResult<Json<CredentialApplication>> {
@@ -140,7 +140,7 @@ pub struct TokenRequest {
 }
 
 pub async fn issue_token(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     FormOrJson(form): FormOrJson<TokenRequest>,
 ) -> AppResult<Json<Token>> {
@@ -293,7 +293,7 @@ pub struct RevokeRequest {
 }
 
 pub async fn revoke_token(
-    State(state): State<AppState>,
+    state: AppState,
     FormOrJson(form): FormOrJson<RevokeRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     sqlx::query!(
@@ -421,7 +421,7 @@ fn elk_redirect_uri(origin: &str, server: &str) -> String {
 }
 
 pub async fn elk_login(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Json(body): Json<ElkLoginBody>,
 ) -> AppResult<Json<String>> {
@@ -499,7 +499,7 @@ pub struct ElkOAuthCallbackQuery {
 }
 
 pub async fn elk_oauth_callback(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     axum::extract::Path((_server, encoded_origin)): axum::extract::Path<(String, String)>,
     Query(q): Query<ElkOAuthCallbackQuery>,
@@ -615,7 +615,7 @@ pub struct AuthorizeParams {
 }
 
 pub async fn authorize_form(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<AuthorizeParams>,
     headers: axum::http::HeaderMap,
@@ -695,7 +695,7 @@ pub struct AuthorizeForm {
 }
 
 pub async fn authorize_submit(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Form(form): Form<AuthorizeForm>,
 ) -> Response {

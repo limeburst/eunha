@@ -1,4 +1,4 @@
-use axum::extract::{Extension, Json, Path, State};
+use axum::extract::{Extension, Json, Path};
 use serde::Deserialize;
 
 use super::types::{Poll, PollOption};
@@ -12,7 +12,7 @@ use crate::{
 // ── GET /api/v1/polls/:id ─────────────────────────────────────────────────
 
 pub async fn get_poll(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Poll>> {
@@ -55,7 +55,7 @@ where
 }
 
 pub async fn vote_poll(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<PollVoteForm>,

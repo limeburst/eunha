@@ -7,7 +7,7 @@ use super::*;
 // ── GET /api/v1/accounts/verify_credentials ────────────────────────────────
 
 pub async fn verify_credentials(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(_instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<ApiAccount>> {
@@ -541,7 +541,7 @@ async fn distribute_account_update(state: &AppState, domain: &str, account: &Acc
 }
 
 pub async fn update_credentials(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<
         crate::middleware::ResolvedInstance,
@@ -558,7 +558,7 @@ pub async fn update_credentials(
 // ── PATCH /api/v1/profile (profile-specific update) ──────────────────────
 
 pub async fn patch_profile(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<
         crate::middleware::ResolvedInstance,
@@ -688,7 +688,7 @@ async fn build_credential_account_response(
 // ── GET /api/v1/preferences ───────────────────────────────────────────────
 
 pub async fn get_preferences(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Preferences>> {
     auth.require_scope("read:accounts")?;
@@ -710,7 +710,7 @@ pub async fn get_preferences(
 // ── GET /api/v1/profile ───────────────────────────────────────────────────
 
 pub async fn get_profile(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<
         crate::middleware::ResolvedInstance,
@@ -725,7 +725,7 @@ pub async fn get_profile(
 /// PUT /api/v1/profile — accepts a JSON body and returns the current profile.
 /// (Profile field edits go through update_credentials / the multipart PATCH.)
 pub async fn put_profile(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<
         crate::middleware::ResolvedInstance,
@@ -824,7 +824,7 @@ async fn build_profile(
 // ── DELETE /api/v1/profile/avatar ────────────────────────────────────────
 
 pub async fn delete_profile_avatar(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<crate::api::mastodon::types::Account>> {
@@ -852,7 +852,7 @@ pub async fn delete_profile_avatar(
 // ── DELETE /api/v1/profile/header ────────────────────────────────────────
 
 pub async fn delete_profile_header(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<crate::api::mastodon::types::Account>> {

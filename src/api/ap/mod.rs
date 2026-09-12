@@ -4,13 +4,12 @@ pub mod note;
 pub mod objects;
 pub mod outbox;
 
-use crate::state::AppState;
 use axum::{
     routing::{get, post},
     Router,
 };
 
-pub fn router() -> Router<AppState> {
+pub fn router() -> Router {
     Router::new()
         .route("/users/{username}", get(objects::get_actor))
         .route("/users/{username}/inbox", post(inbox::shared_inbox))

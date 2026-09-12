@@ -576,7 +576,7 @@ impl TestContext {
             .await
             .expect("failed to initialize AppState");
         let state_clone = state.clone();
-        let app = eunha::build_app(state);
+        let app = eunha::build_app().layer(axum::Extension(state));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();

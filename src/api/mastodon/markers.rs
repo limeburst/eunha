@@ -1,9 +1,4 @@
-use axum::{
-    body::Bytes,
-    extract::{Extension, State},
-    http::Uri,
-    Json,
-};
+use axum::{body::Bytes, extract::Extension, http::Uri, Json};
 use std::collections::HashMap;
 
 use super::types::MarkerInfo;
@@ -16,7 +11,7 @@ use crate::{
 // ── GET /api/v1/markers ───────────────────────────────────────────────────
 
 pub async fn get_markers(
-    State(state): State<AppState>,
+    state: AppState,
     uri: Uri,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<HashMap<String, MarkerInfo>>> {
@@ -87,7 +82,7 @@ impl MarkerPosition {
 }
 
 pub async fn set_markers(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     headers: axum::http::HeaderMap,
     body: Bytes,

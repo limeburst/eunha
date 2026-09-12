@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Query},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ pub struct OEmbedResponse {
 // returns an oEmbed representation of that status.
 
 pub async fn get_oembed(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<OEmbedParams>,
 ) -> AppResult<Json<OEmbedResponse>> {

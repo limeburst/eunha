@@ -6,7 +6,7 @@ use super::*;
 // ── GET /api/v1/statuses/:id/context ──────────────────────────────────────
 
 pub async fn get_status_context(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<StatusContext>> {

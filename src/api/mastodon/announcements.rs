@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::StatusCode,
     Json,
 };
@@ -11,7 +11,7 @@ use crate::{error::AppResult, middleware::AuthenticatedUser, state::AppState};
 // ── GET /api/v1/announcements ─────────────────────────────────────────────
 
 pub async fn get_announcements(
-    State(state): State<AppState>,
+    state: AppState,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<Announcement>>> {
     let viewer_id = auth.map(|Extension(a)| a.account_id);
@@ -123,7 +123,7 @@ pub async fn get_announcements(
 // ── POST /api/v1/announcements/:id/dismiss ────────────────────────────────
 
 pub async fn dismiss_announcement(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {
@@ -153,7 +153,7 @@ pub async fn dismiss_announcement(
 // ── PUT /api/v1/announcements/:id/reactions/:name ─────────────────────────
 
 pub async fn add_reaction(
-    State(state): State<AppState>,
+    state: AppState,
     Path((id, name)): Path<(i64, String)>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {
@@ -230,7 +230,7 @@ pub async fn add_reaction(
 // ── DELETE /api/v1/announcements/:id/reactions/:name ─────────────────────
 
 pub async fn remove_reaction(
-    State(state): State<AppState>,
+    state: AppState,
     Path((id, name)): Path<(i64, String)>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<StatusCode> {

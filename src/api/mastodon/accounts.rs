@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Multipart, Path, Query, RawQuery, State},
+    extract::{Extension, Multipart, Path, Query, RawQuery},
     http::{HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -126,7 +126,7 @@ pub struct LookupQuery {
 }
 
 pub async fn lookup_account(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<LookupQuery>,
 ) -> AppResult<Json<ApiAccount>> {
     // acct can be "username" (local) or "username@domain" (remote)
@@ -223,10 +223,7 @@ pub async fn lookup_account(
 
 // ── GET /api/v1/accounts/:id ───────────────────────────────────────────────
 
-pub async fn get_account(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> AppResult<Json<ApiAccount>> {
+pub async fn get_account(state: AppState, Path(id): Path<i64>) -> AppResult<Json<ApiAccount>> {
     let account = fetch_account(&state, id).await?;
     // Local accounts that are unconfirmed or pending approval are invisible (404).
     // A suspended one is not: Mastodon serves the blanked tombstone with
@@ -286,7 +283,7 @@ pub struct StatusesQuery {
 }
 
 pub async fn get_account_statuses(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -719,7 +716,7 @@ pub struct FollowersQuery {
 // ── GET /api/v1/accounts/:id/pins ─────────────────────────────────────────
 
 pub async fn get_account_pins(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<super::types::Status>>> {
@@ -1233,7 +1230,7 @@ pub struct NoteForm {
 }
 
 pub async fn set_account_note(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<NoteForm>,
@@ -1274,7 +1271,7 @@ pub async fn set_account_note(
 // ── POST /api/v1/accounts/:id/remove_from_followers ───────────────────────
 
 pub async fn remove_from_followers(
-    State(state): State<AppState>,
+    state: AppState,
     Path(requester_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -1345,7 +1342,7 @@ pub async fn remove_from_followers(
 // ── GET /api/v1/accounts/:id/featured_tags ───────────────────────────────
 
 pub async fn get_account_featured_tags(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(crate::middleware::ResolvedInstance(instance)): Extension<
         crate::middleware::ResolvedInstance,
     >,
@@ -1389,7 +1386,7 @@ pub async fn get_account_featured_tags(
 // ── GET /api/v1/accounts/familiar_followers ──────────────────────────────
 
 pub async fn get_familiar_followers(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<super::types::FamiliarFollowers>>> {
@@ -1452,7 +1449,7 @@ pub struct DirectoryQuery {
 }
 
 pub async fn get_directory(
-    State(state): State<AppState>,
+    state: AppState,
     Query(q): Query<DirectoryQuery>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     let limit = q.limit.unwrap_or(40).clamp(1, 80);
@@ -1509,7 +1506,7 @@ pub async fn get_directory(
 // ── GET /api/v1/accounts (batch lookup) ──────────────────────────────────
 
 pub async fn get_accounts_batch(
-    State(state): State<AppState>,
+    state: AppState,
     RawQuery(qs): RawQuery,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
     // serde_urlencoded treats id[]=v1&id[]=v2 as a duplicate field → 400.
@@ -1535,7 +1532,7 @@ pub async fn get_accounts_batch(
 // ── GET /api/v1/accounts/:id/lists ───────────────────────────────────────
 
 pub async fn get_account_lists(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<super::types::List>>> {
@@ -1905,7 +1902,7 @@ pub async fn apply_account_stats(
 /// account, then hand it to `DeleteAccountService` with the username reserved
 /// and the user record (with the email and the rest of the PII) destroyed.
 pub async fn delete_account(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<serde_json::Value>>,
 ) -> AppResult<axum::http::StatusCode> {

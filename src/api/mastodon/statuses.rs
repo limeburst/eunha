@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, FromRequest, Multipart, Path, Query, RawQuery, State},
+    extract::{Extension, FromRequest, Multipart, Path, Query, RawQuery},
     http::{header, HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -162,7 +162,7 @@ pub struct PostStatusForm {
 // ── GET /api/v1/statuses (batch) ──────────────────────────────────────────
 
 pub async fn get_statuses_batch(
-    State(state): State<AppState>,
+    state: AppState,
     RawQuery(qs): RawQuery,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<Status>>> {
@@ -383,7 +383,7 @@ pub async fn get_statuses_batch(
 // ── GET /api/v1/statuses/:id ──────────────────────────────────────────────
 
 pub async fn get_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Status>> {
@@ -510,7 +510,7 @@ pub async fn get_status(
 // ── DELETE /api/v1/statuses/:id ────────────────────────────────────────────
 
 pub async fn delete_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -726,7 +726,7 @@ pub async fn delete_status(
 // ── POST /api/v1/statuses/:id/favourite ───────────────────────────────────
 
 pub async fn favourite_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -803,7 +803,7 @@ pub async fn favourite_status(
 // ── POST /api/v1/statuses/:id/unfavourite ─────────────────────────────────
 
 pub async fn unfavourite_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -875,7 +875,7 @@ pub struct ReblogForm {
 }
 
 pub async fn reblog_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<ReblogForm>>,
@@ -1120,7 +1120,7 @@ pub async fn reblog_status(
 // ── POST /api/v1/statuses/:id/unreblog ────────────────────────────────────
 
 pub async fn unreblog_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1236,7 +1236,7 @@ pub async fn unreblog_status(
 // ── POST /api/v1/statuses/:id/bookmark ────────────────────────────────────
 
 pub async fn bookmark_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1260,7 +1260,7 @@ pub async fn bookmark_status(
 // ── POST /api/v1/statuses/:id/unbookmark ──────────────────────────────────
 
 pub async fn unbookmark_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1331,7 +1331,7 @@ async fn federate_pin_change(state: &AppState, account: &Account, status: &DbSta
 }
 
 pub async fn pin_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1376,7 +1376,7 @@ pub async fn pin_status(
 // ── POST /api/v1/statuses/:id/unpin ───────────────────────────────────────
 
 pub async fn unpin_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1400,7 +1400,7 @@ pub async fn unpin_status(
 // ── POST /api/v1/statuses/:id/mute ────────────────────────────────────────
 
 pub async fn mute_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1422,7 +1422,7 @@ pub async fn mute_status(
 // ── POST /api/v1/statuses/:id/unmute ──────────────────────────────────────
 
 pub async fn unmute_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Status>> {
@@ -1442,7 +1442,7 @@ pub async fn unmute_status(
 // ── GET /api/v1/statuses/:id/favourited_by ────────────────────────────────
 
 pub async fn favourited_by(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Query(pagination): Query<PaginationParams>,
     uri: Uri,
@@ -1540,7 +1540,7 @@ pub async fn favourited_by(
 // ── GET /api/v1/statuses/:id/reblogged_by ─────────────────────────────────
 
 pub async fn reblogged_by(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Query(pagination): Query<PaginationParams>,
     uri: Uri,
@@ -1652,7 +1652,7 @@ pub async fn translate_status(
 // ── GET /api/v1/statuses/:id/card ─────────────────────────────────────────
 
 pub async fn get_status_card(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -1700,7 +1700,7 @@ pub struct InteractionPolicyForm {
 }
 
 pub async fn update_interaction_policy(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<InteractionPolicyForm>>,

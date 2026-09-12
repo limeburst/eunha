@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, OriginalUri, State},
+    extract::{Extension, OriginalUri},
     http::StatusCode,
 };
 use serde_json::Value;
@@ -186,7 +186,7 @@ pub(super) async fn acquire_create_lock(state: &AppState, uri: &str) -> Option<R
 
 /// Handles both `/inbox` (shared inbox) and `/users/:username/inbox`.
 pub async fn shared_inbox(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     OriginalUri(uri): OriginalUri,
     headers: axum::http::HeaderMap,

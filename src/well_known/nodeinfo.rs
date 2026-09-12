@@ -1,7 +1,4 @@
-use axum::{
-    extract::{Extension, State},
-    Json,
-};
+use axum::{extract::Extension, Json};
 use serde_json::{json, Value};
 
 use crate::{error::AppResult, middleware::ResolvedInstance, state::AppState};
@@ -18,7 +15,7 @@ pub async fn nodeinfo_links(
 }
 
 pub async fn nodeinfo(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Json<Value>> {
     let (user_count, active_month, active_halfyear, status_count) = tokio::try_join!(

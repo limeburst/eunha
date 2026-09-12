@@ -6,7 +6,7 @@ use super::*;
 // ── GET /api/v1/accounts/relationships ────────────────────────────────────
 
 pub async fn get_relationships(
-    State(state): State<AppState>,
+    state: AppState,
     RawQuery(qs): RawQuery,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Relationship>>> {
@@ -61,7 +61,7 @@ pub struct FollowParams {
 }
 
 pub async fn follow_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<FollowParams>>,
@@ -343,7 +343,7 @@ pub async fn follow_account(
 // ── POST /api/v1/accounts/:id/unfollow ────────────────────────────────────
 
 pub async fn unfollow_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -451,7 +451,7 @@ pub async fn unfollow_account(
 }
 
 pub async fn get_account_followers(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -565,7 +565,7 @@ pub async fn get_account_followers(
 // ── GET /api/v1/accounts/:id/following ────────────────────────────────────
 
 pub async fn get_account_following(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     uri: Uri,
     req_headers: HeaderMap,

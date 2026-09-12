@@ -116,3 +116,24 @@ impl AppState {
         })
     }
 }
+
+/// The instance a request is for, which the tenant dispatcher puts on every
+/// request before the router sees it.
+///
+/// Handlers take this rather than axum's `State` so that one router serves
+/// every instance in the process: `State` bakes one instance into the routes,
+/// and building 594 routes for each tenant cost about 1.4 MiB apiece.
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AppState {
+    type Rejection = crate::error::AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        parts.extensions.get::<AppState>().cloned().ok_or_else(|| {
+            crate::error::AppError::Internal(anyhow::anyhow!(
+                "no instance on this request: it did not come through the tenant dispatcher"
+            ))
+        })
+    }
+}

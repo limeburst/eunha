@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -18,7 +18,7 @@ pub const CONTENT_TYPE: &str = "application/activity+json; charset=utf-8";
 /// Serve the instance actor at `/actor`: an Application actor whose public key
 /// remote servers fetch to verify our signed authorized-fetch GET requests.
 pub async fn get_instance_actor(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
 ) -> AppResult<Response> {
     let public_key = crate::federation::instance_actor::public_key(&state)
@@ -55,7 +55,7 @@ pub async fn get_instance_actor(
 /// Serve a local status as a bare ActivityPub `Note` object — username scheme
 /// (`/users/{username}/statuses/{id}`).
 pub async fn get_status(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path((username, id)): Path<(String, i64)>,
 ) -> AppResult<Response> {
@@ -71,7 +71,7 @@ pub async fn get_status(
 
 /// Numeric-scheme status (`/ap/users/{account_id}/statuses/{id}`).
 pub async fn get_status_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path((account_id, id)): Path<(i64, i64)>,
 ) -> AppResult<Response> {
@@ -81,7 +81,7 @@ pub async fn get_status_by_id(
 
 /// Serve the `Create(Note)` wrapper at `{status}/activity` — username scheme.
 pub async fn get_status_activity(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path((username, id)): Path<(String, i64)>,
 ) -> AppResult<Response> {
@@ -97,7 +97,7 @@ pub async fn get_status_activity(
 
 /// Numeric-scheme `{status}/activity`.
 pub async fn get_status_activity_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path((account_id, id)): Path<(i64, i64)>,
 ) -> AppResult<Response> {
@@ -187,7 +187,7 @@ async fn status_bundle(
 
 /// Serve the actor — username scheme (`/users/{username}`).
 pub async fn get_actor(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
 ) -> AppResult<Response> {
@@ -198,7 +198,7 @@ pub async fn get_actor(
 
 /// Serve the actor — numeric scheme (`/ap/users/{id}`).
 pub async fn get_actor_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {

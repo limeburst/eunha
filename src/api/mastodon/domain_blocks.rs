@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Query},
     http::{HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -12,7 +12,7 @@ use crate::{error::AppResult, middleware::AuthenticatedUser, state::AppState};
 // ── GET /api/v1/domain_blocks ─────────────────────────────────────────────
 
 pub async fn get_domain_blocks(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<PaginationParams>,
     uri: Uri,
@@ -63,7 +63,7 @@ pub struct DomainBlockForm {
 }
 
 pub async fn block_domain(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<DomainBlockForm>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -164,7 +164,7 @@ pub struct DomainPreviewQuery {
 }
 
 pub async fn preview_domain_block(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(q): Query<DomainPreviewQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -202,7 +202,7 @@ pub async fn preview_domain_block(
 // ── DELETE /api/v1/domain_blocks ─────────────────────────────────────────
 
 pub async fn unblock_domain(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<DomainBlockForm>,
 ) -> AppResult<Json<serde_json::Value>> {

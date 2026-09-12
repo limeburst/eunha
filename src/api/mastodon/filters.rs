@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::StatusCode,
     Json,
 };
@@ -70,7 +70,7 @@ async fn fetch_filter(state: &AppState, filter_id: i64, account_id: i64) -> AppR
 // ── GET /api/v2/filters ───────────────────────────────────────────────────
 
 pub async fn get_filters_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<Filter>>> {
     auth.require_scope("read:filters")?;
@@ -143,7 +143,7 @@ pub async fn get_filters_v2(
 // ── GET /api/v2/filters/:id ───────────────────────────────────────────────
 
 pub async fn get_filter_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Filter>> {
@@ -213,7 +213,7 @@ pub struct KeywordAttr {
 }
 
 pub async fn create_filter_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterForm>,
 ) -> AppResult<(StatusCode, Json<Filter>)> {
@@ -263,7 +263,7 @@ pub async fn create_filter_v2(
 // ── PUT /api/v2/filters/:id ───────────────────────────────────────────────
 
 pub async fn update_filter_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterForm>,
@@ -347,7 +347,7 @@ pub async fn update_filter_v2(
 // ── DELETE /api/v2/filters/:id ────────────────────────────────────────────
 
 pub async fn delete_filter_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -371,7 +371,7 @@ pub async fn delete_filter_v2(
 // ── GET /api/v2/filters/:id/keywords ─────────────────────────────────────
 
 pub async fn get_filter_keywords(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterKeyword>>> {
@@ -414,7 +414,7 @@ pub struct CreateKeywordForm {
 }
 
 pub async fn create_filter_keyword(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateKeywordForm>,
@@ -455,7 +455,7 @@ pub async fn create_filter_keyword(
 // ── GET /api/v2/filter_keywords/:id ──────────────────────────────────────
 
 pub async fn get_filter_keyword(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterKeyword>> {
@@ -482,7 +482,7 @@ pub async fn get_filter_keyword(
 // ── PUT /api/v2/filter_keywords/:id ──────────────────────────────────────
 
 pub async fn update_filter_keyword(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateKeywordForm>,
@@ -514,7 +514,7 @@ pub async fn update_filter_keyword(
 // ── DELETE /api/v2/filter_keywords/:id ───────────────────────────────────
 
 pub async fn delete_filter_keyword(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -541,7 +541,7 @@ pub async fn delete_filter_keyword(
 // ── GET /api/v2/filters/:id/statuses ─────────────────────────────────────
 
 pub async fn get_filter_statuses(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterStatus>>> {
@@ -583,7 +583,7 @@ pub struct AddFilterStatusForm {
 }
 
 pub async fn add_filter_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<AddFilterStatusForm>,
@@ -623,7 +623,7 @@ pub async fn add_filter_status(
 // ── GET /api/v2/filter_statuses/:id ──────────────────────────────────────
 
 pub async fn get_filter_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterStatus>> {
@@ -649,7 +649,7 @@ pub async fn get_filter_status(
 // ── DELETE /api/v2/filter_statuses/:id ───────────────────────────────────
 
 pub async fn delete_filter_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -676,7 +676,7 @@ pub async fn delete_filter_status(
 // ── GET /api/v1/filters ───────────────────────────────────────────────────
 
 pub async fn get_filters_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<FilterV1>>> {
     auth.require_scope("read:filters")?;
@@ -711,7 +711,7 @@ pub async fn get_filters_v1(
 // ── GET /api/v1/filters/:id ───────────────────────────────────────────────
 
 pub async fn get_filter_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<FilterV1>> {
@@ -751,7 +751,7 @@ pub struct CreateFilterV1Form {
 }
 
 pub async fn create_filter_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterV1Form>,
 ) -> AppResult<(StatusCode, Json<FilterV1>)> {
@@ -811,7 +811,7 @@ pub async fn create_filter_v1(
 // ── PUT /api/v1/filters/:id ───────────────────────────────────────────────
 
 pub async fn update_filter_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateFilterV1Form>,
@@ -886,7 +886,7 @@ pub async fn update_filter_v1(
 // ── DELETE /api/v1/filters/:id ────────────────────────────────────────────
 
 pub async fn delete_filter_v1(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {

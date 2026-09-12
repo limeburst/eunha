@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Extension, Query, State,
+        Extension, Query,
     },
     http::HeaderMap,
     response::IntoResponse,
@@ -25,7 +25,7 @@ pub struct StreamingParams {
 pub async fn handler(
     ws: WebSocketUpgrade,
     Query(params): Query<StreamingParams>,
-    State(state): State<AppState>,
+    state: AppState,
     // Auth may already be resolved by the authenticate middleware (Bearer header).
     auth: Option<Extension<AuthenticatedUser>>,
     headers: HeaderMap,

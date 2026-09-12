@@ -5,7 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{Extension, Multipart, Path, State},
+    extract::{Extension, Multipart, Path},
     Json,
 };
 use image::imageops::FilterType;
@@ -17,7 +17,7 @@ const SMALL_PIXELS: u32 = 230_400;
 // ── POST /api/v1/media, POST /api/v2/media ────────────────────────────────
 
 pub async fn upload_media(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     mut multipart: Multipart,
 ) -> AppResult<axum::response::Response> {
@@ -460,7 +460,7 @@ async fn process_media_job(
 // ── GET /api/v1/media/:id ─────────────────────────────────────────────────
 
 pub async fn get_media(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<MediaAttachment>> {
@@ -481,7 +481,7 @@ pub async fn get_media(
 // ── PUT /api/v1/media/:id ─────────────────────────────────────────────────
 
 pub async fn update_media(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     request: axum::extract::Request,
@@ -605,7 +605,7 @@ pub async fn update_media(
 // ── DELETE /api/v1/media/:id ──────────────────────────────────────────────
 
 pub async fn delete_media(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<axum::http::StatusCode> {

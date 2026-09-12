@@ -6,7 +6,7 @@ use super::*;
 // ── POST /api/v1/statuses ──────────────────────────────────────────────────
 
 pub async fn post_status(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     request: axum::extract::Request,

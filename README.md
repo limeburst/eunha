@@ -106,7 +106,8 @@ eunha --tenants /srv/eunha/tenants
 ~~~~
 
 Each instance keeps its own database, Redis prefix, background tasks and
-signing keys; what they share is the process. Three things follow from that:
+signing keys; what they share is the process and its routes, built once rather
+than per instance. Three things follow from that:
 
  -  **Tenant files are read on their own.** Environment variables belong to the
     process, so none of them overrides a tenant's file.

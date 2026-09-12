@@ -34,7 +34,7 @@ where
 }
 
 pub async fn edit_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<EditStatusForm>,
@@ -353,7 +353,7 @@ pub async fn edit_status(
 // ── GET /api/v1/statuses/:id/history ──────────────────────────────────────
 
 pub async fn get_status_history(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
 ) -> AppResult<Json<Vec<StatusEdit>>> {
@@ -529,7 +529,7 @@ pub async fn get_status_history(
 // ── GET /api/v1/statuses/:id/source ───────────────────────────────────────
 
 pub async fn get_status_source(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<StatusSource>> {

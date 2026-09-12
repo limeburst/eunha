@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -36,7 +36,7 @@ pub struct WebFingerLink {
 }
 
 pub async fn webfinger(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(q): Query<WebFingerQuery>,
 ) -> AppResult<Response> {

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query},
     http::{HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -40,7 +40,7 @@ struct ConvRow {
 // ── GET /api/v1/conversations ─────────────────────────────────────────────
 
 pub async fn get_conversations(
-    State(state): State<AppState>,
+    state: AppState,
     Query(pagination): Query<PaginationParams>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -321,7 +321,7 @@ pub async fn get_conversations(
 // ── DELETE /api/v1/conversations/:id ─────────────────────────────────────
 
 pub async fn delete_conversation(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -344,7 +344,7 @@ pub async fn delete_conversation(
 // ── POST /api/v1/conversations/:id/unread ────────────────────────────────
 
 pub async fn mark_conversation_unread(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {
@@ -382,7 +382,7 @@ pub async fn mark_conversation_unread(
 // ── POST /api/v1/conversations/:id/read ──────────────────────────────────
 
 pub async fn mark_conversation_read(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Conversation>> {

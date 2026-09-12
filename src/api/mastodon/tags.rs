@@ -5,7 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     http::{HeaderMap, Uri},
     response::{IntoResponse, Json},
     Extension,
@@ -93,7 +93,7 @@ fn tag_url(domain: &str, name: &str) -> String {
 // ── GET /api/v1/tags/:name ────────────────────────────────────────────────
 
 pub async fn get_tag(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(name): Path<String>,
     auth: Option<Extension<AuthenticatedUser>>,
@@ -159,7 +159,7 @@ pub struct FollowedTagsParams {
 }
 
 pub async fn list_followed_tags(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<FollowedTagsParams>,
@@ -224,7 +224,7 @@ pub async fn list_followed_tags(
 }
 
 pub async fn follow_tag(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
@@ -273,7 +273,7 @@ pub async fn follow_tag(
 }
 
 pub async fn unfollow_tag(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(name): Path<String>,

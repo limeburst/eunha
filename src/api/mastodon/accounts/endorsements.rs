@@ -4,7 +4,7 @@
 use super::*;
 
 pub async fn endorse_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -38,7 +38,7 @@ pub async fn endorse_account(
 // ── POST /api/v1/accounts/:id/unendorse ──────────────────────────────────
 
 pub async fn unendorse_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -58,7 +58,7 @@ pub async fn unendorse_account(
 // ── GET /api/v1/accounts/:id/endorsements ────────────────────────────────
 
 pub async fn get_endorsements(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -98,7 +98,7 @@ pub async fn get_endorsements(
 // ── GET /api/v1/endorsements ──────────────────────────────────────────────
 
 pub async fn get_my_endorsements(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Query},
     Json,
 };
 use serde::Deserialize;
@@ -37,7 +37,7 @@ pub struct SearchQuery {
 }
 
 pub async fn search(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(q): Query<SearchQuery>,
     auth: Option<Extension<AuthenticatedUser>>,

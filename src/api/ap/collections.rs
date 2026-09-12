@@ -9,7 +9,7 @@
 //! locally-owned collections and their accepted items are federated outbound.
 
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -207,7 +207,7 @@ pub async fn featured_collection_body(
 
 /// GET /collections/{id} — the FeaturedCollection AP object.
 pub async fn get_collection(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
@@ -228,7 +228,7 @@ pub async fn get_collection(
 /// GET /users/{username}/collections — an OrderedCollection of the account's
 /// FeaturedCollection object URIs.
 pub async fn get_account_collections(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
 ) -> AppResult<Response> {
@@ -237,7 +237,7 @@ pub async fn get_account_collections(
 
 /// Numeric-scheme collections (`/ap/users/{id}/collections`).
 pub async fn get_account_collections_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
@@ -285,7 +285,7 @@ async fn account_collections(
 /// GET /users/{username}/feature_authorizations/{id} — the FeatureAuthorization
 /// stamp proving a local account consented to being featured in a collection.
 pub async fn get_feature_authorization(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path((username, id)): Path<(String, i64)>,
 ) -> AppResult<Response> {
@@ -339,7 +339,7 @@ pub async fn get_feature_authorization(
 /// GET /users/{username}/quote_authorizations/{id} — the QuoteAuthorization
 /// stamp proving a local account authorized a quote of one of its posts.
 pub async fn get_quote_authorization(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path((username, id)): Path<(String, i64)>,
 ) -> AppResult<Response> {
@@ -415,7 +415,7 @@ enum Relation {
 
 /// GET /users/{username}/followers — an OrderedCollection of follower actor URIs.
 pub async fn get_followers(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
     axum::extract::Query(q): axum::extract::Query<PageQuery>,
@@ -432,7 +432,7 @@ pub async fn get_followers(
 
 /// GET /users/{username}/following — an OrderedCollection of followed actor URIs.
 pub async fn get_following(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
     axum::extract::Query(q): axum::extract::Query<PageQuery>,
@@ -449,7 +449,7 @@ pub async fn get_following(
 
 /// Numeric-scheme followers (`/ap/users/{id}/followers`).
 pub async fn get_followers_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
     axum::extract::Query(q): axum::extract::Query<PageQuery>,
@@ -466,7 +466,7 @@ pub async fn get_followers_by_id(
 
 /// Numeric-scheme following (`/ap/users/{id}/following`).
 pub async fn get_following_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
     axum::extract::Query(q): axum::extract::Query<PageQuery>,
@@ -619,7 +619,7 @@ async fn relation_collection(
 /// GET /users/{username}/collections/featured — an OrderedCollection of the
 /// account's pinned status URIs (Mastodon's `featured` collection).
 pub async fn get_featured(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(username): Path<String>,
 ) -> AppResult<Response> {
@@ -628,7 +628,7 @@ pub async fn get_featured(
 
 /// Numeric-scheme featured collection (`/ap/users/{id}/collections/featured`).
 pub async fn get_featured_by_id(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {

@@ -36,7 +36,7 @@ pub mod timelines;
 pub mod trends;
 pub mod types;
 
-use crate::{middleware as mw, state::AppState};
+use crate::middleware as mw;
 use axum::{
     extract::DefaultBodyLimit,
     http::HeaderMap,
@@ -170,7 +170,7 @@ pub(crate) fn link_headers(
     resp_headers
 }
 
-pub fn router(state: AppState) -> Router<AppState> {
+pub fn router() -> Router {
     let auth_required = Router::new()
         // Accounts — authenticated
         .route(
@@ -770,7 +770,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .put(scheduled_statuses::update_scheduled_status)
                 .delete(scheduled_statuses::delete_scheduled_status),
         )
-        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
+        .layer(middleware::from_fn(require_auth));
 
     // File-upload routes carry a generous body limit (25 MB, matching Mastodon).
     // Kept separate so the cap applies only here; everything else inherits the
@@ -787,7 +787,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             patch(accounts::update_credentials),
         )
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
-        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
+        .layer(middleware::from_fn(require_auth));
 
     let public = Router::new()
         // Instance info
@@ -988,7 +988,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 }
 
 /// Routes that must NOT be wrapped by CompressionLayer (WebSocket upgrades).
-pub fn streaming_router() -> Router<AppState> {
+pub fn streaming_router() -> Router {
     Router::new()
         .route("/api/v1/streaming", get(streaming::handler))
         .route(

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Query},
     http::{HeaderMap, Uri},
     response::IntoResponse,
     Json,
@@ -19,7 +19,7 @@ use crate::{error::AppResult, middleware::AuthenticatedUser, state::AppState};
 // ── GET /api/v1/bookmarks ─────────────────────────────────────────────────
 
 pub async fn get_bookmarks(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,

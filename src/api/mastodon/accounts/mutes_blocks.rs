@@ -15,7 +15,7 @@ pub struct MuteParams {
 }
 
 pub async fn mute_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     body: Option<Json<MuteParams>>,
@@ -53,7 +53,7 @@ pub async fn mute_account(
 // ── POST /api/v1/accounts/:id/unmute ──────────────────────────────────────
 
 pub async fn unmute_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -74,7 +74,7 @@ pub async fn unmute_account(
 // ── POST /api/v1/accounts/:id/block ───────────────────────────────────────
 
 pub async fn block_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -268,7 +268,7 @@ pub async fn block_account(
 // ── POST /api/v1/accounts/:id/unblock ─────────────────────────────────────
 
 pub async fn unblock_account(
-    State(state): State<AppState>,
+    state: AppState,
     Path(target_id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Relationship>> {
@@ -359,7 +359,7 @@ pub async fn unblock_account(
 // ── GET /api/v1/blocks ────────────────────────────────────────────────────
 
 pub async fn get_blocks(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,
@@ -419,7 +419,7 @@ pub async fn get_blocks(
 // ── GET /api/v1/mutes ─────────────────────────────────────────────────────
 
 pub async fn get_mutes(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     uri: Uri,
     req_headers: HeaderMap,

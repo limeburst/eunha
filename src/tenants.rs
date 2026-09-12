@@ -1,8 +1,8 @@
 //! One process, any number of instances.
 //!
-//! Every eunha process serves a registry of tenants — an instance each, with its
-//! own configuration, database pool, Redis namespace, background tasks and
-//! router — and hands every request to one of them by its `Host` header before
+//! Every eunha process serves a registry of tenants — an instance each, with
+//! its own configuration, database pool, Redis namespace and background tasks
+//! — and hands every request to one of them by its `Host` header before
 //! anything else sees it. A single instance is a registry of one, read from
 //! `config.toml` and the environment as it always was; `--tenants <dir>` reads
 //! one configuration file per instance from a directory.
@@ -29,12 +29,19 @@
 //! [`spawn_blocking`]; `clippy.toml` refuses Tokio's own, which would start
 //! them outside every span.
 //!
+//! The routes are the process's own rather than each tenant's, built once by
+//! [`crate::build_app`]: the dispatcher puts the tenant's state on the request
+//! instead, and handlers take it as a plain `AppState` extractor. A router of
+//! 594 routes with their layers cost about 1.4 MiB for every tenant that had
+//! one of its own.
+//!
 //! A running process can be handed a new set of tenants with
 //! [`Tenants::reload`] — `eunha` does so on `SIGHUP` — which starts, restarts
 //! and stops only the tenants that changed, while the rest serve on.
 
 use crate::{config, migrate, state::AppState};
 use anyhow::{Context as _, Result};
+use axum::http::Extensions;
 use axum::{
     extract::Request,
     http::{header, StatusCode},
@@ -469,18 +476,25 @@ pub struct Reloaded {
     pub kept: Vec<String>,
 }
 
-/// A tenant that is serving, as a request sees it: its router, and the limit
-/// on requests it may have in flight, when it has one.
+/// A tenant that is serving, as a request sees it: what it puts on every
+/// request handed to it, and the limit on requests it may have in flight, when
+/// it has one.
+///
+/// The routes are the process's, built once; what makes a request this
+/// tenant's is its [`AppState`], which the dispatcher puts on the request
+/// before the shared router sees it.
 #[derive(Clone)]
 struct Tenant {
-    router: Router,
+    extensions: Extensions,
     in_flight: Option<Arc<Semaphore>>,
 }
 
 impl Tenant {
     fn new(state: &AppState, shared: bool) -> Self {
+        let mut extensions = Extensions::new();
+        extensions.insert(state.clone());
         Self {
-            router: crate::build_app(state.clone()),
+            extensions,
             in_flight: state
                 .config
                 .limits
@@ -562,6 +576,8 @@ impl Running {
 
 /// Every tenant a process serves, by host.
 pub struct Tenants {
+    /// Every route the process serves, built once and shared by every tenant.
+    router: Router,
     registry: RwLock<Arc<Registry>>,
     /// What the process was set up with when it started. The listener, the
     /// resolver's private networks and the delivery budget are fixed from then
@@ -614,6 +630,7 @@ pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
     }
 
     Ok(Tenants {
+        router: crate::build_app(),
         registry: RwLock::new(Arc::new(Registry::new(by_host))),
         settings,
         running: tokio::sync::Mutex::new(running),
@@ -715,6 +732,7 @@ impl Tenants {
             );
         }
         Ok(Self {
+            router: crate::build_app(),
             registry: RwLock::new(Arc::new(Registry::new(by_host))),
             settings,
             running: tokio::sync::Mutex::new(running),
@@ -860,7 +878,7 @@ impl Tenants {
         Arc::new(self).router()
     }
 
-    async fn dispatch(&self, req: Request) -> Response {
+    async fn dispatch(&self, mut req: Request) -> Response {
         // HTTP/1.1 names the host in `Host`; HTTP/2 in the request's authority.
         let host = req
             .headers()
@@ -881,7 +899,10 @@ impl Tenants {
                     },
                     None => None,
                 };
-                match tenant.router.clone().oneshot(req).await {
+                // What tells the shared router which instance this request is
+                // for. Nothing else about a request says.
+                req.extensions_mut().extend(tenant.extensions.clone());
+                match self.router.clone().oneshot(req).await {
                     Ok(response) => response,
                     Err(never) => match never {},
                 }
@@ -963,9 +984,11 @@ vapid_public_key = ""
         }
     }
 
-    fn serving(router: Router, limit: Option<usize>) -> Tenant {
+    /// A serving tenant with no instance behind it: these tests dispatch to a
+    /// router of their own rather than to eunha's routes.
+    fn serving(limit: Option<usize>) -> Tenant {
         Tenant {
-            router,
+            extensions: Extensions::new(),
             in_flight: limit.map(|limit| Arc::new(Semaphore::new(limit))),
         }
     }
@@ -988,8 +1011,9 @@ vapid_public_key = ""
         }
     }
 
-    fn tenants(hosts: Vec<(&str, Option<Tenant>)>) -> Tenants {
+    fn tenants(hosts: Vec<(&str, Option<Tenant>)>, router: Router) -> Tenants {
         Tenants {
+            router,
             registry: RwLock::new(Arc::new(registry(hosts))),
             settings: process_settings(&[tenant("a.toml", "a.example", "127.0.0.1:3000", &[], "")])
                 .unwrap(),
@@ -1007,7 +1031,7 @@ vapid_public_key = ""
 
     #[test]
     fn hosts_are_matched_without_case_a_trailing_dot_or_a_port() {
-        let t = registry(vec![("seoul.earth", Some(serving(Router::new(), None)))]);
+        let t = registry(vec![("seoul.earth", Some(serving(None)))]);
         for host in [
             "seoul.earth",
             "Seoul.Earth",
@@ -1026,7 +1050,7 @@ vapid_public_key = ""
     #[test]
     fn a_tenant_that_did_not_start_is_unavailable_not_unknown() {
         let t = registry(vec![
-            ("seoul.earth", Some(serving(Router::new(), None))),
+            ("seoul.earth", Some(serving(None))),
             ("example.social", None),
         ]);
         assert!(matches!(t.lookup("example.social"), Lookup::Unavailable));
@@ -1036,16 +1060,13 @@ vapid_public_key = ""
     fn a_lone_tenant_answers_every_host() {
         let t = Registry::new(HashMap::from([(
             "seoul.earth".to_string(),
-            Slot::Serving(serving(Router::new(), None)),
+            Slot::Serving(serving(None)),
         )]));
         assert!(matches!(t.lookup("localhost:3000"), Lookup::Serving(_)));
         assert!(matches!(t.lookup(""), Lookup::Serving(_)));
 
         let not_lone = Registry::new(HashMap::from([
-            (
-                "seoul.earth".to_string(),
-                Slot::Serving(serving(Router::new(), None)),
-            ),
+            ("seoul.earth".to_string(), Slot::Serving(serving(None))),
             ("example.social".to_string(), Slot::Unavailable),
         ]));
         assert!(matches!(not_lone.lookup("localhost:3000"), Lookup::Unknown));
@@ -1330,27 +1351,39 @@ vapid_public_key = ""
     /// free again once the held request finishes.
     #[tokio::test]
     async fn a_tenant_at_its_limit_sheds_load_and_its_neighbour_does_not() {
+        // One router, as the process has: which tenant a request is for is
+        // the only difference between these two.
         let gate = Arc::new(tokio::sync::Notify::new());
-        let held = {
+        let shared = {
             let gate = gate.clone();
             Router::new().route(
                 "/",
-                axum::routing::get(move || {
+                axum::routing::get(move |headers: axum::http::HeaderMap| {
                     let gate = gate.clone();
                     async move {
-                        gate.notified().await;
-                        "released"
+                        let busy = headers
+                            .get(header::HOST)
+                            .and_then(|host| host.to_str().ok())
+                            .is_some_and(|host| host.starts_with("busy"));
+                        if busy {
+                            gate.notified().await;
+                            "released"
+                        } else {
+                            "calm"
+                        }
                     }
                 }),
             )
         };
-        let calm = Router::new().route("/", axum::routing::get(|| async { "calm" }));
-        let busy_tenant = serving(held, Some(1));
+        let busy_tenant = serving(Some(1));
         let busy_limit = busy_tenant.in_flight.clone().unwrap();
-        let t = Arc::new(tenants(vec![
-            ("busy.example", Some(busy_tenant)),
-            ("calm.example", Some(serving(calm, Some(1)))),
-        ]));
+        let t = Arc::new(tenants(
+            vec![
+                ("busy.example", Some(busy_tenant)),
+                ("calm.example", Some(serving(Some(1)))),
+            ],
+            shared,
+        ));
 
         let first = {
             let t = t.clone();

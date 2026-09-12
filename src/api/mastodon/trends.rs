@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, Query},
     Json,
 };
 use serde::Deserialize;
@@ -28,7 +28,7 @@ pub struct TrendParams {
 // ── GET /api/v1/trends/tags  &  GET /api/v1/trends ────────────────────────
 
 pub async fn trending_tags(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Query(params): Query<TrendParams>,
     auth: Option<Extension<AuthenticatedUser>>,
@@ -116,7 +116,7 @@ pub async fn trending_tags(
 // ── GET /api/v1/trends/statuses ───────────────────────────────────────────
 
 pub async fn trending_statuses(
-    State(state): State<AppState>,
+    state: AppState,
     Query(params): Query<TrendParams>,
     auth: Option<Extension<crate::middleware::AuthenticatedUser>>,
     req_headers: axum::http::HeaderMap,
@@ -277,7 +277,7 @@ pub async fn trending_statuses(
 // ── GET /api/v1/trends/links ──────────────────────────────────────────────
 
 pub async fn trending_links(
-    State(state): State<AppState>,
+    state: AppState,
     Query(params): Query<TrendParams>,
     req_headers: axum::http::HeaderMap,
     uri: axum::http::Uri,

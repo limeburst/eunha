@@ -1,7 +1,4 @@
-use axum::{
-    extract::{Extension, State},
-    Json,
-};
+use axum::{extract::Extension, Json};
 use serde::Deserialize;
 
 use super::{
@@ -44,7 +41,7 @@ pub struct ReportForm {
 }
 
 pub async fn file_report(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(_instance)): Extension<crate::middleware::ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<ReportForm>,

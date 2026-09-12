@@ -4,7 +4,7 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     http::{HeaderMap, Uri},
     response::{IntoResponse, Json},
     Extension,
@@ -40,7 +40,7 @@ async fn fetch_scheduled_media(
 }
 
 pub async fn list_scheduled_statuses(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(pagination): Query<super::types::PaginationParams>,
     uri: Uri,
@@ -106,7 +106,7 @@ pub async fn list_scheduled_statuses(
 // ── GET /api/v1/scheduled_statuses/:id ────────────────────────────────────
 
 pub async fn get_scheduled_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<ScheduledStatus>> {
@@ -137,7 +137,7 @@ pub struct UpdateScheduledStatusForm {
 }
 
 pub async fn update_scheduled_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<UpdateScheduledStatusForm>,
@@ -188,7 +188,7 @@ pub async fn update_scheduled_status(
 // ── DELETE /api/v1/scheduled_statuses/:id ─────────────────────────────────
 
 pub async fn delete_scheduled_status(
-    State(state): State<AppState>,
+    state: AppState,
     Path(id): Path<i64>,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<serde_json::Value>> {

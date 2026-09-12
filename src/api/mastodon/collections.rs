@@ -8,7 +8,7 @@
 //! collections (Add/Remove/feature-request distribution) is not yet wired up.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     response::IntoResponse,
     Extension, Json,
 };
@@ -216,7 +216,7 @@ async fn collection_entity(
 // ── GET /api/v1/accounts/{id}/collections ─────────────────────────────────
 
 pub async fn account_collections(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(account_id): Path<i64>,
     Query(params): Query<OffsetParams>,
@@ -254,7 +254,7 @@ pub async fn account_collections(
 // ── GET /api/v1/accounts/{id}/in_collections ──────────────────────────────
 
 pub async fn account_in_collections(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(account_id): Path<i64>,
@@ -290,7 +290,7 @@ pub async fn account_in_collections(
 // ── GET /api/v1/collections/{id} ──────────────────────────────────────────
 
 pub async fn show_collection(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Path(id): Path<i64>,
     auth: Option<Extension<AuthenticatedUser>>,
@@ -370,7 +370,7 @@ async fn resolve_tag(state: &AppState, tag_name: &str) -> AppResult<i64> {
 }
 
 pub async fn create_collection(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateCollectionForm>,
@@ -458,7 +458,7 @@ pub struct UpdateCollectionForm {
 }
 
 pub async fn update_collection(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
@@ -531,7 +531,7 @@ pub async fn update_collection(
 // ── DELETE /api/v1/collections/{id} ───────────────────────────────────────
 
 pub async fn delete_collection(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
@@ -786,7 +786,7 @@ pub struct AddItemForm {
 
 /// POST /api/v1/collections/{id}/items
 pub async fn add_collection_item(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(collection_id): Path<i64>,
@@ -820,7 +820,7 @@ pub async fn add_collection_item(
 
 /// DELETE /api/v1/collections/{id}/items/{item_id}
 pub async fn delete_collection_item(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path((collection_id, item_id)): Path<(i64, i64)>,
@@ -856,7 +856,7 @@ pub async fn delete_collection_item(
 
 /// POST /api/v1/collections/{id}/items/{item_id}/revoke
 pub async fn revoke_collection_item(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Path((collection_id, item_id)): Path<(i64, i64)>,

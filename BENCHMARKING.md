@@ -368,6 +368,10 @@ for the router — 594 routes, each with its middleware layers cloned — about
 the tenant itself, its pool, Redis connection and configuration, is about
 0.3 MiB. A burst of load leaves 35 KiB of new live data behind.
 
+Of those, the router is now built once for the whole process rather than once
+per instance, so instances sharing a process share it. The certificates and the
+S3 client are still each instance's own.
+
 Everything else is fragmentation: freed space scattered across pages that each
 still hold something live, which the allocator cannot hand back. It is
 bimodal — a process either settles near 15 MiB or keeps 20–31 MiB — and does

@@ -11,7 +11,7 @@
 //! admin who minted it. The count is the limit — there is no allowance to keep
 //! books on, because the codes themselves are the allowance.
 
-use axum::{extract::State, routing::post, Extension, Json, Router};
+use axum::{routing::post, Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -52,7 +52,7 @@ pub struct GrantResponse {
 
 /// POST /api/eunha/v1/invite_grants
 pub async fn grant_invites(
-    State(state): State<AppState>,
+    state: AppState,
     auth: Option<Extension<AuthenticatedUser>>,
     Json(req): Json<GrantRequest>,
 ) -> AppResult<Json<GrantResponse>> {
@@ -160,6 +160,6 @@ pub async fn grant_invites(
     }))
 }
 
-pub fn routes() -> Router<AppState> {
+pub fn routes() -> Router {
     Router::new().route("/api/eunha/v1/invite_grants", post(grant_invites))
 }

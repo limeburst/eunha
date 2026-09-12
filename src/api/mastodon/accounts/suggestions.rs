@@ -5,7 +5,7 @@ use super::*;
 // ── GET /api/v1/suggestions ────────────────────────────────────────────────
 
 pub async fn get_suggestions(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<ApiAccount>>> {
@@ -50,7 +50,7 @@ pub async fn get_suggestions(
 // ── DELETE /api/v1/suggestions/:account_id ────────────────────────────────
 
 pub async fn dismiss_suggestion(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(account_id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -68,7 +68,7 @@ pub async fn dismiss_suggestion(
 // ── GET /api/v2/suggestions ───────────────────────────────────────────────
 
 pub async fn get_suggestions_v2(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<Vec<SuggestionV2>>> {

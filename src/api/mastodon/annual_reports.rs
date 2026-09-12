@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -419,7 +419,7 @@ fn db_row_to_report(
 // ── GET /api/v1/annual_reports ─────────────────────────────────────────────
 
 pub async fn list_annual_reports(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<AnnualReportsResponse>> {
     auth.require_scope("read:accounts")?;
@@ -454,7 +454,7 @@ pub async fn list_annual_reports(
 // ── GET /api/v1/annual_reports/{year} ─────────────────────────────────────
 
 pub async fn get_annual_report(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(year): Path<i32>,
 ) -> AppResult<Json<AnnualReportsResponse>> {
@@ -493,7 +493,7 @@ pub async fn get_annual_report(
 // ── POST /api/v1/annual_reports/{year}/read ────────────────────────────────
 
 pub async fn read_annual_report(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(year): Path<i32>,
 ) -> AppResult<impl IntoResponse> {
@@ -519,7 +519,7 @@ pub async fn read_annual_report(
 // ── POST /api/v1/annual_reports/{year}/generate ────────────────────────────
 
 pub async fn generate_annual_report(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(year): Path<i32>,
 ) -> AppResult<impl IntoResponse> {
@@ -572,7 +572,7 @@ pub async fn generate_annual_report(
 // ── GET /api/v1/annual_reports/{year}/state ────────────────────────────────
 
 pub async fn get_annual_report_state(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(year): Path<i32>,
 ) -> AppResult<Json<serde_json::Value>> {

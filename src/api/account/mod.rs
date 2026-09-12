@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::Query,
     http::{header, HeaderMap, HeaderName, HeaderValue},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -18,7 +18,7 @@ use crate::{
 const COOKIE_NAME: &str = "account_session";
 const COOKIE_MAX_AGE: u32 = 2_592_000; // 30 days
 
-pub fn router(state: AppState) -> Router<AppState> {
+pub fn router() -> Router {
     Router::new()
         .route("/account", get(account_home))
         .route("/account/login", get(login_page).post(login_post))
@@ -26,7 +26,6 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/account/sso", post(sso_post))
         .route("/account/password", get(password_page).post(password_post))
         .route("/account/delete", get(delete_page).post(delete_post))
-        .with_state(state)
 }
 
 // ── Session lookup ─────────────────────────────────────────────────────────────
@@ -93,7 +92,7 @@ fn is_htmx(headers: &HeaderMap) -> bool {
 // ── GET /account ───────────────────────────────────────────────────────────────
 
 pub async fn account_home(
-    State(state): State<AppState>,
+    state: AppState,
     axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<
         ResolvedInstance,
     >,
@@ -179,7 +178,7 @@ pub struct LoginForm {
 }
 
 pub async fn login_post(
-    State(state): State<AppState>,
+    state: AppState,
     axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<
         ResolvedInstance,
     >,
@@ -288,7 +287,7 @@ pub struct SsoForm {
 }
 
 pub async fn sso_post(
-    State(state): State<AppState>,
+    state: AppState,
     axum::extract::Extension(ResolvedInstance(_instance)): axum::extract::Extension<
         ResolvedInstance,
     >,
@@ -324,7 +323,7 @@ pub async fn sso_post(
 
 // ── POST /account/logout ───────────────────────────────────────────────────────
 
-pub async fn logout_post(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub async fn logout_post(state: AppState, headers: HeaderMap) -> Response {
     if let Some(token) = extract_session_token(&headers) {
         let _ = sqlx::query!(
             "UPDATE oauth_access_tokens SET revoked_at = now() WHERE token = $1",
@@ -361,7 +360,7 @@ pub struct PasswordQuery {
 }
 
 pub async fn password_page(
-    State(state): State<AppState>,
+    state: AppState,
     axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<
         ResolvedInstance,
     >,
@@ -412,7 +411,7 @@ pub struct PasswordForm {
 }
 
 pub async fn password_post(
-    State(state): State<AppState>,
+    state: AppState,
     axum::extract::Extension(ResolvedInstance(_instance)): axum::extract::Extension<
         ResolvedInstance,
     >,
@@ -500,7 +499,7 @@ pub struct DeleteQuery {
 
 /// eunha's counterpart to Mastodon's `/settings/delete`.
 pub async fn delete_page(
-    State(state): State<AppState>,
+    state: AppState,
     axum::extract::Extension(ResolvedInstance(instance)): axum::extract::Extension<
         ResolvedInstance,
     >,
@@ -580,7 +579,7 @@ pub struct DeleteForm {
 /// Port of `Settings::DeletesController#destroy`: pass the challenge, suspend
 /// the account, purge it, and sign out.
 pub async fn delete_post(
-    State(state): State<AppState>,
+    state: AppState,
     headers: HeaderMap,
     Form(form): Form<DeleteForm>,
 ) -> Response {

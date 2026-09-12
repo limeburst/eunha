@@ -5,7 +5,6 @@
 /// images, manifest, etc.) are served directly; every other path falls back to
 /// `index.html` so the client-side router can take over.
 use axum::{
-    extract::State,
     http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Response},
 };
@@ -14,7 +13,7 @@ use crate::state::AppState;
 
 const DIST: &str = "frontend/dist";
 
-pub async fn serve(State(state): State<AppState>, uri: Uri) -> Response {
+pub async fn serve(state: AppState, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
 
     // Serve static assets directly. Path traversal guard: reject anything with "..".

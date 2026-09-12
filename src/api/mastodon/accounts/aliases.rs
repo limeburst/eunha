@@ -12,7 +12,7 @@ pub struct MoveAccountForm {
 }
 
 pub async fn move_account(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(ResolvedInstance(instance)): Extension<ResolvedInstance>,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<MoveAccountForm>,
@@ -122,7 +122,7 @@ pub struct AccountAlias {
 }
 
 pub async fn list_aliases(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
 ) -> AppResult<Json<Vec<AccountAlias>>> {
     auth.require_scope("read:accounts")?;
@@ -150,7 +150,7 @@ pub struct CreateAliasForm {
 }
 
 pub async fn create_alias(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Json(form): Json<CreateAliasForm>,
 ) -> AppResult<Json<AccountAlias>> {
@@ -172,7 +172,7 @@ pub async fn create_alias(
 }
 
 pub async fn delete_alias(
-    State(state): State<AppState>,
+    state: AppState,
     Extension(auth): Extension<AuthenticatedUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
