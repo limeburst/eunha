@@ -130,6 +130,12 @@ async fn run(
 
     loop {
         tokio::select! {
+            () = state.stop.cancelled() => {
+                // The instance is being stopped. Closing tells the client to
+                // reconnect, which reaches whatever serves its host now.
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             result = rx.recv() => {
                 match result {
                     Ok(event) => {

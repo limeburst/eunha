@@ -338,20 +338,20 @@ fn strip_exif(data: &[u8], content_type: &str) -> Vec<u8> {
 const MEDIA_QUEUE_IDLE: std::time::Duration = std::time::Duration::from_secs(2);
 const MEDIA_QUEUE_ERROR_IDLE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Drain the durable media-processing queue. Spawned once at startup.
+/// Drain the durable media-processing queue until the instance is stopped.
 pub async fn run_media_queue(state: AppState) {
     let worker_id = format!("media-{}", std::process::id());
     let mut idle = crate::background::IdleBackoff::new(
         MEDIA_QUEUE_IDLE,
         state.config.workers.sanitized().queue_idle_poll(),
     );
-    loop {
+    while !state.stop.is_cancelled() {
         match run_media_queue_batch(&state, &worker_id).await {
-            Ok(0) => idle.idle(&state.queues.media).await,
+            Ok(0) => idle.idle(&state.queues.media, &state.stop).await,
             Ok(_) => idle.reset(),
             Err(e) => {
                 tracing::error!(error = %e, "media processing queue batch failed");
-                tokio::time::sleep(MEDIA_QUEUE_ERROR_IDLE).await;
+                crate::background::rest(&state.stop, MEDIA_QUEUE_ERROR_IDLE).await;
             }
         }
     }

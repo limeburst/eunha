@@ -527,7 +527,8 @@ fn with_data_integrity_context(mut activity: Value) -> Option<Value> {
 /// Run one loop of the durable ActivityPub delivery queue. `index` distinguishes
 /// sibling loops in the same process so each claims jobs under its own
 /// `locked_by`; claims are serialized by `FOR UPDATE SKIP LOCKED`, so any number
-/// of loops (or processes) can drain the queue safely.
+/// of loops (or processes) can drain the queue safely. It returns once the
+/// instance is stopped, after the batch it is in.
 pub async fn run_delivery_queue(state: AppState, index: usize) {
     let worker_id = format!(
         "{}:{}:{}",
@@ -541,16 +542,16 @@ pub async fn run_delivery_queue(state: AppState, index: usize) {
     let mut idle =
         crate::background::IdleBackoff::new(DELIVERY_QUEUE_IDLE, workers.queue_idle_poll());
 
-    loop {
+    while !state.stop.is_cancelled() {
         match run_delivery_queue_batch(&state, &worker_id, batch, concurrency).await {
-            Ok(0) => idle.idle(&state.queues.delivery).await,
+            Ok(0) => idle.idle(&state.queues.delivery, &state.stop).await,
             Ok(n) => {
                 idle.reset();
                 tracing::debug!(count = n, "processed ActivityPub delivery jobs");
             }
             Err(e) => {
                 tracing::error!(error = %e, "ActivityPub delivery queue batch failed");
-                tokio::time::sleep(DELIVERY_QUEUE_ERROR_IDLE).await;
+                crate::background::rest(&state.stop, DELIVERY_QUEUE_ERROR_IDLE).await;
             }
         }
     }
@@ -772,13 +773,13 @@ async fn record_job_outcome(
 /// Delivered jobs are kept briefly; permanently-failed jobs are kept longer so
 /// their `last_error` is available for debugging.
 pub async fn run_delivery_cleanup(state: AppState) {
-    loop {
+    while !state.stop.is_cancelled() {
         match cleanup_finished_jobs(&state).await {
             Ok(0) => {}
             Ok(n) => tracing::info!(deleted = n, "pruned finished delivery jobs"),
             Err(e) => tracing::error!(error = %e, "delivery job cleanup failed"),
         }
-        tokio::time::sleep(DELIVERY_CLEANUP_INTERVAL).await;
+        crate::background::rest(&state.stop, DELIVERY_CLEANUP_INTERVAL).await;
     }
 }
 

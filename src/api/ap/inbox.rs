@@ -408,16 +408,16 @@ pub async fn run_inbox_queue(state: AppState, index: usize) {
     let concurrency = workers.inbox_concurrency;
     let mut idle = crate::background::IdleBackoff::new(INBOX_QUEUE_IDLE, workers.queue_idle_poll());
 
-    loop {
+    while !state.stop.is_cancelled() {
         match run_inbox_queue_batch(&state, &worker_id, batch, concurrency).await {
-            Ok(0) => idle.idle(&state.queues.inbox).await,
+            Ok(0) => idle.idle(&state.queues.inbox, &state.stop).await,
             Ok(n) => {
                 idle.reset();
                 tracing::debug!(count = n, "processed inbound ActivityPub activities");
             }
             Err(e) => {
                 tracing::error!(error = %e, "ingress queue batch failed");
-                tokio::time::sleep(INBOX_QUEUE_ERROR_IDLE).await;
+                crate::background::rest(&state.stop, INBOX_QUEUE_ERROR_IDLE).await;
             }
         }
     }
@@ -562,7 +562,7 @@ async fn process_inbox_job(
 /// `last_error` is kept for a week so a federation bug is still diagnosable
 /// after the fact.
 pub async fn run_inbox_cleanup(state: AppState) {
-    loop {
+    while !state.stop.is_cancelled() {
         let deleted = sqlx::query!(
             r#"DELETE FROM eunha.inbox_jobs
                WHERE failed_at IS NOT NULL AND failed_at < now() - interval '7 days'"#,
@@ -575,7 +575,7 @@ pub async fn run_inbox_cleanup(state: AppState) {
             Ok(n) => tracing::info!(deleted = n, "pruned failed inbound activities"),
             Err(e) => tracing::error!(error = %e, "inbox job cleanup failed"),
         }
-        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        crate::background::rest(&state.stop, std::time::Duration::from_secs(3600)).await;
     }
 }
 

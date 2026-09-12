@@ -1,33 +1,74 @@
+use std::future::Future;
 use std::time::Duration;
+
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::state::AppState;
 
-/// Spawns all background tasks, each in the tenant's span so that what they log
-/// names the instance. Called once at startup.
-pub fn spawn(state: AppState) {
+/// How long a stopped instance's background task may take to finish the pass it
+/// is in before it is dropped where it stands. Every loop notices a stop between
+/// passes and while it sleeps, so this only bounds a pass that is slow — a large
+/// delivery batch, an account deletion. Dropping one loses no work: a claimed
+/// job's lock goes stale, and a worker takes it up again.
+pub const STOP_GRACE: Duration = Duration::from_secs(20);
+
+/// Spawns all of an instance's background tasks, each in the tenant's span so
+/// that what they log names the instance, and returns them so that stopping the
+/// instance can wait for them.
+pub fn spawn(state: AppState) -> Vec<JoinHandle<()>> {
     let _tenant = crate::tenants::span(&state.instance.domain).entered();
-    crate::tenants::spawn(run_scheduled_statuses(state.clone()));
-    crate::tenants::spawn(run_poll_expiry(state.clone()));
-    crate::tenants::spawn(run_suspended_account_cleanup(state.clone()));
-    crate::tenants::spawn(crate::federation::delivery::run_delivery_cleanup(
-        state.clone(),
-    ));
-    crate::tenants::spawn(crate::api::ap::inbox::run_inbox_cleanup(state.clone()));
-    crate::tenants::spawn(crate::api::mastodon::media::run_media_queue(state.clone()));
-    crate::tenants::spawn(crate::software_updates::run_update_check(state.clone()));
+    let mut tasks = vec![
+        until_stopped(
+            &state,
+            "scheduled statuses",
+            run_scheduled_statuses(state.clone()),
+        ),
+        until_stopped(&state, "poll expiry", run_poll_expiry(state.clone())),
+        until_stopped(
+            &state,
+            "suspended account cleanup",
+            run_suspended_account_cleanup(state.clone()),
+        ),
+        until_stopped(
+            &state,
+            "delivery cleanup",
+            crate::federation::delivery::run_delivery_cleanup(state.clone()),
+        ),
+        until_stopped(
+            &state,
+            "inbox cleanup",
+            crate::api::ap::inbox::run_inbox_cleanup(state.clone()),
+        ),
+        until_stopped(
+            &state,
+            "media queue",
+            crate::api::mastodon::media::run_media_queue(state.clone()),
+        ),
+        until_stopped(
+            &state,
+            "update check",
+            crate::software_updates::run_update_check(state.clone()),
+        ),
+    ];
 
     // Queue loops are sized from `[workers]` in config. Each loop claims work
     // with `FOR UPDATE SKIP LOCKED`, so adding loops within this process scales
     // the same way adding processes would.
     let workers = state.config.workers.sanitized();
     for index in 0..workers.delivery_workers {
-        crate::tenants::spawn(crate::federation::delivery::run_delivery_queue(
-            state.clone(),
-            index,
+        tasks.push(until_stopped(
+            &state,
+            "delivery queue",
+            crate::federation::delivery::run_delivery_queue(state.clone(), index),
         ));
     }
     for index in 0..workers.inbox_workers {
-        crate::tenants::spawn(crate::api::ap::inbox::run_inbox_queue(state.clone(), index));
+        tasks.push(until_stopped(
+            &state,
+            "inbox queue",
+            crate::api::ap::inbox::run_inbox_queue(state.clone(), index),
+        ));
     }
     tracing::info!(
         delivery_workers = workers.delivery_workers,
@@ -36,6 +77,37 @@ pub fn spawn(state: AppState) {
         inbox_concurrency = workers.inbox_concurrency,
         "background queues started"
     );
+    tasks
+}
+
+/// Spawn `work`, one of the loops above, which returns by itself once the
+/// instance is stopped and it has finished the pass it was in — or is dropped,
+/// if that takes longer than [`STOP_GRACE`].
+fn until_stopped(
+    state: &AppState,
+    task: &'static str,
+    work: impl Future<Output = ()> + Send + 'static,
+) -> JoinHandle<()> {
+    let stop = state.stop.clone();
+    crate::tenants::spawn(async move {
+        tokio::select! {
+            () = work => {}
+            () = async {
+                stop.cancelled().await;
+                tokio::time::sleep(STOP_GRACE).await;
+            } => {
+                tracing::warn!(task, "background task still busy after the grace period; dropped");
+            }
+        }
+    })
+}
+
+/// Sleep for `nap`, or until the instance is stopped.
+pub async fn rest(stop: &CancellationToken, nap: Duration) {
+    tokio::select! {
+        () = stop.cancelled() => {}
+        () = tokio::time::sleep(nap) => {}
+    }
 }
 
 // ── Queue wake-ups ────────────────────────────────────────────────────────
@@ -86,13 +158,15 @@ impl IdleBackoff {
         self.current = self.floor;
     }
 
-    /// Sleep until `wake` is raised or the current interval passes.
+    /// Sleep until `wake` is raised, the current interval passes, or the
+    /// instance is stopped.
     ///
     /// `Notify` keeps a permit raised while nobody was waiting, so a job
     /// enqueued between an empty claim and this call ends the sleep at once
     /// instead of waiting out the interval.
-    pub async fn idle(&mut self, wake: &tokio::sync::Notify) {
+    pub async fn idle(&mut self, wake: &tokio::sync::Notify, stop: &CancellationToken) {
         tokio::select! {
+            () = stop.cancelled() => {}
             _ = wake.notified() => self.reset(),
             _ = tokio::time::sleep(jittered(self.current, rand::random())) => {
                 self.current = (self.current * 2).min(self.ceiling);
@@ -146,9 +220,11 @@ fn timed_task_nap(
     }
 }
 
-/// Sleep for `nap`, or until `wake` says the next item may now be due sooner.
-async fn sleep_or_wake(wake: &tokio::sync::Notify, nap: Duration) {
+/// Sleep for `nap`, until `wake` says the next item may now be due sooner, or
+/// until the instance is stopped.
+async fn sleep_or_wake(wake: &tokio::sync::Notify, stop: &CancellationToken, nap: Duration) {
     tokio::select! {
+        () = stop.cancelled() => {}
         _ = wake.notified() => {}
         _ = tokio::time::sleep(nap) => {}
     }
@@ -166,7 +242,7 @@ const TIMED_TASK_FAILURE_FLOOR: Duration = Duration::from_secs(60);
 
 async fn run_scheduled_statuses(state: AppState) {
     let ceiling = state.config.workers.sanitized().timed_task_idle_poll();
-    loop {
+    while !state.stop.is_cancelled() {
         let floor = match publish_due_statuses(&state).await {
             Ok(()) => TIMED_TASK_FLOOR,
             Err(e) => {
@@ -180,6 +256,7 @@ async fn run_scheduled_statuses(state: AppState) {
         });
         sleep_or_wake(
             &state.queues.scheduled_statuses,
+            &state.stop,
             timed_task_nap(due, floor, ceiling, rand::random()),
         )
         .await;
@@ -611,7 +688,7 @@ async fn publish_one(
 /// than anything already waiting and far later than the ceiling.
 async fn run_suspended_account_cleanup(state: AppState) {
     let ceiling = state.config.workers.sanitized().timed_task_idle_poll();
-    loop {
+    while !state.stop.is_cancelled() {
         if let Err(e) = process_deletion_requests(&state).await {
             tracing::error!(error = %e, "suspended account cleanup failed");
         }
@@ -619,12 +696,10 @@ async fn run_suspended_account_cleanup(state: AppState) {
             tracing::error!(error = %e, "could not find when the next deletion request is due");
             None
         });
-        tokio::time::sleep(timed_task_nap(
-            due,
-            DELETION_PASS_FLOOR,
-            ceiling,
-            rand::random(),
-        ))
+        rest(
+            &state.stop,
+            timed_task_nap(due, DELETION_PASS_FLOOR, ceiling, rand::random()),
+        )
         .await;
     }
 }
@@ -694,7 +769,7 @@ const POLL_EXPIRY_BATCH: i64 = 100;
 async fn run_poll_expiry(state: AppState) {
     let ceiling = state.config.workers.sanitized().timed_task_idle_poll();
     let mut mark = None;
-    loop {
+    while !state.stop.is_cancelled() {
         let floor = match notify_polls_expired_after(&state, mark).await {
             Ok((reached, handled)) => {
                 mark = Some(reached);
@@ -714,6 +789,7 @@ async fn run_poll_expiry(state: AppState) {
         });
         sleep_or_wake(
             &state.queues.polls,
+            &state.stop,
             timed_task_nap(due, floor, ceiling, rand::random()),
         )
         .await;
@@ -828,13 +904,26 @@ mod idle_backoff_tests {
     use super::IdleBackoff;
     use std::time::Duration;
     use tokio::sync::Notify;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn a_stopped_instance_does_not_sleep_out_its_interval() {
+        let wake = Notify::new();
+        let stop = CancellationToken::new();
+        let hour = Duration::from_secs(3600);
+        let mut backoff = IdleBackoff::new(hour, hour);
+        stop.cancel();
+        tokio::time::timeout(Duration::from_secs(5), backoff.idle(&wake, &stop))
+            .await
+            .expect("a stop should end an idle sleep at once");
+    }
 
     #[tokio::test]
     async fn empty_passes_back_off_to_the_ceiling_and_work_resets_it() {
         let wake = Notify::new();
         let mut backoff = IdleBackoff::new(Duration::from_millis(1), Duration::from_millis(4));
         for _ in 0..4 {
-            backoff.idle(&wake).await;
+            backoff.idle(&wake, &CancellationToken::new()).await;
         }
         assert_eq!(backoff.current, Duration::from_millis(4));
         backoff.reset();
@@ -847,9 +936,12 @@ mod idle_backoff_tests {
         let hour = Duration::from_secs(3600);
         let mut backoff = IdleBackoff::new(hour, hour);
         wake.notify_one();
-        tokio::time::timeout(Duration::from_secs(5), backoff.idle(&wake))
-            .await
-            .expect("a wake-up raised before the sleep should end it at once");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            backoff.idle(&wake, &CancellationToken::new()),
+        )
+        .await
+        .expect("a wake-up raised before the sleep should end it at once");
     }
 
     #[tokio::test]
@@ -857,11 +949,11 @@ mod idle_backoff_tests {
         let wake = Notify::new();
         let mut backoff = IdleBackoff::new(Duration::from_millis(1), Duration::from_secs(3600));
         for _ in 0..3 {
-            backoff.idle(&wake).await;
+            backoff.idle(&wake, &CancellationToken::new()).await;
         }
         assert_eq!(backoff.current, Duration::from_millis(8));
         wake.notify_one();
-        backoff.idle(&wake).await;
+        backoff.idle(&wake, &CancellationToken::new()).await;
         assert_eq!(backoff.current, Duration::from_millis(1));
     }
 }

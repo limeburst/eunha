@@ -68,7 +68,7 @@ struct CurrentVersion {
     end_of_support: Option<String>,
 }
 
-/// Poll for update notices for as long as the process runs.
+/// Poll for update notices for as long as the instance runs.
 pub async fn run_update_check(state: AppState) {
     let Some(url) = state
         .config
@@ -82,7 +82,10 @@ pub async fn run_update_check(state: AppState) {
 
     let mut interval = tokio::time::interval(CHECK_INTERVAL);
     loop {
-        interval.tick().await;
+        tokio::select! {
+            () = state.stop.cancelled() => return,
+            _ = interval.tick() => {}
+        }
         if let Err(e) = check_once(&state, &url).await {
             // A check that cannot run is not worth waking anyone for: the
             // instance keeps serving, and the next tick tries again.

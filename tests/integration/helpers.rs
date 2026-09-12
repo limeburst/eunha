@@ -476,17 +476,27 @@ impl TestContext {
         }
 
         let db_opts = base_opts.database(&test_db_name);
-        let db = PgPoolOptions::new()
-            .max_connections(5)
-            .connect_with(db_opts.clone())
-            .await
-            .expect("connect to per-test database");
-        sqlx::migrate!("./migrations")
-            .run(&db)
+        let db_url = replace_db_name(&admin_url, &test_db_name);
+
+        // Migrate the way the server does. `eunha::tenants::connect` resolves
+        // unqualified names against the eunha schema first, which is where
+        // sqlx's migration ledger then lives. Migrating on a pool without that
+        // search path leaves the ledger in `public`, and a server opened on the
+        // same database finds none of its own and calls every migration
+        // pending — which is what a tenant started from one of these databases
+        // did, until this used the same path.
+        let db = eunha::tenants::connect(
+            &db_url,
+            &eunha::config::DatabasePoolConfig {
+                max_connections: 5,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("connect to per-test database");
+        eunha::migrate::run(&db)
             .await
             .expect("run migrations on per-test database");
-
-        let db_url = replace_db_name(&admin_url, &test_db_name);
 
         let (alice_id, alice_token) = seed_user(&db, &domain, "alice", "alice@test.invalid").await;
         let (bob_id, bob_token) = seed_user(&db, &domain, "bob", "bob@test.invalid").await;

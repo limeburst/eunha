@@ -161,10 +161,28 @@ begin outside every span, so `clippy.toml` refuses `tokio::spawn` and
 `spawn_blocking` in favour of `tenants::spawn` and `tenants::spawn_blocking`,
 which carry the span along.
 
+Tenants come and go without a restart. Sent `SIGHUP`, a process serving a
+directory rereads it: a new file starts its tenant, a removed one stops its
+tenant — whose host then answers 421 — and a changed one restarts it, answering
+503 until it is back. The rest serve on untouched. A stopped tenant's
+background queues finish the batch they are in, for up to 20 seconds, and its
+streaming connections are closed so that clients reconnect.
+
+~~~~
+kill -HUP <pid>
+~~~~
+
+A reload is all or nothing. It is refused, and the running tenants left as they
+were, when the directory could not have been started as it stands — a domain
+served twice, too many tenants, pools past their budget, no tenants at all — or
+when it would change what the process set up when it started: `bind_address`,
+`allowed_private_networks` and `process_delivery_concurrency` take a restart. A
+tenant that fails to start does not fail the reload; its host answers 503, and
+the next `SIGHUP` tries it again.
+
 This is the start of the shared-process work planned in
-[MULTITENANCY.md](./MULTITENANCY.md). Adding a tenant without a restart is not
-built yet; what sharing a process saves is measured in
-[BENCHMARKING.md](./BENCHMARKING.md).
+[MULTITENANCY.md](./MULTITENANCY.md); what sharing a process saves is measured
+in [BENCHMARKING.md](./BENCHMARKING.md).
 
 
 Tracking Mastodon

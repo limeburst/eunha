@@ -32,6 +32,11 @@ pub struct AppState {
     /// built from. Held here rather than process-wide, so that one process can
     /// serve several instances.
     pub urls: Arc<crate::api::mastodon::convert::InstanceUrls>,
+    /// Raised when this instance is stopped — removed from a running process,
+    /// or restarted with a new configuration — so that its background loops
+    /// return once they have finished the pass they are in, and its streaming
+    /// connections close.
+    pub stop: tokio_util::sync::CancellationToken,
 }
 
 impl AppState {
@@ -107,6 +112,7 @@ impl AppState {
             encryptor,
             queues: Arc::default(),
             urls,
+            stop: tokio_util::sync::CancellationToken::new(),
         })
     }
 }

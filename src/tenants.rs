@@ -28,6 +28,10 @@
 //! the instance it was for. Tasks keep it through [`spawn`] and
 //! [`spawn_blocking`]; `clippy.toml` refuses Tokio's own, which would start
 //! them outside every span.
+//!
+//! A running process can be handed a new set of tenants with
+//! [`Tenants::reload`] — `eunha` does so on `SIGHUP` — which starts, restarts
+//! and stops only the tenants that changed, while the rest serve on.
 
 use crate::{config, migrate, state::AppState};
 use anyhow::{Context as _, Result};
@@ -42,7 +46,13 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
     Connection as _, Executor as _, PgConnection,
 };
-use std::{collections::HashMap, path::Path, str::FromStr as _, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::{Hash as _, Hasher as _},
+    path::Path,
+    str::FromStr as _,
+    sync::{Arc, PoisonError, RwLock},
+};
 use tokio::sync::Semaphore;
 use tower::ServiceExt as _;
 use tracing::Instrument as _;
@@ -161,6 +171,7 @@ fn normalize_host(host: &str) -> String {
 /// What the tenants of one process agreed on.
 struct ProcessSettings {
     bind_address: String,
+    private_networks: Vec<String>,
     delivery_concurrency: usize,
     max_tenants: usize,
     database_connections: Option<u64>,
@@ -230,6 +241,7 @@ fn process_settings(configs: &[TenantConfig]) -> Result<ProcessSettings> {
     }
     Ok(ProcessSettings {
         bind_address: first.config.bind_address.clone(),
+        private_networks: first.config.allowed_private_networks.clone(),
         delivery_concurrency,
         max_tenants: first.config.limits.max_tenants(),
         database_connections: first.config.limits.process_database_connections,
@@ -364,8 +376,101 @@ async fn server_slots(database_url: &str) -> Result<u64> {
     Ok(u64::try_from(slots).unwrap_or(0))
 }
 
-/// A tenant that is serving: its router, and the limit on requests it may have
-/// in flight, when it has one.
+/// Whether a reload leaves alone what the process set up when it started: the
+/// listener, the private networks its resolver may reach, and its delivery
+/// budget. Changing any of those takes a restart.
+fn check_reloadable(at_start: &ProcessSettings, next: &ProcessSettings) -> Result<()> {
+    anyhow::ensure!(
+        next.bind_address == at_start.bind_address,
+        "the tenants now name bind_address {} but this process listens on {}: restart it to \
+         move the listener",
+        next.bind_address,
+        at_start.bind_address,
+    );
+    anyhow::ensure!(
+        next.private_networks == at_start.private_networks,
+        "the tenants now name different allowed_private_networks from the ones this process's \
+         resolver was set up with: restart it to change them",
+    );
+    anyhow::ensure!(
+        next.delivery_concurrency == at_start.delivery_concurrency,
+        "the tenants now allow {} deliveries in flight but this process started with {}: \
+         restart it to change process_delivery_concurrency",
+        next.delivery_concurrency,
+        at_start.delivery_concurrency,
+    );
+    Ok(())
+}
+
+/// A fingerprint of a tenant's whole configuration, which a reload compares to
+/// tell whether the tenant has to be restarted.
+fn fingerprint(config: &config::Config) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    format!("{config:?}").hash(&mut hasher);
+    hasher.finish()
+}
+
+/// What a reload has to do, by host.
+#[derive(Debug, Default, PartialEq)]
+struct Plan {
+    /// Not running — new, or not started before: start.
+    start: Vec<String>,
+    /// Running with a configuration that has since changed: stop, then start.
+    restart: Vec<String>,
+    /// No longer configured: stop.
+    stop: Vec<String>,
+    /// Running as configured: leave alone.
+    keep: Vec<String>,
+}
+
+/// Compare what the registry holds — each host with the fingerprint its tenant
+/// is running with, or `None` when it is not running — with the configurations
+/// a reload was given.
+fn plan(current: &HashMap<String, Option<u64>>, next: &[TenantConfig]) -> Plan {
+    let mut plan = Plan::default();
+    let mut configured = HashSet::new();
+    for tenant in next {
+        let host = normalize_host(&tenant.config.instance.domain);
+        configured.insert(host.clone());
+        match current.get(&host) {
+            Some(Some(running)) if *running == fingerprint(&tenant.config) => plan.keep.push(host),
+            Some(Some(_)) => plan.restart.push(host),
+            _ => plan.start.push(host),
+        }
+    }
+    plan.stop = current
+        .keys()
+        .filter(|host| !configured.contains(*host))
+        .cloned()
+        .collect();
+    for hosts in [
+        &mut plan.start,
+        &mut plan.restart,
+        &mut plan.stop,
+        &mut plan.keep,
+    ] {
+        hosts.sort();
+    }
+    plan
+}
+
+/// What a reload did, by host.
+#[derive(Debug, Default)]
+pub struct Reloaded {
+    /// Started, not having been running: new, or not started before.
+    pub started: Vec<String>,
+    /// Stopped and started again, with a configuration that had changed.
+    pub restarted: Vec<String>,
+    /// Stopped, being no longer configured.
+    pub stopped: Vec<String>,
+    /// Could not be started; their hosts answer 503.
+    pub unavailable: Vec<String>,
+    /// Left running as they were.
+    pub kept: Vec<String>,
+}
+
+/// A tenant that is serving, as a request sees it: its router, and the limit
+/// on requests it may have in flight, when it has one.
 #[derive(Clone)]
 struct Tenant {
     router: Router,
@@ -386,19 +491,85 @@ impl Tenant {
 }
 
 /// One tenant's place in the registry.
+#[derive(Clone)]
 enum Slot {
     Serving(Tenant),
-    /// It did not start: its database is behind this binary, or it failed.
+    /// It did not start — its database is behind this binary, or it failed —
+    /// or it is being restarted.
     Unavailable,
+}
+
+/// What requests are dispatched by: every tenant's slot, by host. A reload puts
+/// a new one in place whole, so a request sees one registry or the next and
+/// never half of each.
+struct Registry {
+    by_host: HashMap<String, Slot>,
+    /// The only tenant, which answers every host, as a lone instance always has.
+    only: Option<Tenant>,
+}
+
+impl Registry {
+    /// A registry of these slots, in which a lone serving tenant answers every
+    /// host.
+    fn new(by_host: HashMap<String, Slot>) -> Self {
+        let only = match (by_host.len(), by_host.values().next()) {
+            (1, Some(Slot::Serving(tenant))) => Some(tenant.clone()),
+            _ => None,
+        };
+        Self { by_host, only }
+    }
+
+    fn lookup(&self, host: &str) -> Lookup<'_> {
+        if let Some(tenant) = &self.only {
+            return Lookup::Serving(tenant);
+        }
+        let host = normalize_host(host);
+        let slot = self.by_host.get(&host).or_else(|| {
+            // `Host` carries a port when the client connected to a
+            // non-default one; a tenant's domain usually does not.
+            let (name, port) = host.rsplit_once(':')?;
+            port.bytes()
+                .all(|b| b.is_ascii_digit())
+                .then(|| self.by_host.get(name))
+                .flatten()
+        });
+        match slot {
+            Some(Slot::Serving(tenant)) => Lookup::Serving(tenant),
+            Some(Slot::Unavailable) => Lookup::Unavailable,
+            None => Lookup::Unknown,
+        }
+    }
+}
+
+/// What a started tenant runs, which stopping it winds down.
+struct Running {
+    state: AppState,
+    /// Of the configuration it was started with.
+    fingerprint: u64,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl Running {
+    /// Raise the instance's stop and wait for its background tasks, each of
+    /// which gives up on itself after [`crate::background::STOP_GRACE`].
+    /// Requests already in flight finish on their own, and the instance's pool
+    /// closes once nothing holds it any more.
+    async fn stop(self) {
+        self.state.stop.cancel();
+        futures::future::join_all(self.tasks).await;
+    }
 }
 
 /// Every tenant a process serves, by host.
 pub struct Tenants {
-    by_host: HashMap<String, Slot>,
-    /// The only tenant, which answers every host, as a lone instance always has.
-    only: Option<Tenant>,
-    bind_address: String,
-    states: Vec<AppState>,
+    registry: RwLock<Arc<Registry>>,
+    /// What the process was set up with when it started. The listener, the
+    /// resolver's private networks and the delivery budget are fixed from then
+    /// on, so a reload may not change them.
+    settings: ProcessSettings,
+    /// What each started tenant runs, by host. A reload holds it throughout,
+    /// so that reloads happen one at a time.
+    running: tokio::sync::Mutex<HashMap<String, Running>>,
 }
 
 enum Lookup<'a> {
@@ -423,48 +594,58 @@ pub async fn start(configs: Vec<TenantConfig>) -> Result<Tenants> {
     crate::federation::delivery::set_process_delivery_concurrency(settings.delivery_concurrency);
     let lone = configs.len() == 1;
     let mut by_host = HashMap::new();
-    let mut states = Vec::new();
-    let mut only = None;
+    let mut running = HashMap::new();
 
-    let mut started = futures::stream::iter(configs)
-        .map(|tenant| async move {
-            let host = normalize_host(&tenant.config.instance.domain);
-            let source = tenant.source.clone();
-            (host, source, start_one(tenant, !lone).await)
-        })
-        .buffered(STARTUP_CONCURRENCY);
-    while let Some((host, source, result)) = started.next().await {
+    for (host, source, result) in start_all(configs).await {
         match result {
-            Ok((state, tenant)) => {
-                if lone {
-                    only = Some(tenant.clone());
-                }
-                by_host.insert(host, Slot::Serving(tenant));
-                states.push(state);
+            Ok(tenant) => {
+                by_host.insert(
+                    host.clone(),
+                    Slot::Serving(Tenant::new(&tenant.state, !lone)),
+                );
+                running.insert(host, tenant);
             }
             Err(e) if lone => return Err(e),
             Err(e) => {
-                tracing::error!(
-                    tenant = %host,
-                    source = %source,
-                    error = %format!("{e:#}"),
-                    "tenant not started; its host will answer 503"
-                );
+                not_started(&host, &source, &e);
                 by_host.insert(host, Slot::Unavailable);
             }
         }
     }
 
     Ok(Tenants {
-        by_host,
-        only,
-        bind_address: settings.bind_address,
-        states,
+        registry: RwLock::new(Arc::new(Registry::new(by_host))),
+        settings,
+        running: tokio::sync::Mutex::new(running),
     })
 }
 
-async fn start_one(tenant: TenantConfig, shared: bool) -> Result<(AppState, Tenant)> {
+/// Start these tenants, a few at a time, each with its host, where its
+/// configuration came from, and what came of it.
+async fn start_all(configs: Vec<TenantConfig>) -> Vec<(String, String, Result<Running>)> {
+    futures::stream::iter(configs)
+        .map(|tenant| async move {
+            let host = normalize_host(&tenant.config.instance.domain);
+            let source = tenant.source.clone();
+            (host, source, start_one(tenant).await)
+        })
+        .buffered(STARTUP_CONCURRENCY)
+        .collect()
+        .await
+}
+
+fn not_started(host: &str, source: &str, error: &anyhow::Error) {
+    tracing::error!(
+        tenant = %host,
+        source = %source,
+        error = %format!("{error:#}"),
+        "tenant not started; its host will answer 503"
+    );
+}
+
+async fn start_one(tenant: TenantConfig) -> Result<Running> {
     let TenantConfig { source, config } = tenant;
+    let fingerprint = fingerprint(&config);
     let db = connect(&config.database_url, &config.database_pool)
         .await
         .with_context(|| format!("{source}: connecting to its database"))?;
@@ -489,9 +670,12 @@ async fn start_one(tenant: TenantConfig, shared: bool) -> Result<(AppState, Tena
             "could not move local signing keys into `keypairs`"
         );
     }
-    crate::background::spawn(state.clone());
-    let tenant = Tenant::new(&state, shared);
-    Ok((state, tenant))
+    let tasks = crate::background::spawn(state.clone());
+    Ok(Running {
+        state,
+        fingerprint,
+        tasks,
+    })
 }
 
 impl Tenants {
@@ -499,68 +683,181 @@ impl Tenants {
     /// `bind_address` — for embedding eunha and for tests, which bring their own
     /// databases up. Nothing is connected, checked or spawned here.
     pub fn from_states(bind_address: &str, states: Vec<AppState>) -> Result<Self> {
-        anyhow::ensure!(!states.is_empty(), "no tenants to serve");
+        let first = states.first().context("no tenants to serve")?;
+        let settings = ProcessSettings {
+            bind_address: bind_address.to_string(),
+            private_networks: first.config.allowed_private_networks.clone(),
+            delivery_concurrency: first
+                .config
+                .workers
+                .sanitized()
+                .process_delivery_concurrency,
+            max_tenants: first.config.limits.max_tenants(),
+            database_connections: first.config.limits.process_database_connections,
+        };
         let shared = states.len() > 1;
         let mut by_host = HashMap::new();
-        for state in &states {
+        let mut running = HashMap::new();
+        for state in states {
             let host = normalize_host(&state.instance.domain);
             anyhow::ensure!(
-                by_host
-                    .insert(host.clone(), Slot::Serving(Tenant::new(state, shared)))
-                    .is_none(),
+                !by_host.contains_key(&host),
                 "two tenants both serve {host}"
             );
+            by_host.insert(host.clone(), Slot::Serving(Tenant::new(&state, shared)));
+            running.insert(
+                host,
+                Running {
+                    fingerprint: fingerprint(&state.config),
+                    state,
+                    tasks: Vec::new(),
+                },
+            );
         }
-        let only = match (shared, by_host.values().next()) {
-            (false, Some(Slot::Serving(tenant))) => Some(tenant.clone()),
-            _ => None,
-        };
         Ok(Self {
-            by_host,
-            only,
-            bind_address: bind_address.to_string(),
-            states,
+            registry: RwLock::new(Arc::new(Registry::new(by_host))),
+            settings,
+            running: tokio::sync::Mutex::new(running),
         })
     }
 
     /// The address every tenant agreed to be served on.
     pub fn bind_address(&self) -> &str {
-        &self.bind_address
+        &self.settings.bind_address
     }
 
-    /// Every tenant that started, in the order they were configured.
-    pub fn states(&self) -> &[AppState] {
-        &self.states
+    /// Every tenant that is running, in no particular order.
+    pub async fn states(&self) -> Vec<AppState> {
+        self.running
+            .lock()
+            .await
+            .values()
+            .map(|tenant| tenant.state.clone())
+            .collect()
     }
 
-    fn lookup(&self, host: &str) -> Lookup<'_> {
-        if let Some(tenant) = &self.only {
-            return Lookup::Serving(tenant);
+    /// Serve `configs` from now on: start the tenants that are new or were not
+    /// running, restart those whose configuration has changed, stop those no
+    /// longer configured, and leave the rest serving as they were.
+    ///
+    /// Nothing changes unless the whole set could have been started — the same
+    /// agreement, ceiling and database checks as [`start`] — and it leaves the
+    /// listener, the private networks and the delivery budget as the process
+    /// started with. A tenant that then fails to start does not fail the
+    /// reload: its host answers 503, and the next reload tries it again.
+    pub async fn reload(&self, configs: Vec<TenantConfig>) -> Result<Reloaded> {
+        let mut running = self.running.lock().await;
+        let next = process_settings(&configs)?;
+        check_reloadable(&self.settings, &next)?;
+        admit(&configs, &next)?;
+        check_database_servers(&configs).await?;
+
+        let current = self.current();
+        let fingerprints = current
+            .by_host
+            .keys()
+            .map(|host| (host.clone(), running.get(host).map(|t| t.fingerprint)))
+            .collect();
+        let plan = plan(&fingerprints, &configs);
+        let was_shared = current.by_host.len() > 1;
+        let shared = configs.len() > 1;
+
+        // Out of service first: a removed tenant's host stops answering for
+        // it, and a restarting one answers 503 until it is back.
+        let mut by_host = current.by_host.clone();
+        for host in &plan.stop {
+            by_host.remove(host);
         }
-        let host = normalize_host(host);
-        let slot = self.by_host.get(&host).or_else(|| {
-            // `Host` carries a port when the client connected to a
-            // non-default one; a tenant's domain usually does not.
-            let (name, port) = host.rsplit_once(':')?;
-            port.bytes()
-                .all(|b| b.is_ascii_digit())
-                .then(|| self.by_host.get(name))
-                .flatten()
-        });
-        match slot {
-            Some(Slot::Serving(tenant)) => Lookup::Serving(tenant),
-            Some(Slot::Unavailable) => Lookup::Unavailable,
-            None => Lookup::Unknown,
+        for host in &plan.restart {
+            by_host.insert(host.clone(), Slot::Unavailable);
         }
+        self.publish(Registry::new(by_host.clone()));
+        let stopping = plan
+            .stop
+            .iter()
+            .chain(&plan.restart)
+            .filter_map(|host| running.remove(host))
+            .collect::<Vec<_>>();
+        futures::future::join_all(stopping.into_iter().map(Running::stop)).await;
+
+        let mut reloaded = Reloaded {
+            stopped: plan.stop.clone(),
+            kept: plan.keep.clone(),
+            ..Reloaded::default()
+        };
+        let starting = configs
+            .into_iter()
+            .filter(|tenant| {
+                !plan
+                    .keep
+                    .contains(&normalize_host(&tenant.config.instance.domain))
+            })
+            .collect();
+        for (host, source, result) in start_all(starting).await {
+            match result {
+                Ok(tenant) => {
+                    by_host.insert(
+                        host.clone(),
+                        Slot::Serving(Tenant::new(&tenant.state, shared)),
+                    );
+                    running.insert(host.clone(), tenant);
+                    if plan.restart.contains(&host) {
+                        reloaded.restarted.push(host);
+                    } else {
+                        reloaded.started.push(host);
+                    }
+                }
+                Err(e) => {
+                    not_started(&host, &source, &e);
+                    by_host.insert(host.clone(), Slot::Unavailable);
+                    reloaded.unavailable.push(host);
+                }
+            }
+        }
+
+        // Whether a tenant shares its process decides its request limit, so a
+        // kept tenant takes the other one when that has changed.
+        if shared != was_shared {
+            for host in &plan.keep {
+                if let Some(tenant) = running.get(host) {
+                    by_host.insert(
+                        host.clone(),
+                        Slot::Serving(Tenant::new(&tenant.state, shared)),
+                    );
+                }
+            }
+        }
+        self.publish(Registry::new(by_host));
+        Ok(reloaded)
     }
 
-    /// A router that hands each request to its tenant's router.
-    pub fn into_router(self) -> Router {
-        let tenants = Arc::new(self);
+    fn current(&self) -> Arc<Registry> {
+        self.registry
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn publish(&self, registry: Registry) {
+        *self
+            .registry
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(registry);
+    }
+
+    /// A router that hands each request to its tenant's router, as the registry
+    /// stands when the request arrives.
+    pub fn router(self: &Arc<Self>) -> Router {
+        let tenants = self.clone();
         Router::new().fallback(move |req: Request| {
             let tenants = tenants.clone();
             async move { tenants.dispatch(req).await }
         })
+    }
+
+    /// [`Tenants::router`], for a registry nothing else will hold on to.
+    pub fn into_router(self) -> Router {
+        Arc::new(self).router()
     }
 
     async fn dispatch(&self, req: Request) -> Response {
@@ -571,7 +868,8 @@ impl Tenants {
             .and_then(|value| value.to_str().ok())
             .or_else(|| req.uri().authority().map(|authority| authority.as_str()))
             .unwrap_or_default();
-        match self.lookup(host) {
+        let registry = self.current();
+        match registry.lookup(host) {
             Lookup::Serving(tenant) => {
                 // Held until the tenant's router has produced a response. A
                 // streamed or upgraded response lets go of it as soon as it
@@ -672,8 +970,10 @@ vapid_public_key = ""
         }
     }
 
-    fn tenants(hosts: Vec<(&str, Option<Tenant>)>) -> Tenants {
-        Tenants {
+    /// A registry of these hosts, without a lone tenant answering for all of
+    /// them.
+    fn registry(hosts: Vec<(&str, Option<Tenant>)>) -> Registry {
+        Registry {
             by_host: hosts
                 .into_iter()
                 .map(|(host, tenant)| {
@@ -685,8 +985,15 @@ vapid_public_key = ""
                 })
                 .collect(),
             only: None,
-            bind_address: String::new(),
-            states: Vec::new(),
+        }
+    }
+
+    fn tenants(hosts: Vec<(&str, Option<Tenant>)>) -> Tenants {
+        Tenants {
+            registry: RwLock::new(Arc::new(registry(hosts))),
+            settings: process_settings(&[tenant("a.toml", "a.example", "127.0.0.1:3000", &[], "")])
+                .unwrap(),
+            running: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -700,7 +1007,7 @@ vapid_public_key = ""
 
     #[test]
     fn hosts_are_matched_without_case_a_trailing_dot_or_a_port() {
-        let t = tenants(vec![("seoul.earth", Some(serving(Router::new(), None)))]);
+        let t = registry(vec![("seoul.earth", Some(serving(Router::new(), None)))]);
         for host in [
             "seoul.earth",
             "Seoul.Earth",
@@ -718,7 +1025,7 @@ vapid_public_key = ""
 
     #[test]
     fn a_tenant_that_did_not_start_is_unavailable_not_unknown() {
-        let t = tenants(vec![
+        let t = registry(vec![
             ("seoul.earth", Some(serving(Router::new(), None))),
             ("example.social", None),
         ]);
@@ -727,10 +1034,92 @@ vapid_public_key = ""
 
     #[test]
     fn a_lone_tenant_answers_every_host() {
-        let mut t = tenants(vec![("seoul.earth", Some(serving(Router::new(), None)))]);
-        t.only = Some(serving(Router::new(), None));
+        let t = Registry::new(HashMap::from([(
+            "seoul.earth".to_string(),
+            Slot::Serving(serving(Router::new(), None)),
+        )]));
         assert!(matches!(t.lookup("localhost:3000"), Lookup::Serving(_)));
         assert!(matches!(t.lookup(""), Lookup::Serving(_)));
+
+        let not_lone = Registry::new(HashMap::from([
+            (
+                "seoul.earth".to_string(),
+                Slot::Serving(serving(Router::new(), None)),
+            ),
+            ("example.social".to_string(), Slot::Unavailable),
+        ]));
+        assert!(matches!(not_lone.lookup("localhost:3000"), Lookup::Unknown));
+    }
+
+    #[test]
+    fn a_reload_starts_restarts_and_stops_only_what_changed() {
+        let a = tenant("a.toml", "a.example", "127.0.0.1:3000", &[], "");
+        let b = tenant("b.toml", "b.example", "127.0.0.1:3000", &[], "");
+        let current = HashMap::from([
+            ("a.example".to_string(), Some(fingerprint(&a.config))),
+            ("b.example".to_string(), Some(fingerprint(&b.config))),
+            ("c.example".to_string(), None),
+            ("d.example".to_string(), Some(fingerprint(&b.config))),
+        ]);
+        let next = [
+            a,
+            tenant(
+                "b.toml",
+                "b.example",
+                "127.0.0.1:3000",
+                &[],
+                "[limits]\nmax_concurrent_requests = 8",
+            ),
+            tenant("c.toml", "c.example", "127.0.0.1:3000", &[], ""),
+            tenant("e.toml", "E.Example.", "127.0.0.1:3000", &[], ""),
+        ];
+        assert_eq!(
+            plan(&current, &next),
+            Plan {
+                start: vec!["c.example".into(), "e.example".into()],
+                restart: vec!["b.example".into()],
+                stop: vec!["d.example".into()],
+                keep: vec!["a.example".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn a_reload_may_not_change_what_the_process_set_up_when_it_started() {
+        let settings = |bind: &str, allowed: &[&str], extra: &str| {
+            process_settings(&[tenant("a.toml", "a.example", bind, allowed, extra)]).unwrap()
+        };
+        let at_start = settings("127.0.0.1:3000", &[], "");
+        check_reloadable(
+            &at_start,
+            &settings("127.0.0.1:3000", &[], "[limits]\nprocess_max_tenants = 5"),
+        )
+        .unwrap();
+
+        for (next, setting) in [
+            (settings("127.0.0.1:3001", &[], ""), "bind_address"),
+            (
+                settings("127.0.0.1:3000", &["10.0.0.0/8"], ""),
+                "allowed_private_networks",
+            ),
+            (
+                settings(
+                    "127.0.0.1:3000",
+                    &[],
+                    "[workers]\nprocess_delivery_concurrency = 32",
+                ),
+                "process_delivery_concurrency",
+            ),
+        ] {
+            let error = check_reloadable(&at_start, &next)
+                .err()
+                .map(|e| format!("{e:#}"))
+                .unwrap_or_default();
+            assert!(
+                error.contains(setting) && error.contains("restart"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

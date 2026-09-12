@@ -18,10 +18,16 @@ type Ws =
 async fn serve(states: Vec<eunha::state::AppState>) -> String {
     let tenants = eunha::tenants::Tenants::from_states("127.0.0.1:0", states)
         .expect("tenants with distinct domains form a registry");
+    serve_tenants(Arc::new(tenants)).await
+}
+
+/// Serve a registry of tenants from one listener, as `eunha` does.
+async fn serve_tenants(tenants: Arc<eunha::tenants::Tenants>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let router = tenants.router();
     tokio::spawn(async move {
-        axum::serve(listener, tenants.into_router()).await.unwrap();
+        axum::serve(listener, router).await.unwrap();
     });
     base_url
 }
@@ -415,5 +421,133 @@ async fn test_a_process_refuses_pools_its_database_server_cannot_hold() {
             && error.contains("100000 database connections")
             && error.contains("database_pool.max_connections"),
         "{error}"
+    );
+}
+
+/// A tenant's configuration as a tenants directory would hold it.
+fn tenant_config(ctx: &TestContext) -> eunha::tenants::TenantConfig {
+    eunha::tenants::TenantConfig {
+        source: format!("{}.toml", ctx.domain),
+        config: (*ctx.state.config).clone(),
+    }
+}
+
+/// What `/api/v2/instance` on `host` answers: its status, and its title.
+async fn instance_title(base_url: &str, host: &str) -> (StatusCode, Option<String>) {
+    let response = ApiClient::new(base_url, host)
+        .get("/api/v2/instance", None)
+        .await;
+    let status = response.status();
+    let title = response
+        .json::<Value>()
+        .await
+        .ok()
+        .and_then(|instance| instance["title"].as_str().map(str::to_string));
+    (status, title)
+}
+
+/// Tenants are added, changed and removed while the process goes on serving the
+/// rest: a new one answers, a changed one comes back with its new
+/// configuration, and a removed one's host is refused and its background work
+/// stops by itself. A reload that would move the listener is refused and
+/// changes nothing.
+#[tokio::test]
+async fn test_tenants_come_and_go_without_a_restart() {
+    let a = TestContext::new("reload-a").await;
+    let b = TestContext::new("reload-b").await;
+    let c = TestContext::new("reload-c").await;
+    let tenants = Arc::new(
+        eunha::tenants::start(vec![tenant_config(&a), tenant_config(&b)])
+            .await
+            .expect("two tenants start"),
+    );
+    let base_url = serve_tenants(tenants.clone()).await;
+    assert_eq!(
+        instance_title(&base_url, &c.domain).await.0,
+        StatusCode::MISDIRECTED_REQUEST
+    );
+
+    let reloaded = tenants
+        .reload(vec![
+            tenant_config(&a),
+            tenant_config(&b),
+            tenant_config(&c),
+        ])
+        .await
+        .expect("adding a tenant reloads");
+    assert!(
+        reloaded.unavailable.is_empty(),
+        "a tenant did not start: {:?}",
+        reloaded.unavailable
+    );
+    assert_eq!(reloaded.started, std::slice::from_ref(&c.domain));
+    assert_eq!(reloaded.kept.len(), 2);
+    assert_eq!(
+        instance_title(&base_url, &c.domain).await.0,
+        StatusCode::OK,
+        "the added tenant answers"
+    );
+
+    let a_running = tenants
+        .states()
+        .await
+        .into_iter()
+        .find(|state| state.instance.domain == a.domain)
+        .expect("a is running");
+    let began = std::time::Instant::now();
+    let reloaded = tenants
+        .reload(vec![tenant_config(&b), tenant_config(&c)])
+        .await
+        .expect("removing a tenant reloads");
+    assert_eq!(reloaded.stopped, std::slice::from_ref(&a.domain));
+    assert!(
+        a_running.stop.is_cancelled(),
+        "the removed tenant is told to stop"
+    );
+    assert!(
+        began.elapsed() < eunha::background::STOP_GRACE,
+        "its background tasks stopped by themselves, not when the grace period ran out ({:?})",
+        began.elapsed()
+    );
+    assert_eq!(
+        instance_title(&base_url, &a.domain).await.0,
+        StatusCode::MISDIRECTED_REQUEST,
+        "the removed tenant's host is refused"
+    );
+    assert_eq!(
+        instance_title(&base_url, &b.domain).await.0,
+        StatusCode::OK,
+        "its neighbours serve on"
+    );
+
+    let renamed = || {
+        let mut tenant = tenant_config(&c);
+        tenant.config.instance.title = "renamed on reload".into();
+        tenant
+    };
+    let reloaded = tenants
+        .reload(vec![tenant_config(&b), renamed()])
+        .await
+        .expect("changing a tenant reloads");
+    assert_eq!(reloaded.restarted, std::slice::from_ref(&c.domain));
+    assert_eq!(
+        instance_title(&base_url, &c.domain).await,
+        (StatusCode::OK, Some("renamed on reload".to_string())),
+        "the changed tenant comes back with its new configuration"
+    );
+
+    let mut moved = vec![tenant_config(&b), renamed()];
+    for tenant in &mut moved {
+        tenant.config.bind_address = "127.0.0.1:1".into();
+    }
+    let error = match tenants.reload(moved).await {
+        Ok(_) => panic!("a reload moving the listener was accepted"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(error.contains("bind_address"), "{error}");
+    assert_eq!(
+        instance_title(&base_url, &c.domain).await,
+        (StatusCode::OK, Some("renamed on reload".to_string())),
+        "a refused reload leaves the tenants as they were"
     );
 }

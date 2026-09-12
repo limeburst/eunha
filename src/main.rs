@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use eunha::{config, migrate, tenants};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
@@ -56,15 +56,50 @@ async fn main() -> anyhow::Result<()> {
             config: config::Config::from_env()?,
         }],
     };
-    let tenants = tenants::start(configs).await?;
+    let tenants = Arc::new(tenants::start(configs).await?);
     let bind_address = tenants.bind_address().to_string();
-    let serving = tenants.states().len();
-    let app = tenants.into_router();
+    let serving = tenants.states().await.len();
+    if let Some(dir) = args.tenants {
+        reload_on_hangup(tenants.clone(), dir)?;
+    }
+    let app = tenants.router();
 
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     tracing::info!(tenants = serving, "listening on {bind_address}");
     axum::serve(listener, app).await?;
 
+    Ok(())
+}
+
+/// Reread the tenants directory each time the process is sent SIGHUP, and serve
+/// what it says now: start the tenants added, restart those whose file changed,
+/// stop those removed. A directory that could not be served as a whole is
+/// refused, and the tenants already running go on as they were.
+fn reload_on_hangup(tenants: Arc<tenants::Tenants>, dir: PathBuf) -> anyhow::Result<()> {
+    let mut hangups = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+    tenants::spawn(async move {
+        while hangups.recv().await.is_some() {
+            tracing::info!(directory = %dir.display(), "rereading the tenants directory");
+            let reloaded = match tenants::load_dir(&dir) {
+                Ok(configs) => tenants.reload(configs).await,
+                Err(e) => Err(e),
+            };
+            match reloaded {
+                Ok(reloaded) => tracing::info!(
+                    started = ?reloaded.started,
+                    restarted = ?reloaded.restarted,
+                    stopped = ?reloaded.stopped,
+                    unavailable = ?reloaded.unavailable,
+                    kept = reloaded.kept.len(),
+                    "tenants reloaded"
+                ),
+                Err(e) => tracing::error!(
+                    error = %format!("{e:#}"),
+                    "tenants not reloaded; the ones running go on as they were"
+                ),
+            }
+        }
+    });
     Ok(())
 }
 
