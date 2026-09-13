@@ -1,7 +1,10 @@
 /* Shared styling for eunha's server-rendered auth/account pages (signup,
- * authorize, account portal). Mirrors the SPA's design tokens so these pages
- * match the app. The tiny inline script in each template adds `light`/`dark` to
- * <html> from the same `eunha-theme` localStorage key the SPA uses. */
+ * authorize, account portal). The tiny inline script in each template adds
+ * `light`/`dark` to <html> from the same `eunha-theme` localStorage key the SPA
+ * uses, and the palette below is the SPA's own (frontend/src/styles.css), token
+ * for token, so a client's sign-in page reads as the same site as the app it
+ * opens. Only the tokens these pages use are copied; keep them in step when
+ * that file moves. */
 
 :root {
   /* Windows and Linux draw scrollbars and form controls from the UA's own
@@ -9,42 +12,46 @@
      It inherits from the root, so these two lines cover the whole page. */
   color-scheme: light;
 
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* Navy, cream and mint, from the logo. */
+  --brand-navy: oklch(0.177 0.059 255.6);
+  --brand-cream: oklch(0.968 0.013 86.8);
+  --brand-mint: oklch(0.845 0.101 181.9);
+
+  --background: var(--brand-cream);
+  --foreground: var(--brand-navy);
+  --card: oklch(0.985 0.008 86.8);
+  --primary: oklch(0.521 0.090 176.7);
+  --primary-foreground: var(--brand-cream);
+  --muted: oklch(0.944 0.017 88.0);
+  --muted-foreground: oklch(0.441 0.041 263.2);
+  --border: oklch(0.887 0.023 87.2);
+  --input: oklch(0.816 0.029 86.7);
+  --ring: oklch(0.521 0.090 176.7);
   --destructive: oklch(0.577 0.245 27.325);
   --radius: 0.625rem;
 
   /* The scrollbar, in the page's colours rather than the UA's greys: a thumb
-     dark enough to clear 3:1 on this page's background, and a transparent
-     track so the groove keeps whatever it runs down. These pages are neutral
-     where the SPA is warm, so the tone is neutral too. */
-  --scrollbar-thumb: oklch(0.62 0 0);
+     from the cream family that clears 3:1 on the page and the card, and a
+     transparent track so the groove keeps whatever it runs down. */
+  --scrollbar-thumb: oklch(0.625 0.029 86.7);
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .dark {
   color-scheme: dark;
 
-  --scrollbar-thumb: oklch(0.52 0 0);
+  --scrollbar-thumb: oklch(0.510 0.048 257.1);
 
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: var(--brand-navy);
+  --foreground: var(--brand-cream);
+  --card: oklch(0.207 0.053 253.0);
+  --primary: var(--brand-mint);
+  --primary-foreground: var(--brand-navy);
+  --muted: oklch(0.225 0.058 253.4);
+  --muted-foreground: oklch(0.767 0.029 260.3);
+  --border: oklch(0.271 0.050 257.1);
+  --input: oklch(0.334 0.048 257.1);
+  --ring: var(--brand-mint);
   --destructive: oklch(0.704 0.191 22.216);
 }
 
