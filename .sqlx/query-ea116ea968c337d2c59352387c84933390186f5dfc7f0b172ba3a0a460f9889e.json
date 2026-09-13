@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT u.id FROM users u JOIN accounts a ON a.id = u.account_id\n           WHERE lower(a.username) = lower($1) AND a.domain IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ea116ea968c337d2c59352387c84933390186f5dfc7f0b172ba3a0a460f9889e"
+}

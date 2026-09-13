@@ -1,6 +1,6 @@
 //! Other public API surfaces beyond the Mastodon C2S REST API.
 
-mod accounts_create;
+mod accounts_commands;
 mod auth_pages;
 mod counter_semantics;
 mod divergences;

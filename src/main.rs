@@ -69,6 +69,20 @@ enum AccountsCommand {
         #[arg(long, value_name = "HOST")]
         instance: Option<String>,
     },
+    /// Modify a user account.
+    ///
+    /// `tootctl accounts modify`, of which eunha implements `--reset-password`.
+    Modify {
+        username: String,
+        /// Give the account a new random password, print it, and sign the
+        /// account out of every session and app.
+        #[arg(long, required = true)]
+        reset_password: bool,
+        /// With `--tenants`, the instance the account is on, by its domain or
+        /// one of its aliases.
+        #[arg(long, value_name = "HOST")]
+        instance: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -110,6 +124,21 @@ async fn main() -> anyhow::Result<()> {
                 },
             )
             .await?;
+            println!("OK");
+            println!("New password: {password}");
+            return Ok(());
+        }
+        Some(Command::Accounts {
+            command:
+                AccountsCommand::Modify {
+                    username,
+                    reset_password: _,
+                    instance,
+                },
+        }) => {
+            let config = command_config(args.tenants.as_deref(), instance.as_deref())?;
+            let db = command_database(&config).await?;
+            let password = accounts::reset_password(&db, &username).await?;
             println!("OK");
             println!("New password: {password}");
             return Ok(());
@@ -243,6 +272,16 @@ async fn create_account(
     config: config::Config,
     options: accounts::CreateOptions,
 ) -> anyhow::Result<String> {
+    let db = command_database(&config).await?;
+    let encryptor = config.active_record_encryption.as_ref().map(|keys| {
+        eunha::rails_encryption::Encryptor::new(&keys.primary_key, &keys.key_derivation_salt)
+    });
+    accounts::create_from_command(&db, encryptor.as_ref(), &config.instance, options).await
+}
+
+/// A one-off command's connection to its instance's database, once the schema
+/// is known to match this binary.
+async fn command_database(config: &config::Config) -> anyhow::Result<sqlx::PgPool> {
     let db = tenants::connect(
         &config.database_url,
         &config::DatabasePoolConfig {
@@ -257,10 +296,7 @@ async fn create_account(
     if let Some(pending) = migrate::pending(&db).await? {
         anyhow::bail!("{pending}; run `eunha migrate` first");
     }
-    let encryptor = config.active_record_encryption.as_ref().map(|keys| {
-        eunha::rails_encryption::Encryptor::new(&keys.primary_key, &keys.key_derivation_salt)
-    });
-    accounts::create_from_command(&db, encryptor.as_ref(), &config.instance, options).await
+    Ok(db)
 }
 
 /// The database to migrate: `DATABASE_URL` if set (including from `.env`),

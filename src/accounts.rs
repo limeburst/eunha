@@ -227,6 +227,72 @@ pub async fn create_from_command(
     Ok(password)
 }
 
+/// `tootctl accounts modify --reset-password`: give a local account a new
+/// random password, sign it out everywhere, and return the password.
+///
+/// This is `User#change_password!`, as upstream's command runs it: the password
+/// and the account's session activations change together, then every
+/// authorization it granted is revoked and the push subscriptions made through
+/// them go. A streaming connection already open in a running server stays open
+/// until it next reconnects, since the server that holds it is another process.
+pub async fn reset_password(db: &PgPool, username: &str) -> Result<String> {
+    let user_id = sqlx::query_scalar!(
+        r#"SELECT u.id FROM users u JOIN accounts a ON a.id = u.account_id
+           WHERE lower(a.username) = lower($1) AND a.domain IS NULL"#,
+        username,
+    )
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| anyhow!("no user with such username"))?;
+
+    // `SecureRandom.hex`: 16 random bytes, written as 32 hex digits.
+    let password = crate::crypto::generate_token(16);
+    let password_hash = crate::crypto::hash_password(&password)
+        .await
+        .map_err(|e| anyhow!("hashing the password: {e}"))?;
+
+    let mut tx = db.begin().await?;
+    sqlx::query!(
+        r#"UPDATE users
+           SET encrypted_password = $1,
+               reset_password_token = NULL, reset_password_sent_at = NULL,
+               updated_at = now()
+           WHERE id = $2"#,
+        password_hash,
+        user_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM session_activations WHERE user_id = $1",
+        user_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE oauth_access_grants SET revoked_at = now() WHERE resource_owner_id = $1 AND revoked_at IS NULL",
+        user_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        r#"DELETE FROM web_push_subscriptions
+           WHERE access_token_id IN (SELECT id FROM oauth_access_tokens WHERE resource_owner_id = $1)"#,
+        user_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE oauth_access_tokens SET revoked_at = now() WHERE resource_owner_id = $1 AND revoked_at IS NULL",
+        user_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(password)
+}
+
 /// One `@` between a non-empty local part and a domain, with none of the
 /// characters Mastodon's `EmailAddressValidator` refuses outright (`%`, `,`,
 /// `"`) and no whitespace — the shape it accepts, short of parsing the address
