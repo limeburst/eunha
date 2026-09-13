@@ -399,6 +399,67 @@ async fn test_what_a_request_logs_names_its_tenant() {
     }
 }
 
+/// A failed request is logged, but never with what it carried: a refused
+/// password grant, sign-in or sign-up holds the credentials that were refused.
+#[tokio::test]
+async fn test_failed_requests_do_not_log_their_credentials() {
+    let logs = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    let _default = tracing::subscriber::set_default(subscriber);
+
+    let ctx = TestContext::new("tenant-logs-secrets").await;
+    let base_url = serve(vec![ctx.state.clone()]).await;
+    // See `test_what_a_request_logs_names_its_tenant`.
+    tracing::callsite::rebuild_interest_cache();
+    let client = ApiClient::new(&base_url, &ctx.domain);
+
+    let json_password = "refused-json-password-8c1f";
+    let refused = client
+        .post_json(
+            "/oauth/token",
+            None,
+            &json!({
+                "grant_type": "password",
+                "client_id": "no-such-client",
+                "client_secret": "refused-client-secret-2b7d",
+                "username": "alice@test.invalid",
+                "password": json_password,
+            }),
+        )
+        .await;
+    assert!(refused.status().is_client_error(), "{}", refused.status());
+
+    let form_password = "refused-form-password-51e0";
+    let refused = client
+        .post_form(
+            "/api/v1/accounts",
+            None,
+            &[
+                ("username", "not a valid username"),
+                ("email", "someone@example.com"),
+                ("password", form_password),
+                ("agreement", "true"),
+            ],
+        )
+        .await;
+    assert!(refused.status().is_client_error(), "{}", refused.status());
+
+    let line = logs.line_with("path=/oauth/token");
+    assert!(line.contains("status=4"), "{line}");
+    logs.line_with("path=/api/v1/accounts");
+    let logged = String::from_utf8_lossy(&logs.0.lock().unwrap()).into_owned();
+    for secret in [json_password, "refused-client-secret-2b7d", form_password] {
+        assert!(!logged.contains(secret), "{secret} was logged:\n{logged}");
+    }
+}
+
 /// A process asks the real PostgreSQL server how many connections it accepts,
 /// and refuses to start with a pool that could open more, rather than failing
 /// some request later on. Were the server not asked, this pool would start.
