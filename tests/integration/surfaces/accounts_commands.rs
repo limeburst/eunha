@@ -1,14 +1,15 @@
-//! `eunha accounts create`, which is `tootctl accounts create`.
+//! `eunha accounts create` and `eunha accounts modify`, which are `tootctl`'s.
 //!
 //! An instance's first account is made this way rather than by signing up:
 //! Mastodon's `mastodon:setup` and `tootctl accounts create --role Owner` both
 //! write a confirmed account holding the seeded Owner role, and hand back a
-//! random password to sign in with.
+//! random password to sign in with. Whoever runs the instance recovers that
+//! account with `tootctl accounts modify --reset-password`.
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 
-use eunha::accounts::{create_from_command, CreateOptions};
+use eunha::accounts::{create_from_command, reset_password, CreateOptions};
 
 use crate::helpers::TestContext;
 
@@ -30,6 +31,45 @@ async fn create(ctx: &TestContext, options: CreateOptions) -> anyhow::Result<Str
         options,
     )
     .await
+}
+
+/// A password grant's access token, or `None` if the credentials are refused.
+async fn sign_in(ctx: &TestContext, email: &str, password: &str) -> Option<String> {
+    let app: Value = ctx
+        .api
+        .post_json(
+            "/api/v1/apps",
+            None,
+            &json!({
+                "client_name": "Owner sign-in",
+                "redirect_uris": "urn:ietf:wg:oauth:2.0:oob",
+                "scopes": "read"
+            }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let response = ctx
+        .api
+        .post_json(
+            "/oauth/token",
+            None,
+            &json!({
+                "grant_type": "password",
+                "client_id": app["client_id"],
+                "client_secret": app["client_secret"],
+                "username": email,
+                "password": password,
+                "scope": "read",
+            }),
+        )
+        .await;
+    if response.status() != StatusCode::OK {
+        return None;
+    }
+    let body: Value = response.json().await.unwrap();
+    Some(body["access_token"].as_str().unwrap().to_string())
 }
 
 /// The roles `db/seeds/03_roles.rb` creates from `config/roles.yml`.
@@ -90,45 +130,13 @@ async fn test_an_owner_created_on_the_command_line_can_sign_in() {
     assert!(approved);
     assert_eq!(role, "Owner");
 
-    let app: Value = ctx
-        .api
-        .post_json(
-            "/api/v1/apps",
-            None,
-            &json!({
-                "client_name": "Owner sign-in",
-                "redirect_uris": "urn:ietf:wg:oauth:2.0:oob",
-                "scopes": "read"
-            }),
-        )
+    let token = sign_in(&ctx, "gardener@example.com", &password)
         .await
-        .json()
-        .await
-        .unwrap();
-    let token = ctx
-        .api
-        .post_json(
-            "/oauth/token",
-            None,
-            &json!({
-                "grant_type": "password",
-                "client_id": app["client_id"],
-                "client_secret": app["client_secret"],
-                "username": "gardener@example.com",
-                "password": password,
-                "scope": "read",
-            }),
-        )
-        .await;
-    assert_eq!(token.status(), StatusCode::OK);
-    let token: Value = token.json().await.unwrap();
+        .expect("the printed password signs in");
 
     let me: Value = ctx
         .api
-        .get(
-            "/api/v1/accounts/verify_credentials",
-            token["access_token"].as_str(),
-        )
+        .get("/api/v1/accounts/verify_credentials", Some(&token))
         .await
         .json()
         .await
@@ -236,4 +244,39 @@ async fn test_invalid_accounts_are_refused() {
         .await
         .unwrap();
     assert_eq!(local, 2, "only alice and bob");
+}
+
+/// `User#change_password!`: the old password stops working, and so does every
+/// token the account had handed out.
+#[tokio::test]
+async fn test_resetting_a_password_signs_the_account_out_everywhere() {
+    let ctx = TestContext::new("accounts-reset-password").await;
+    let first = create(&ctx, owner("gardener")).await.unwrap();
+    let old_token = sign_in(&ctx, "gardener@example.com", &first).await.unwrap();
+
+    let second = reset_password(&ctx.db, "Gardener").await.unwrap();
+    assert_ne!(first, second);
+    assert_eq!(second.len(), 32);
+
+    let revoked = ctx
+        .api
+        .get("/api/v1/accounts/verify_credentials", Some(&old_token))
+        .await;
+    assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+    assert!(sign_in(&ctx, "gardener@example.com", &first)
+        .await
+        .is_none());
+    assert!(sign_in(&ctx, "gardener@example.com", &second)
+        .await
+        .is_some());
+
+    // Other accounts are untouched.
+    let bob = ctx
+        .api
+        .get("/api/v1/accounts/verify_credentials", Some(&ctx.bob_token))
+        .await;
+    assert_eq!(bob.status(), StatusCode::OK);
+
+    let missing = reset_password(&ctx.db, "nobody").await.unwrap_err();
+    assert!(missing.to_string().contains("no user with such username"));
 }

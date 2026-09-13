@@ -656,6 +656,10 @@ eunha --tenants /path/to/tenants accounts create gardener \
   --confirmed --approve --role Owner
 ~~~~
 
+`eunha accounts modify gardener --reset-password` prints a new random password
+and signs the account out of every session and app, as
+`tootctl accounts modify --reset-password` does.
+
 
 Invites
 -------
