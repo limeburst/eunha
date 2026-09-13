@@ -399,58 +399,6 @@ pub async fn confirm_email(state: AppState, Query(q): Query<ConfirmQuery>) -> Re
         return Redirect::to("/account/login?confirmed=invalid").into_response();
     };
 
-    // A 2048-bit key is on the order of a hundred milliseconds of CPU.
-    let (private_key, public_key) =
-        match crate::tenants::spawn_blocking(crypto::generate_rsa_keypair).await {
-            Ok(Ok(kp)) => kp,
-            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        };
-
-    let instance_domain = &state.instance.domain;
-    let url = format!("https://{}/@{}", instance_domain, pending.username);
-
-    let new_account_id = crate::snowflake::next_id();
-    // New local accounts use Mastodon's default `numeric_ap_id` scheme: the
-    // ActivityPub actor is served at /ap/users/{id}. Build the canonical URI
-    // (and its inbox/outbox) from the new account id.
-    let uri = crate::federation::tag::account_uri(
-        instance_domain,
-        new_account_id,
-        Some(crate::federation::tag::NUMERIC_AP_ID),
-        &pending.username,
-    );
-    let account_id = match sqlx::query_scalar!(
-        r#"INSERT INTO accounts
-             (id, username, url, uri, private_key, public_key,
-              inbox_url, outbox_url, shared_inbox_url, id_scheme, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, 1, now(), now())
-           RETURNING id"#,
-        new_account_id,
-        pending.username,
-        url,
-        uri,
-        private_key,
-        public_key,
-        format!("{}/inbox", uri),
-        format!("{}/outbox", uri),
-        format!("https://{}/inbox", instance_domain),
-    )
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(id) => id,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-
-    // Written to `accounts` above so that the account is never keyless; move it
-    // to wherever this instance keeps signing keys. A failure here is not fatal
-    // — the legacy columns still hold a usable key, and the next start moves it.
-    if let Err(e) =
-        crate::federation::keypair::store_local(&state, account_id, &private_key, &public_key).await
-    {
-        tracing::warn!(account_id, error = %e, "could not move the new account's signing key into `keypairs`");
-    }
-
     // Mastodon `User#set_approved`: an invite skips approval only when its
     // creator may bypass it — `Invite#bypass_approval?` asks the inviting
     // user's role for `invite_bypass_approval`, not merely whether an invite
@@ -462,29 +410,31 @@ pub async fn confirm_email(state: AppState, Query(q): Query<ConfirmQuery>) -> Re
             Some(id) => invite_bypasses_approval(&state, id).await,
             None => false,
         };
-    let user_id = match sqlx::query_scalar!(
-        r#"INSERT INTO users
-             (account_id, email, encrypted_password,
-              confirmed_at, invite_id, approved,
-              locale, created_by_application_id, created_at, updated_at)
-           VALUES ($1,$2,$3,
-                   now(), $4,
-                   NOT $5::boolean,
-                   $6, $7, now(), now())
-           RETURNING id"#,
+    let crate::accounts::LocalUser {
         account_id,
-        pending.email,
-        pending.password_hash,
-        pending.invite_id,
-        needs_approval,
-        pending.locale.as_str(),
-        pending.app_id,
+        user_id,
+    } = match crate::accounts::create_local(
+        &state.db,
+        state.encryptor.as_ref(),
+        &state.instance.domain,
+        crate::accounts::NewLocalUser {
+            username: &pending.username,
+            email: &pending.email,
+            password_hash: &pending.password_hash,
+            role_id: None,
+            approved: !needs_approval,
+            invite_id: pending.invite_id,
+            locale: Some(pending.locale.as_str()),
+            app_id: pending.app_id,
+        },
     )
-    .fetch_one(&state.db)
     .await
     {
-        Ok(id) => id,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(created) => created,
+        Err(e) => {
+            tracing::error!(error = %format!("{e:#}"), "could not create the confirmed account");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
 
     // Notify admins about every new signup (approval-required instances get it immediately;

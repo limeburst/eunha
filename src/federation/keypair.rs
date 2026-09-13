@@ -190,6 +190,26 @@ pub async fn store_local(
         });
     };
 
+    let mut conn = state.db.acquire().await?;
+    store_sealed(&mut conn, encryptor, account_id, private_key, public_key).await?;
+    drop(conn);
+
+    signing_key(state, account_id).await
+}
+
+/// Put a local account's main key into `keypairs`, its private half encrypted,
+/// and clear the legacy columns. An account that already has a main keypair
+/// keeps it.
+///
+/// Takes a connection rather than the pool so that an account being created can
+/// be given its key in the same transaction.
+pub async fn store_sealed(
+    conn: &mut sqlx::PgConnection,
+    encryptor: &crate::rails_encryption::Encryptor,
+    account_id: i64,
+    private_key: &str,
+    public_key: &str,
+) -> Result<()> {
     let sealed = encryptor.encrypt(private_key)?;
     sqlx::query!(
         r#"INSERT INTO keypairs
@@ -202,7 +222,7 @@ pub async fn store_local(
         public_key,
         sealed,
     )
-    .execute(&state.db)
+    .execute(&mut *conn)
     .await?;
 
     // The secret now lives in `keypairs`; the legacy columns must not keep a
@@ -211,10 +231,10 @@ pub async fn store_local(
         "UPDATE accounts SET private_key = NULL, public_key = '', updated_at = now() WHERE id = $1",
         account_id,
     )
-    .execute(&state.db)
+    .execute(&mut *conn)
     .await?;
 
-    signing_key(state, account_id).await
+    Ok(())
 }
 
 /// Mastodon's `20260702144128_migrate_local_account_keypairs`.

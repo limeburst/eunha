@@ -1,5 +1,6 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
-use eunha::{config, migrate, software_updates, tenants};
+use eunha::{accounts, config, migrate, software_updates, tenants};
 use std::{path::PathBuf, sync::Arc};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -36,6 +37,38 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Manage local accounts, as `tootctl accounts` does.
+    Accounts {
+        #[command(subcommand)]
+        command: AccountsCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AccountsCommand {
+    /// Create a new user account, and print the random password it was given.
+    ///
+    /// `tootctl accounts create`: sign-ups need not be open, and the account is
+    /// active straight away. eunha has no unconfirmed accounts outside the
+    /// sign-up flow, so `--confirmed` is required.
+    Create {
+        username: String,
+        #[arg(long)]
+        email: String,
+        /// Mark the e-mail as confirmed instead of mailing a link. Required.
+        #[arg(long)]
+        confirmed: bool,
+        /// Give the account this role, by name — for example `Owner`.
+        #[arg(long)]
+        role: Option<String>,
+        /// Approve the account even where sign-ups need approval.
+        #[arg(long)]
+        approve: bool,
+        /// With `--tenants`, the instance to create the account on, by its
+        /// domain or one of its aliases.
+        #[arg(long, value_name = "HOST")]
+        instance: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -50,8 +83,38 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    if let Some(Command::Migrate { check }) = args.command {
-        return migrate_databases(args.tenants.as_deref(), check).await;
+    match args.command {
+        Some(Command::Migrate { check }) => {
+            return migrate_databases(args.tenants.as_deref(), check).await;
+        }
+        Some(Command::Accounts {
+            command:
+                AccountsCommand::Create {
+                    username,
+                    email,
+                    confirmed,
+                    role,
+                    approve,
+                    instance,
+                },
+        }) => {
+            let config = command_config(args.tenants.as_deref(), instance.as_deref())?;
+            let password = create_account(
+                config,
+                accounts::CreateOptions {
+                    username,
+                    email,
+                    role,
+                    confirmed,
+                    approve,
+                },
+            )
+            .await?;
+            println!("OK");
+            println!("New password: {password}");
+            return Ok(());
+        }
+        None => {}
     }
 
     let configs = match &args.tenants {
@@ -154,6 +217,50 @@ async fn migrate_databases(tenants: Option<&std::path::Path>, check: bool) -> an
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// The configuration a one-off command acts on: the single instance's, or with
+/// `tenants` the one tenant answering to `instance`.
+fn command_config(
+    tenants: Option<&std::path::Path>,
+    instance: Option<&str>,
+) -> anyhow::Result<config::Config> {
+    let Some(dir) = tenants else {
+        anyhow::ensure!(
+            instance.is_none(),
+            "--instance picks a tenant, and needs --tenants"
+        );
+        return config::Config::from_env();
+    };
+    let instance =
+        instance.context("--tenants serves several instances; pick one with --instance")?;
+    tenants::find(tenants::load_dir(dir)?, instance)
+        .map(|tenant| tenant.config)
+        .with_context(|| format!("no tenant in {} answers to {instance}", dir.display()))
+}
+
+async fn create_account(
+    config: config::Config,
+    options: accounts::CreateOptions,
+) -> anyhow::Result<String> {
+    let db = tenants::connect(
+        &config.database_url,
+        &config::DatabasePoolConfig {
+            max_connections: 1,
+            ..Default::default()
+        },
+    )
+    .await?;
+    // An account written into a schema this binary does not match could be
+    // missing columns the running server needs; the server refuses to start in
+    // that case, and so does this.
+    if let Some(pending) = migrate::pending(&db).await? {
+        anyhow::bail!("{pending}; run `eunha migrate` first");
+    }
+    let encryptor = config.active_record_encryption.as_ref().map(|keys| {
+        eunha::rails_encryption::Encryptor::new(&keys.primary_key, &keys.key_derivation_salt)
+    });
+    accounts::create_from_command(&db, encryptor.as_ref(), &config.instance, options).await
 }
 
 /// The database to migrate: `DATABASE_URL` if set (including from `.env`),

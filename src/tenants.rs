@@ -143,6 +143,14 @@ pub fn load_dir(dir: &Path) -> Result<Vec<TenantConfig>> {
         .collect()
 }
 
+/// The tenant that answers to `host`, by its domain or one of its aliases.
+pub fn find(configs: Vec<TenantConfig>, host: &str) -> Option<TenantConfig> {
+    let host = normalize_host(host);
+    configs
+        .into_iter()
+        .find(|tenant| instance_hosts(&tenant.config.instance).any(|known| known == host))
+}
+
 /// Open a pool whose connections resolve unqualified names against the eunha
 /// schema first, then public. Every app query is schema-qualified, so this only
 /// decides where sqlx keeps its own `_sqlx_migrations` ledger — out of `public`,
@@ -1109,6 +1117,41 @@ vapid_public_key = ""
         );
         assert!(matches!(t.lookup("seoul.earth"), Lookup::Serving(_)));
         assert!(matches!(t.lookup("unknown.example"), Lookup::Unknown));
+    }
+
+    #[test]
+    fn a_command_finds_its_tenant_by_domain_or_alias() {
+        let configs = || {
+            vec![
+                tenant(
+                    "seoul-eunha-space.toml",
+                    "seoul.eunha.space",
+                    "127.0.0.1:3000",
+                    &[],
+                    "",
+                ),
+                tenant(
+                    "busan-eunha-space.toml",
+                    "busan.eunha.space",
+                    "127.0.0.1:3000",
+                    &[],
+                    "",
+                ),
+            ]
+        };
+        let mut aliased = configs();
+        aliased[0].config.instance.aliases = vec!["seoul.earth".to_string()];
+
+        let found = |configs, host| find(configs, host).map(|tenant| tenant.source);
+        assert_eq!(
+            found(configs(), "busan.eunha.space").as_deref(),
+            Some("busan-eunha-space.toml")
+        );
+        assert_eq!(
+            found(aliased, "Seoul.Earth.").as_deref(),
+            Some("seoul-eunha-space.toml")
+        );
+        assert_eq!(found(configs(), "daegu.eunha.space"), None);
     }
 
     #[test]
