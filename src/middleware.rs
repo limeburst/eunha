@@ -133,46 +133,16 @@ pub async fn authenticate(state: AppState, mut req: Request, next: Next) -> Resp
     next.run(req).await
 }
 
-/// Log failed requests (4xx/5xx) with method, path, and request body preview.
-/// Skips body buffering for multipart uploads to avoid memory pressure.
+/// Log failed requests (4xx/5xx) with their method, path and status.
+///
+/// Never the body, nor the query string: a refused password grant, sign-up or
+/// password reset carries the very credentials that were refused, and a
+/// streaming URL can carry an access token.
 pub async fn log_failures(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
-    let content_type = req
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
 
-    let is_text = content_type.contains("json") || content_type.contains("x-www-form-urlencoded");
-    let is_multipart = content_type.contains("multipart");
-
-    let (parts, body) = req.into_parts();
-    // Buffer text bodies fully so the handler always receives the complete body.
-    // The log preview is capped to 2 KB; the 4 MB limit guards against runaway requests.
-    let (body_preview, rebuilt) = if is_text && !is_multipart {
-        match axum::body::to_bytes(body, 4 * 1024 * 1024).await {
-            Ok(bytes) => {
-                let preview = if bytes.len() > 2048 {
-                    format!(
-                        "{}…({} bytes)",
-                        String::from_utf8_lossy(&bytes[..2048]),
-                        bytes.len()
-                    )
-                } else {
-                    String::from_utf8_lossy(&bytes).into_owned()
-                };
-                let new_body = axum::body::Body::from(bytes);
-                (Some(preview), Request::from_parts(parts, new_body))
-            }
-            Err(_) => (None, Request::from_parts(parts, axum::body::Body::empty())),
-        }
-    } else {
-        (None, Request::from_parts(parts, body))
-    };
-
-    let response = next.run(rebuilt).await;
+    let response = next.run(req).await;
     let status = response.status();
 
     if status.is_client_error() || status.is_server_error() {
@@ -180,7 +150,6 @@ pub async fn log_failures(req: Request, next: Next) -> Response {
             method = %method,
             path = %path,
             status = %status,
-            body = body_preview.as_deref().unwrap_or(""),
             "request failed",
         );
     }
