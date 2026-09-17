@@ -6,6 +6,7 @@ mod counter_semantics;
 mod divergences;
 mod entity_parity;
 mod error_contract;
+mod health;
 mod invite_grants;
 mod invite_tree;
 mod mute_exemptions;
