@@ -524,6 +524,8 @@ impl TestContext {
             eunha::push::generate_vapid_keypair().expect("generate test VAPID keypair");
         let config = eunha::config::Config {
             database_url: db_url,
+            pooled_database_url: None,
+            pooled_client_slots: None,
             redis_url,
             redis_coordination_url: None,
             redis_key_prefix: String::new(),

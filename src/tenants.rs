@@ -322,6 +322,9 @@ struct ServerDemand<'a> {
     connections: u64,
     sources: Vec<&'a str>,
     urls: Vec<&'a str>,
+    /// Slots declared by a pooler in front of this server, smallest wins. When
+    /// set, startup trusts it instead of asking the server itself.
+    declared_slots: Option<u64>,
 }
 
 /// The tenants' pools grouped by the server they connect to. A tenant whose
@@ -330,7 +333,14 @@ struct ServerDemand<'a> {
 fn demand_by_server(configs: &[TenantConfig]) -> Vec<ServerDemand<'_>> {
     let mut servers: Vec<ServerDemand<'_>> = Vec::new();
     for tenant in configs {
-        let Ok(options) = PgConnectOptions::from_str(&tenant.config.database_url) else {
+        // Group by where the pool connects, which is the pooler when there is
+        // one: those are the connections that have to fit.
+        let url = tenant
+            .config
+            .pooled_database_url
+            .as_deref()
+            .unwrap_or(&tenant.config.database_url);
+        let Ok(options) = PgConnectOptions::from_str(url) else {
             continue;
         };
         let server = match options.get_socket() {
@@ -345,6 +355,7 @@ fn demand_by_server(configs: &[TenantConfig]) -> Vec<ServerDemand<'_>> {
                     connections: 0,
                     sources: Vec::new(),
                     urls: Vec::new(),
+                    declared_slots: None,
                 });
                 servers.len() - 1
             }
@@ -352,17 +363,30 @@ fn demand_by_server(configs: &[TenantConfig]) -> Vec<ServerDemand<'_>> {
         let entry = &mut servers[index];
         entry.connections += u64::from(tenant.config.database_pool.max_connections);
         entry.sources.push(&tenant.source);
-        entry.urls.push(&tenant.config.database_url);
+        entry.urls.push(url);
+        if tenant.config.pooled_database_url.is_some() {
+            if let Some(slots) = tenant.config.pooled_client_slots {
+                entry.declared_slots =
+                    Some(entry.declared_slots.map_or(slots, |held| held.min(slots)));
+            }
+        }
     }
     servers
 }
 
 /// Whether one server's slots hold what the tenants' pools may ask of it.
 fn fits(demand: &ServerDemand<'_>, slots: u64) -> Result<()> {
+    // Naming where the number came from matters: a pooler's limit and
+    // PostgreSQL's are different settings in different files.
+    let limit = if demand.declared_slots.is_some() {
+        "pooled_client_slots, as the pooler is configured"
+    } else {
+        "max_connections less the reserved ones"
+    };
     anyhow::ensure!(
         demand.connections <= slots,
         "{} may open {} database connections between them on {}, which accepts {slots} \
-         (max_connections less the reserved ones): lower their database_pool.max_connections \
+         ({limit}): lower their database_pool.max_connections \
          or serve fewer tenants from this server",
         demand.sources.join(", "),
         demand.connections,
@@ -380,6 +404,10 @@ fn fits(demand: &ServerDemand<'_>, slots: u64) -> Result<()> {
 /// will not start either, and trying all of them would hold up the rest.
 async fn check_database_servers(configs: &[TenantConfig]) -> Result<()> {
     for demand in demand_by_server(configs) {
+        if let Some(declared) = demand.declared_slots {
+            fits(&demand, declared)?;
+            continue;
+        }
         let mut slots = None;
         for url in demand.urls.iter().take(SERVER_PROBE_ATTEMPTS) {
             let asked = tokio::time::timeout(SERVER_PROBE_TIMEOUT, server_slots(url)).await;
@@ -705,9 +733,15 @@ fn not_started(host: &str, source: &str, error: &anyhow::Error) {
 async fn start_one(tenant: TenantConfig) -> Result<Running> {
     let TenantConfig { source, config } = tenant;
     let fingerprint = fingerprint(&config);
-    let db = connect(&config.database_url, &config.database_pool)
-        .await
-        .with_context(|| format!("{source}: connecting to its database"))?;
+    let db = connect(
+        config
+            .pooled_database_url
+            .as_deref()
+            .unwrap_or(&config.database_url),
+        &config.database_pool,
+    )
+    .await
+    .with_context(|| format!("{source}: connecting to its database"))?;
 
     // Serving refuses a schema this binary does not know, rather than running
     // queries against a shape that has moved underneath them. `eunha migrate`
@@ -1386,6 +1420,37 @@ vapid_public_key = ""
 
         let exact = pair(40);
         admit(&exact, &process_settings(&exact).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_pooled_tenant_is_counted_against_the_pooler_it_dials() {
+        let pool = "[database_pool]\nmax_connections = 20";
+        let mut configs = [
+            tenant("a.toml", "a.example", "127.0.0.1:3000", &[], pool),
+            tenant("b.toml", "b.example", "127.0.0.1:3000", &[], pool),
+        ];
+        for config in &mut configs {
+            config.config.database_url = "postgres://eunha@db1.internal:5432/x".into();
+            config.config.pooled_database_url = Some("postgres://eunha@db1.internal:6432/x".into());
+            config.config.pooled_client_slots = Some(100);
+        }
+
+        let servers = demand_by_server(&configs);
+        assert_eq!(servers.len(), 1);
+        assert_eq!(
+            servers[0].server, "db1.internal:6432",
+            "the pooler is where the connections land, not PostgreSQL behind it"
+        );
+        assert_eq!(servers[0].declared_slots, Some(100));
+        // 40 pooled clients fit in 100; PostgreSQL's own max_connections, which
+        // is what the unpooled check would have asked for, never comes into it.
+        fits(&servers[0], servers[0].declared_slots.unwrap()).unwrap();
+
+        let error = fits(&servers[0], 39)
+            .err()
+            .map(|e| format!("{e:#}"))
+            .unwrap_or_default();
+        assert!(error.contains("pooled_client_slots"), "{error}");
     }
 
     #[test]

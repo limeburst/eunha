@@ -3,6 +3,21 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub database_url: String,
+    /// Where this instance's pool connects, when a connection pooler sits in
+    /// front of `database_url` rather than this being PostgreSQL itself.
+    ///
+    /// Only the request and queue pool moves. `eunha migrate` keeps using
+    /// `database_url`, because sqlx takes a session-scoped advisory lock around
+    /// a migration run and a transaction pooler would hand the unlock to a
+    /// different server connection than the lock.
+    #[serde(default)]
+    pub pooled_database_url: Option<String>,
+    /// Client connections the pooler accepts in total, as its own configuration
+    /// sets them. Startup checks the tenants' pools against this instead of
+    /// asking PostgreSQL for `max_connections`: through a pooler that answer
+    /// describes the wrong limit, and is far smaller than what the pooler holds.
+    #[serde(default)]
+    pub pooled_client_slots: Option<u64>,
     #[serde(default)]
     pub database_pool: DatabasePoolConfig,
     pub redis_url: String,

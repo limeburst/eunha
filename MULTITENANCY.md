@@ -133,6 +133,28 @@ that restarts every tenant at once sees their whole pools open at the same
 moment. Promote a demonstrably busy tenant to three connections.
 Larger pools should follow measurements rather than plan names or member count.
 
+Past a few hundred tenants a host runs out of PostgreSQL backends before it runs
+out of anything else, because a backend is a process and costs 19–24 MiB. A
+transaction pooler in front of PostgreSQL unties the two: a tenant holds a
+backend only while a transaction is in flight, so the backend count follows
+concurrent work rather than tenant count. Point the pool at it and leave
+`database_url` alone:
+
+~~~~ toml
+database_url = "postgres://tenant:secret@127.0.0.1:5432/tenant"
+pooled_database_url = "postgres://tenant:secret@127.0.0.1:6432/tenant"
+pooled_client_slots = 10000
+~~~~
+
+`eunha migrate` keeps using `database_url`, because sqlx holds a session-scoped
+advisory lock across a migration run and a transaction pooler would hand the
+unlock to a different server connection than the lock. `pooled_client_slots` is
+what the pooler accepts in total, and startup checks the tenants' pools against
+it rather than asking PostgreSQL for a `max_connections` that no longer
+describes the limit. Schema resolution has to move to the role as well —
+`ALTER ROLE ... SET search_path TO eunha, public` — since a pooled connection is
+handed to clients that never ran the `SET` the pool issues on connect.
+
 The control plane records at least:
 
  -  desired and observed process state;
