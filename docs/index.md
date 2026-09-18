@@ -1,7 +1,7 @@
 eunha
 =====
 
-Rust re-implementation of Mastodon.
+Rust re-implementation of Mastodon, with drop-in database compatibility.
 
 Eunha aims for 100% Mastodon database schema compatibility, so that Eunha can
 be a drop-in replacement on top of your existing Mastodon database.
