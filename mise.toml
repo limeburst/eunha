@@ -26,16 +26,24 @@ run = "SQLX_OFFLINE=true cargo run --quiet --bin eunha-schema -- plan"
 description = "Format the tree"
 run = [
     "cargo fmt",
-    # -type f skips AGENTS.md and CLAUDE.md, which are symlinks to README.md.
-    "hongdown --write $(find . -maxdepth 1 -name '*.md' -type f)",
+    # Which Markdown files is in .hongdown.toml: the root and docs/.
+    "hongdown --write",
 ]
 
 [tasks."fmt:check"]
 description = "Fail if anything is unformatted (run before committing)"
 run = [
     "cargo fmt --check",
-    "hongdown --check $(find . -maxdepth 1 -name '*.md' -type f)",
+    "hongdown --check",
 ]
+
+[tasks."docs:dev"]
+description = "Serve the documentation site with hot-reload"
+run = "cd docs && pnpm install && pnpm run dev"
+
+[tasks."docs:build"]
+description = "Build the documentation site into docs/.vitepress/dist (fails on dead links)"
+run = "cd docs && pnpm install && pnpm run build"
 
 [tasks."federation"]
 description = "Federate eunha with a real Mastodon in Docker, both directions"

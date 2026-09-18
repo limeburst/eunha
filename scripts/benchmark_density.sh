@@ -3,8 +3,8 @@
 #
 # Brings up a PostgreSQL cluster and a Redis server of its own, then starts
 # tenants in steps — one eunha process and one database each, configured the
-# way BENCHMARKING.md recommends for a small hosted instance — and at every step
-# measures what the whole population costs:
+# way docs/design/benchmarking.md recommends for a small hosted instance — and
+# at every step measures what the whole population costs:
 #
 #  -  idle, after the pools' idle timeout has passed, which is what a host pays
 #     for tenants nobody is using. Most tenants of a hosting service are idle

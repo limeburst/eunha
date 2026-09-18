@@ -22,7 +22,7 @@ security boundary before measurements show that such complexity is necessary.
 Current measurements
 --------------------
 
-The ten-user benchmark in [BENCHMARKING.md](./BENCHMARKING.md) measured an
+The ten-user benchmark in [benchmarking](./benchmarking.md) measured an
 Eunha release process at approximately:
 
  -  33 MiB RSS when idle;
@@ -253,7 +253,7 @@ Phase 4: optional multi-instance runtime shards
 -----------------------------------------------
 
 A throwaway prototype has measured what sharing would save
-([BENCHMARKING.md](./BENCHMARKING.md), “One process for many tenants”). With the
+([benchmarking](./benchmarking.md), “One process for many tenants”). With the
 same tenants and load, eunha needed about 3 MiB per tenant in one process
 against 12–16 MiB as separate processes, twelve threads instead of four per
 tenant, a seventh of the startup time and no more CPU, and a saturated tenant

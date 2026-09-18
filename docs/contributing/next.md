@@ -9,9 +9,10 @@ the run, not by assuming: CI had in fact been red for at least two commits. The
 federation harness passes 24/24 from a clean checkout, both servers inside the
 container network.
 
-Three harnesses verify parity, described in `README.md` and in each script's
-header. Read those headers before believing a failure — most of what they report
-first is the harness or the reference, not eunha.
+Three harnesses verify parity, described in
+[Mastodon compatibility](../mastodon/tracking.md) and in each script's header.
+Read those headers before believing a failure — most of what they report first
+is the harness or the reference, not eunha.
 
 
 What is unfinished
@@ -21,7 +22,8 @@ What is unfinished
 differences. The nine `favourited` findings were the harness, not eunha and not
 the fixture — its Mastodon had no Sidekiq, so the rows `unfavourite` and
 `unreblog` hand to a worker were never deleted and every later request read them
-back. See `README.md`; the harness now refuses to compare without a live worker.
+back. See [differential testing](../mastodon/differential-testing.md); the
+harness now refuses to compare without a live worker.
 
 **`/api/v1/timelines/home` answering 206 on Mastodon and 200 on eunha** has not
 been seen since. It was the same dead worker — a feed with nothing to regenerate
@@ -39,7 +41,8 @@ says it has.
 **Notification grouping agrees with Mastodon.** Compared end to end against a
 live 4.7.0 for the same fixture — three accounts favouriting one status and
 following one account — and both a group's `notifications_count` and the
-identity *and order* of its `sample_account_ids` match. See `README.md`.
+identity *and order* of its `sample_account_ids` match. See
+[differential testing](../mastodon/differential-testing.md).
 
 **`sharedInbox` works in both directions.** eunha delivers to
 `https://mastodon.test/inbox`, and Mastodon delivers to eunha's `/inbox` — four

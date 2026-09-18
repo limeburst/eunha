@@ -488,14 +488,15 @@ In order of what the measurements say they are worth:
     seventh of the startup time, and no slowdown from a saturated neighbour. It
     pays for fragmentation once, where a different allocator did not recover it
     (see “Allocators”). It needs the refactor and controls in phase 4 of
-    [MULTITENANCY.md](./MULTITENANCY.md), and PostgreSQL becomes the limit.
+    [the multitenancy plan](./multitenancy.md), and PostgreSQL becomes the
+    limit.
 2.  **Spread idle wake-ups.** Tenants started together wake together every
     `queue_idle_poll_seconds` and open their whole pools at once. A little
     random jitter on each sleep would turn that spike into a steady trickle.
 3.  **Dormancy.** A dormant tenant costs its database on disk and nothing else,
     and wakes in 145 ms. It needs the gateway and shared workers described in
-    [MULTITENANCY.md](./MULTITENANCY.md), and an admission limit on concurrent
-    wakes.
+    [the multitenancy plan](./multitenancy.md), and an admission limit on
+    concurrent wakes.
 4.  **PgBouncer** once connections approach `max_connections`, in transaction
     mode with prepared statements verified against SQLx.
 5.  **PostgreSQL on its own machine.** On one Mac mini it competes with tenants

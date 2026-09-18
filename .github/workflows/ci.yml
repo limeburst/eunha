@@ -189,3 +189,22 @@ jobs:
 
       - name: Federate with a live Mastodon 4.7.0
         run: scripts/federation_test.sh
+
+  # The docs deploy only from main, so a dead link would otherwise be found by
+  # the Pages workflow after it had landed. VitePress fails the build on one.
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: docs/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - name: Build the docs
+        working-directory: docs
+        run: pnpm install --frozen-lockfile && pnpm run build

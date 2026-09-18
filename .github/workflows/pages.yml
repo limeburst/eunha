@@ -1,6 +1,7 @@
 name: Pages
 
-# Publishes site/ to eunha.social. The custom domain is carried by site/CNAME,
+# Publishes site/ to eunha.social, with the VitePress build of docs/ under
+# /docs/. The custom domain is carried by site/CNAME,
 # which the artifact upload takes along — a workflow deploy has no branch for
 # GitHub to write that file into itself.
 
@@ -9,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "docs/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -30,9 +32,25 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: docs/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - name: Build the docs
+        working-directory: docs
+        run: pnpm install --frozen-lockfile && pnpm run build
+      # cp -L, because docs/public/favicon.svg is a symlink into site/.
+      - name: Assemble the site
+        run: |
+          cp -RL site _site
+          cp -RL docs/.vitepress/dist _site/docs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
